@@ -1,2 +1,20 @@
 node_modules/
 .env
+
+# 1. Se placer à la racine du projet (si ce n'est pas déjà fait)
+cd c:\Users\hp\app-gestion-stock
+
+# 2. Retirer tous les fichiers de l'index Git (cela ne supprime PAS vos fichiers sur le disque, seulement de la mémoire de Git)
+# Cette étape est cruciale pour que Git "oublie" les fichiers .env ou node_modules s'ils avaient été suivis avant.
+git rm -r --cached .
+
+# 3. Ré-ajouter tous les fichiers
+# Git va maintenant respecter scrupuleusement vos fichiers .gitignore
+git add .
+
+# 4. Créer le commit de sauvegarde
+git commit -m "Mise à jour : exclusion stricte des node_modules et .env"
+
+# 5. Pousser vers GitHub
+# (Remplacez 'main' par 'master' si votre branche principale s'appelle master)
+git push origin main

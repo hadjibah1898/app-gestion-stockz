@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 
+
 const articleSchema = new mongoose.Schema({
     nom: { 
         type: String, 
@@ -16,7 +17,13 @@ const articleSchema = new mongoose.Schema({
     quantite: { 
         type: Number, 
         default: 0 
+    },
+    boutique: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Boutique',
+        required: true
     }
+    
 }, { 
     timestamps: true // Ajoute automatiquement createdAt et updatedAt
 });

@@ -1,14 +1,10 @@
 const Vente = require('../models/vente');
 const Article = require('../models/Article');
-const mongoose = require('mongoose');
 
-exports.traiterVente = async (articleId, quantite, userId) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+exports.traiterVente = async (articleId, quantite, userId, boutiqueId) => {
     try {
-        // 1. Récupérer l'article (en utilisant la session pour le verrouillage)
-        const article = await Article.findById(articleId).session(session);
+        // 1. Récupérer l'article
+        const article = await Article.findById(articleId);
         if (!article) throw new Error("Article introuvable");
 
         // 2. Vérifier le stock
@@ -22,30 +18,68 @@ exports.traiterVente = async (articleId, quantite, userId) => {
             article: articleId,
             quantite,
             prixTotal,
-            gerant: userId
+            gerant: userId,
+            boutique: boutiqueId
         });
 
         // 4. Mettre à jour le stock de l'article
         article.quantite -= quantite;
         
-        await article.save({ session });
-        const savedVente = await vente.save({ session });
-
-        // 5. Valider la transaction
-        await session.commitTransaction();
+        await article.save();
+        const savedVente = await vente.save();
 
         return savedVente;
 
     } catch (error) {
-        // En cas d'erreur, annuler toutes les opérations
-        await session.abortTransaction();
         throw error; // Renvoyer l'erreur au contrôleur
-    } finally {
-        // Terminer la session dans tous les cas
-        session.endSession();
     }
 };
 
-exports.listerVentes = async () => {
-    return await Vente.find().populate('article', 'nom').populate('gerant', 'nom');
+// Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
+exports.traiterPanier = async (items, userId, boutiqueId) => {
+    try {
+        const resultats = [];
+
+        for (const item of items) {
+            // Correction pour correspondre aux données envoyées par le frontend (`article` et `quantite`)
+            const { article: articleId, quantite } = item;
+
+            // 1. Récupérer l'article
+            const article = await Article.findById(articleId);
+            if (!article) {
+                throw new Error(`Article introuvable (ID: ${articleId})`);
+            }
+
+            // 2. Vérifier le stock
+            if (article.quantite < quantite) {
+                throw new Error(`Stock insuffisant pour l'article "${article.nom}". Disponible: ${article.quantite}, demandé: ${quantite}.`);
+            }
+
+            // 3. Mettre à jour le stock de l'article
+            article.quantite -= quantite;
+            await article.save();
+
+            // 4. Créer l'enregistrement de la vente
+            const prixTotal = article.prixVente * quantite;
+            const vente = new Vente({
+                article: articleId,
+                quantite: quantite,
+                prixTotal,
+                gerant: userId,
+                boutique: boutiqueId
+            });
+            // Sauvegarde simple sans transaction
+            const savedVente = await vente.save();
+            
+            resultats.push(savedVente);
+        }
+
+        return resultats;
+    } catch (error) {
+        throw error;
+    }
+};
+
+exports.listerVentes = async (filter = {}) => {
+    return await Vente.find(filter).populate('article', 'nom').populate('gerant', 'nom').populate('boutique', 'nom');
 };

@@ -1,9 +1,18 @@
 const articleRepository = require('../repositories/articleRepository');
+const Article = require('../models/Article'); // Assurez-vous que le modèle est importé
 
+// Doit maintenant accepter un filtre et utiliser populate
+exports.listerArticles = async (filter = {}) => {
+    return await Article.find(filter).populate('boutique');
+};
 exports.creerArticle = async (data) => {
     // 1. Logique métier : Vérification des prix (Point 6 du CDC)
     if (Number(data.prixVente) <= Number(data.prixAchat)) {
         throw new Error("Le prix de vente doit être supérieur au prix d'achat.");
+    }
+
+    if (!data.boutique) {
+        throw new Error("La boutique est obligatoire.");
     }
  
     // 2. Préparation des données
@@ -11,15 +20,12 @@ exports.creerArticle = async (data) => {
         nom: data.nom,
         prixAchat: Number(data.prixAchat),
         prixVente: Number(data.prixVente),
-        quantite: Number(data.quantite) || 0
+        quantite: Number(data.quantite) || 0,
+        boutique: data.boutique // Correction: Ajout du champ boutique
     };
  
     // 3. Appel au repository pour l'enregistrement
     return await articleRepository.create(articleData);
-};
-
-exports.listerArticles = async () => {
-    return await articleRepository.findAll();
 };
 
 exports.supprimerArticle = async (id) => {
@@ -53,4 +59,22 @@ exports.modifierArticle = async (id, data) => {
     const articleModifie = await articleRepository.update(id, data);
 
     return articleModifie;
+};
+
+exports.transfererStock = async (sourceId, targetId, articleIds = null) => {
+    if (sourceId === targetId) {
+        throw new Error("La boutique source et la boutique de destination doivent être différentes.");
+    }
+    
+    const query = { boutique: sourceId };
+
+    // Si une liste d'IDs est fournie, on filtre.
+    if (Array.isArray(articleIds)) {
+        if (articleIds.length === 0) return { modifiedCount: 0 }; // Rien à transférer
+        query._id = { $in: articleIds };
+    }
+
+    // Met à jour les articles correspondants
+    const result = await Article.updateMany(query, { boutique: targetId });
+    return result;
 };

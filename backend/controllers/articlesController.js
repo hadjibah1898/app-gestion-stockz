@@ -1,11 +1,27 @@
 const articleService = require('../services/articleService');
 
 // ✅ Nom synchronisé avec ton fichier de routes (articlesRoute.js)
+// Mis à jour pour filtrer par rôle
 exports.getAllArticles = async (req, res) => {
     try {
-        const articles = await articleService.listerArticles();
+        const filter = {};
+        // Si l'utilisateur connecté est un Gérant (info venant du token JWT via le middleware 'protect')
+        if (req.user.role === 'Gérant') {
+            // S'il n'a pas de boutique assignée, il ne voit aucun article.
+            if (!req.user.boutique) {
+                return res.status(200).json([]);
+            }
+            // On ajoute un filtre pour ne retourner que les articles de sa boutique.
+            filter.boutique = req.user.boutique;
+        }
+
+        // Le service doit être mis à jour pour accepter ce filtre
+        // et pour "populer" les informations de la boutique.
+        // Ex: articleService.listerArticles(filter) -> Article.find(filter).populate('boutique')
+        const articles = await articleService.listerArticles(filter);
         res.status(200).json(articles);
     } catch (error) {
+        console.error("Erreur getAllArticles:", error);
         res.status(500).json({ message: "Impossible de récupérer les articles" });
     }
 };
@@ -19,7 +35,7 @@ exports.addArticle = async (req, res) => {
     } catch (error) {
         console.error("❌ Erreur ArticleController:", error.message);
         // Si c'est une erreur de validation métier, renvoyer une erreur 400 (Bad Request)
-        if (error.message.includes("prix de vente")) {
+        if (error.message.includes("prix de vente") || error.message.includes("boutique")) {
             return res.status(400).json({ message: error.message });
         }
         // Pour les autres erreurs, une erreur 500 générique est plus sûre
@@ -38,7 +54,7 @@ exports.deleteArticle = async (req, res) => {
 };
 
 exports.updateArticle = async (req, res) => {
-    try {
+    try {k
         const articleId = req.params.id;
         const articleData = req.body;
 
@@ -54,5 +70,18 @@ exports.updateArticle = async (req, res) => {
             return res.status(404).json({ message: error.message });
         }
         res.status(500).json({ message: "Une erreur interne est survenue lors de la modification de l'article." });
+    }
+};
+
+exports.transferArticles = async (req, res) => {
+    try {
+        const { sourceId, targetId, articleIds } = req.body;
+        if (!sourceId || !targetId) {
+            return res.status(400).json({ message: "Les boutiques source et destination sont requises." });
+        }
+        const result = await articleService.transfererStock(sourceId, targetId, articleIds);
+        res.status(200).json({ message: `${result.modifiedCount} articles transférés avec succès.` });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
 };

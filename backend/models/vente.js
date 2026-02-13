@@ -18,6 +18,11 @@ const venteSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
+    },
+    boutique: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Boutique',
+        required: true
     }
 }, { timestamps: true });
 

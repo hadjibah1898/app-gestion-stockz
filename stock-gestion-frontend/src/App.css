@@ -1,0 +1,55 @@
+/* src/App.css */
+#main-wrapper {
+    display: flex;
+    width: 100%;
+}
+
+.page-wrapper {
+    margin-left: 240px; /* Doit correspondre à la largeur de la sidebar */
+    width: calc(100% - 240px);
+    transition: margin-left 0.2s ease-in-out;
+}
+
+/* Transition fluide pour le changement de thème */
+body, .card, .navbar, .sidebar-link, .form-control, .table, .modal-content {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Force les éléments avec bg-white à devenir sombres en mode nuit */
+[data-bs-theme="dark"] .bg-white {
+    background-color: var(--bs-card-bg) !important;
+    color: var(--bs-body-color) !important;
+}
+
+/* --- Dark Mode Overrides --- */
+[data-bs-theme="dark"] .page-wrapper {
+    background-color: #1c2128; /* Un fond sombre pour la zone de contenu */
+}
+
+[data-bs-theme="dark"] .left-sidebar {
+    background-color: #22272e; /* Fond sombre pour la sidebar */
+    border-right: 1px solid #333942;
+    box-shadow: none;
+}
+
+[data-bs-theme="dark"] .brand-logo {
+    border-bottom-color: #333942;
+}
+
+[data-bs-theme="dark"] .sidebar-item .sidebar-link {
+    color: #cdd9e5; /* Texte plus clair */
+}
+
+[data-bs-theme="dark"] .sidebar-item .sidebar-link:hover,
+[data-bs-theme="dark"] .sidebar-item .sidebar-link.active {
+    background-color: rgba(13, 110, 253, 0.15); /* Couleur d'accentuation pour le survol/actif */
+    color: #58a6ff;
+}
+
+/* Configuration globale des variables Bootstrap pour le mode sombre */
+[data-bs-theme="dark"] {
+    --bs-body-bg: #1c2128;
+    --bs-body-color: #cdd9e5;
+    --bs-card-bg: #22272e;
+    --bs-border-color: #444c56;
+}

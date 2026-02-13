@@ -1,0 +1,1065 @@
+{
+  "info": {
+    "name": "Backend Gestion de Stock et Ventes",
+    "description": "Collection de tests Postman pour valider le backend de l'application de gestion de stock et ventes",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001/api"
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "gerantToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "boutiqueId",
+      "value": ""
+    },
+    {
+      "key": "articleId",
+      "value": ""
+    },
+    {
+      "key": "venteId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Setup & Cleanup",
+      "item": [
+        {
+          "name": "Reset Database",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "{{baseUrl}}/test/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["test", "reset"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Database reset successful', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 204, 404]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Test Data",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"createAdmin\": true,\n  \"createBoutique\": true,\n  \"createArticles\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/test/setup",
+              "host": ["{{baseUrl}}"],
+              "path": ["test", "setup"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Test data created successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Authentification",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Test User\",\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User registration successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.equal('Utilisateur créé avec succès');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('token');",
+                  "    pm.expect(jsonData).to.have.property('role');",
+                  "    pm.expect(jsonData).to.have.property('nom');",
+                  "    ",
+                  "    // Store token for future requests",
+                  "    pm.environment.set('gerantToken', jsonData.token);",
+                  "    pm.environment.set('userId', jsonData.id);",
+                  "});",
+                  "",
+                  "pm.test('Token is valid JWT', function () {",
+                  "    const token = pm.response.json().token;",
+                  "    const parts = token.split('.');",
+                  "    pm.expect(parts).to.have.lengthOf(3);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Manager (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Manager Test\",\n  \"email\": \"manager@example.com\",\n  \"password\": \"password123\",\n  \"boutique\": \"{{boutiqueId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/create-manager",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "create-manager"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Manager creation successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('Compte Gérant créé avec succès');",
+                  "    pm.expect(jsonData).to.have.property('userId');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Users List (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "users"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Users list retrieved successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    ",
+                  "    // Check if at least one user exists",
+                  "    if (jsonData.length > 0) {",
+                  "        const user = jsonData[0];",
+                  "        pm.expect(user).to.have.property('_id');",
+                  "        pm.expect(user).to.have.property('nom');",
+                  "        pm.expect(user).to.have.property('email');",
+                  "        pm.expect(user).to.have.property('role');",
+                  "        pm.expect(user).to.not.have.property('password'); // Password should not be returned",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Boutiques (Admin)",
+      "item": [
+        {
+          "name": "Create Boutique",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Boutique Test\",\n  \"adresse\": \"123 Rue Test, Ville\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/boutiques",
+              "host": ["{{baseUrl}}"],
+              "path": ["boutiques"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Boutique creation successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('_id');",
+                  "    pm.expect(jsonData).to.have.property('nom');",
+                  "    pm.expect(jsonData).to.have.property('adresse');",
+                  "    pm.expect(jsonData).to.have.property('active');",
+                  "    pm.expect(jsonData.nom).to.equal('Boutique Test');",
+                  "    ",
+                  "    // Store boutique ID for future requests",
+                  "    pm.environment.set('boutiqueId', jsonData._id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Boutiques",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/boutiques",
+              "host": ["{{baseUrl}}"],
+              "path": ["boutiques"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Boutiques list retrieved successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    ",
+                  "    if (jsonData.length > 0) {",
+                  "        const boutique = jsonData[0];",
+                  "        pm.expect(boutique).to.have.property('_id');",
+                  "        pm.expect(boutique).to.have.property('nom');",
+                  "        pm.expect(boutique).to.have.property('adresse');",
+                  "        pm.expect(boutique).to.have.property('active');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Boutique",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Boutique Test Modifiée\",\n  \"adresse\": \"456 Rue Modifiée, Ville\",\n  \"active\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/boutiques/{{boutiqueId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["boutiques", "{{boutiqueId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Boutique update successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('_id');",
+                  "    pm.expect(jsonData.nom).to.equal('Boutique Test Modifiée');",
+                  "    pm.expect(jsonData.adresse).to.equal('456 Rue Modifiée, Ville');",
+                  "    pm.expect(jsonData.active).to.equal(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Articles (Admin)",
+      "item": [
+        {
+          "name": "Create Article",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"T-shirt Test\",\n  \"prixAchat\": 10.00,\n  \"prixVente\": 20.00,\n  \"quantite\": 50\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/articles",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Article creation successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('_id');",
+                  "    pm.expect(jsonData).to.have.property('nom');",
+                  "    pm.expect(jsonData).to.have.property('prixAchat');",
+                  "    pm.expect(jsonData).to.have.property('prixVente');",
+                  "    pm.expect(jsonData).to.have.property('quantite');",
+                  "    pm.expect(jsonData.nom).to.equal('T-shirt Test');",
+                  "    pm.expect(jsonData.prixAchat).to.equal(10);",
+                  "    pm.expect(jsonData.prixVente).to.equal(20);",
+                  "    pm.expect(jsonData.quantite).to.equal(50);",
+                  "    ",
+                  "    // Store article ID for future requests",
+                  "    pm.environment.set('articleId', jsonData._id);",
+                  "});",
+                  "",
+                  "pm.test('Price validation - vente > achat', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.prixVente).to.be.greaterThan(jsonData.prixAchat);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Articles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{gerantToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/articles",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Articles list retrieved successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    ",
+                  "    if (jsonData.length > 0) {",
+                  "        const article = jsonData[0];",
+                  "        pm.expect(article).to.have.property('_id');",
+                  "        pm.expect(article).to.have.property('nom');",
+                  "        pm.expect(article).to.have.property('prixAchat');",
+                  "        pm.expect(article).to.have.property('prixVente');",
+                  "        pm.expect(article).to.have.property('quantite');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Article",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prixVente\": 25.00,\n  \"quantite\": 60\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/articles/{{articleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles", "{{articleId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Article update successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('_id');",
+                  "    pm.expect(jsonData.prixVente).to.equal(25);",
+                  "    pm.expect(jsonData.quantite).to.equal(60);",
+                  "});",
+                  "",
+                  "pm.test('Price validation maintained', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.prixVente).to.be.greaterThan(jsonData.prixAchat);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Article",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/articles/{{articleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles", "{{articleId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Article deletion successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.equal('Article supprimé avec succès');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Article - Invalid Price",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Article Invalid\",\n  \"prixAchat\": 20.00,\n  \"prixVente\": 15.00,\n  \"quantite\": 10\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/articles",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid price validation', function () {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('prix de vente doit être supérieur');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Ventes (Gérant)",
+      "item": [
+        {
+          "name": "Register Sale - Simple",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{gerantToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"articleId\": \"{{articleId}}\",\n  \"quantiteVendue\": 2\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ventes",
+              "host": ["{{baseUrl}}"],
+              "path": ["ventes"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Sale registration successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    ",
+                  "    if (jsonData.length > 0) {",
+                  "        const vente = jsonData[0];",
+                  "        pm.expect(vente).to.have.property('_id');",
+                  "        pm.expect(vente).to.have.property('article');",
+                  "        pm.expect(vente).to.have.property('quantite');",
+                  "        pm.expect(vente).to.have.property('prixTotal');",
+                  "        pm.expect(vente).to.have.property('gerant');",
+                  "        pm.expect(vente.quantite).to.equal(2);",
+                  "        ",
+                  "        // Store vente ID for future requests",
+                  "        pm.environment.set('venteId', vente._id);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Sale - Panier",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{gerantToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"panier\": [\n    {\n      \"articleId\": \"{{articleId}}\",\n      \"quantiteVendue\": 1\n    },\n    {\n      \"articleId\": \"{{articleId}}\",\n      \"quantiteVendue\": 2\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ventes",
+              "host": ["{{baseUrl}}"],
+              "path": ["ventes"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Panier sale registration successful', function () {",
+                  "    pm.expect(pm.response.code).to.equal(201);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    pm.expect(jsonData.length).to.equal(2);",
+                  "    ",
+                  "    // Check first item",
+                  "    const vente1 = jsonData[0];",
+                  "    pm.expect(vente1.quantite).to.equal(1);",
+                  "    ",
+                  "    // Check second item",
+                  "    const vente2 = jsonData[1];",
+                  "    pm.expect(vente2.quantite).to.equal(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Sales History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{gerantToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ventes/historique",
+              "host": ["{{baseUrl}}"],
+              "path": ["ventes", "historique"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Sales history retrieved successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    ",
+                  "    if (jsonData.length > 0) {",
+                  "        const vente = jsonData[0];",
+                  "        pm.expect(vente).to.have.property('_id');",
+                  "        pm.expect(vente).to.have.property('article');",
+                  "        pm.expect(vente).to.have.property('quantite');",
+                  "        pm.expect(vente).to.have.property('prixTotal');",
+                  "        pm.expect(vente).to.have.property('gerant');",
+                  "        ",
+                  "        // Check nested article object",
+                  "        pm.expect(vente.article).to.have.property('_id');",
+                  "        pm.expect(vente.article).to.have.property('nom');",
+                  "        ",
+                  "        // Check nested gerant object",
+                  "        pm.expect(vente.gerant).to.have.property('_id');",
+                  "        pm.expect(vente.gerant).to.have.property('nom');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Sales Logs (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ventes/logs",
+              "host": ["{{baseUrl}}"],
+              "path": ["ventes", "logs"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Sales logs retrieved successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('logs');",
+                  "    pm.expect(jsonData.logs).to.be.an('array');",
+                  "    ",
+                  "    if (jsonData.logs.length > 0) {",
+                  "        const log = jsonData.logs[0];",
+                  "        pm.expect(log).to.include('SUIVI VENTE');",
+                  "        pm.expect(log).to.include('ID:');",
+                  "        pm.expect(log).to.include('Article:');",
+                  "        pm.expect(log).to.include('Qté:');",
+                  "        pm.expect(log).to.include('Vendeur:');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Sale - Insufficient Stock",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{gerantToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"articleId\": \"{{articleId}}\",\n  \"quantiteVendue\": 1000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ventes",
+              "host": ["{{baseUrl}}"],
+              "path": ["ventes"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Insufficient stock validation', function () {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('Stock insuffisant');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Dashboard (Admin)",
+      "item": [
+        {
+          "name": "Get Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["dashboard", "stats"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Dashboard stats retrieved successfully', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    const jsonData = pm.response.json();",
+                  "    ",
+                  "    // Check KPIs",
+                  "    pm.expect(jsonData).to.have.property('kpis');",
+                  "    pm.expect(jsonData.kpis).to.have.property('caTotal');",
+                  "    pm.expect(jsonData.kpis).to.have.property('beneficeTotal');",
+                  "    pm.expect(jsonData.kpis).to.have.property('nombreGerants');",
+                  "    ",
+                  "    // Check graphiques",
+                  "    pm.expect(jsonData).to.have.property('graphiques');",
+                  "    pm.expect(jsonData.graphiques).to.have.property('evolutionBenefice');",
+                  "    pm.expect(jsonData.graphiques).to.have.property('performanceParGerant');",
+                  "    ",
+                  "    // Check meilleursGerants",
+                  "    pm.expect(jsonData).to.have.property('meilleursGerants');",
+                  "    pm.expect(jsonData.meilleursGerants).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('KPIs values are numbers', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.kpis.caTotal).to.be.a('number');",
+                  "    pm.expect(jsonData.kpis.beneficeTotal).to.be.a('number');",
+                  "    pm.expect(jsonData.kpis.nombreGerants).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Security & Error Tests",
+      "item": [
+        {
+          "name": "Unauthorized Access Test",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/articles",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthorized access denied', function () {",
+                  "    pm.expect(pm.response.code).to.equal(401);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('Non autorisé');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid Token Test",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer invalid_token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/articles",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid token rejected', function () {",
+                  "    pm.expect(pm.response.code).to.equal(401);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('token a échoué');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Access Denied - Wrong Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{gerantToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Boutique Interdite\",\n  \"adresse\": \"Interdit\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/boutiques",
+              "host": ["{{baseUrl}}"],
+              "path": ["boutiques"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Role-based access control works', function () {",
+                  "    pm.expect(pm.response.code).to.equal(403);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('Accès refusé');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid ObjectId Test",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/articles/invalid_id",
+              "host": ["{{baseUrl}}"],
+              "path": ["articles", "invalid_id"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid ObjectId rejected', function () {",
+                  "    pm.expect(pm.response.code).to.equal(400);",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.message).to.include('ID fourni n'est pas valide');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

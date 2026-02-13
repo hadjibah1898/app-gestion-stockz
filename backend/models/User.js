@@ -13,14 +13,25 @@ const userSchema = new mongoose.Schema({
     boutique: { 
         type: mongoose.Schema.Types.ObjectId, 
         ref: 'Boutique' // Liaison avec la boutique du gérant [cite: 38]
+    },
+    active: {
+        type: Boolean,
+        default: true
+    },
+    deleted: {
+        type: Boolean,
+        default: false
+    },
+    mustChangePassword: {
+        type: Boolean,
+        default: false
     }
 }, { timestamps: true });
 
 // Hashage du mot de passe avant sauvegarde [cite: 16]
-userSchema.pre('save', async function(next) {
-    if (!this.isModified('password')) return next();
+userSchema.pre('save', async function() {
+    if (!this.isModified('password')) return;
     this.password = await bcrypt.hash(this.password, 10);
-    next();
 });
 
 // Méthode pour comparer les mots de passe lors de la connexion [cite: 28]
