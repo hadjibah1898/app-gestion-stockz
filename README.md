@@ -280,12 +280,7 @@ Ce projet est sous license MIT. Consultez le fichier [LICENSE](LICENSE) pour plu
 
 Un grand merci à :
 - Mon encadrant entreprise pour son accompagnement
-- Mon encadrant académique pour ses conseils
-- Toute l'équipe pour sa collaboration
-- Ma famille pour son soutien indéfectible
 
----
-
-**Projet réalisé dans le cadre d'un master de stage**  
+**Projet réalisé dans le cadre de  mon  stage**  
 **Auteur** : Hadjibah Mohamed  
 **Date** : Février 2026
