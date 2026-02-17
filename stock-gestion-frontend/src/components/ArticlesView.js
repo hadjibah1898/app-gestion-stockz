@@ -1,6 +1,6 @@
 // src/components/ArticlesView.js
-import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { articleAPI, boutiqueAPI } from '../services/api';
 import jsPDF from 'jspdf';
@@ -10,8 +10,10 @@ const ArticlesView = ({ userRole }) => {
   const [articles, setArticles] = useState([]);
   const [boutiques, setBoutiques] = useState([]);
   const [filterBoutique, setFilterBoutique] = useState('');
+  const [searchTerm, setSearchTerm] = useState(''); // État pour la barre de recherche
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentArticle, setCurrentArticle] = useState({
@@ -23,8 +25,12 @@ const ArticlesView = ({ userRole }) => {
     boutique: '' // Ajout du champ boutique
   });
 
-  useEffect(() => {
-    const fetchData = async () => {
+  // États pour la confirmation de suppression
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [articleToDelete, setArticleToDelete] = useState(null);
+
+  const fetchData = useCallback(async () => {
+    try {
       setLoading(true);
       try {
         const [articlesRes, boutiquesRes] = await Promise.all([
@@ -38,9 +44,14 @@ const ArticlesView = ({ userRole }) => {
       } finally {
         setLoading(false);
       }
-    };
-    fetchData();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Erreur de chargement');
+    }
   }, [userRole]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleShowModal = (article = null) => {
     if (article) {
@@ -72,6 +83,8 @@ const ArticlesView = ({ userRole }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    setSuccessMessage('');
     
     // Correction : S'assurer que l'ID de la boutique est envoyé, pas l'objet complet
     const payload = {
@@ -81,25 +94,40 @@ const ArticlesView = ({ userRole }) => {
 
     try {
       if (editMode) {
+        if (!currentArticle._id) {
+            setError("Erreur interne : ID de l'article manquant.");
+            return;
+        }
         await articleAPI.update(currentArticle._id, payload);
+        setSuccessMessage('Article modifié avec succès !');
       } else {
         await articleAPI.create(payload);
+        setSuccessMessage('Article créé avec succès !');
       }
-      window.location.reload(); // Recharge la page pour voir les changements
+      fetchData();
       handleCloseModal();
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur d\'enregistrement');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Êtes-vous sûr de vouloir supprimer cet article ?')) {
-      try {
-        await articleAPI.delete(id);
-        window.location.reload(); // Recharge la page
-      } catch (err) {
-        setError(err.response?.data?.message || 'Erreur de suppression');
-      }
+  const confirmDelete = (id) => {
+    setArticleToDelete(id);
+    setShowDeleteModal(true);
+  };
+
+  const executeDelete = async () => {
+    setError('');
+    setSuccessMessage('');
+    try {
+      await articleAPI.delete(articleToDelete);
+      setShowDeleteModal(false);
+      setSuccessMessage('Article supprimé avec succès !');
+      fetchData();
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Erreur de suppression');
     }
   };
 
@@ -167,7 +195,7 @@ const ArticlesView = ({ userRole }) => {
           </OverlayTrigger>
 
           <OverlayTrigger overlay={<Tooltip>Supprimer</Tooltip>}>
-            <Button variant="link" className="text-danger p-0" onClick={() => handleDelete(article._id)}>
+            <Button variant="link" className="text-danger p-0" onClick={() => confirmDelete(article._id)}>
               <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
             </Button>
           </OverlayTrigger>
@@ -176,10 +204,12 @@ const ArticlesView = ({ userRole }) => {
     }
   ];
 
-  // Filtrer les articles si une boutique est sélectionnée
-  const filteredArticles = filterBoutique 
-    ? articles.filter(a => (a.boutique?._id || a.boutique) === filterBoutique)
-    : articles;
+  // Filtrer les articles en fonction de la boutique sélectionnée et du terme de recherche
+  const filteredArticles = articles.filter(article => {
+    const matchBoutique = !filterBoutique || (article.boutique?._id || article.boutique) === filterBoutique;
+    const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchBoutique && matchSearch;
+  });
 
   if (loading) return <Spinner animation="border" />;
 
@@ -201,22 +231,32 @@ const ArticlesView = ({ userRole }) => {
         </div>
       </div>
 
-      {/* Filtre par boutique (Visible uniquement pour l'Admin) */}
-      {userRole === 'Admin' && (
-        <div className="mb-4">
-          <Form.Select 
-            value={filterBoutique} 
-            onChange={(e) => setFilterBoutique(e.target.value)}
-            style={{ maxWidth: '300px' }}
-          >
-            <option value="">Toutes les boutiques</option>
-            {boutiques.map(boutique => (
-              <option key={boutique._id} value={boutique._id}>{boutique.nom}</option>
-            ))}
-          </Form.Select>
-        </div>
-      )}
+      {/* Filtres */}
+      <Row className="mb-4">
+        <Col md={4}>
+          <Form.Control
+            type="text"
+            placeholder="Rechercher par nom..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </Col>
+        {userRole === 'Admin' && (
+          <Col md={4}>
+            <Form.Select 
+              value={filterBoutique} 
+              onChange={(e) => setFilterBoutique(e.target.value)}
+            >
+              <option value="">Toutes les boutiques</option>
+              {boutiques.map(boutique => (
+                <option key={boutique._id} value={boutique._id}>{boutique.nom}</option>
+              ))}
+            </Form.Select>
+          </Col>
+        )}
+      </Row>
 
+      {successMessage && <Alert variant="success">{successMessage}</Alert>}
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>
         {error}
       </Alert>}
@@ -311,6 +351,23 @@ const ArticlesView = ({ userRole }) => {
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modale de Confirmation de Suppression */}
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title className="text-danger">⚠️ Suppression d'Article</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="fw-bold">Êtes-vous sûr de vouloir supprimer cet article ?</p>
+          <Alert variant="warning" className="mb-0 small">
+            Cette action est irréversible et supprimera l'article de votre inventaire.
+          </Alert>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
+          <Button variant="danger" onClick={executeDelete}>Supprimer définitivement</Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

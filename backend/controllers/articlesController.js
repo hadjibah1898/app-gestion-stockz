@@ -1,6 +1,6 @@
 const articleService = require('../services/articleService');
 
-// ✅ Nom synchronisé avec ton fichier de routes (articlesRoute.js)
+//  Nom synchronisé avec ton fichier de routes (articlesRoute.js)
 // Mis à jour pour filtrer par rôle
 exports.getAllArticles = async (req, res) => {
     try {
@@ -26,7 +26,7 @@ exports.getAllArticles = async (req, res) => {
     }
 };
 
-// ✅ Une seule version de addArticle (Gestion des articles - Point 5.4 [cite: 40, 41])
+//  Une seule version de addArticle (Gestion des articles - Point 5.4 [cite: 40, 41])
 exports.addArticle = async (req, res) => {
     try {
         // Le service gère la logique (Prix d'achat/vente - Point 5.4 [cite: 45])
@@ -43,7 +43,7 @@ exports.addArticle = async (req, res) => {
     }
 };
 
-// ✅ Ajoute l'export pour la suppression (Point 5.4 [cite: 43])
+//  Ajoute l'export pour la suppression (Point 5.4 [cite: 43])
 exports.deleteArticle = async (req, res) => {
     try {
         await articleService.supprimerArticle(req.params.id);
@@ -54,7 +54,7 @@ exports.deleteArticle = async (req, res) => {
 };
 
 exports.updateArticle = async (req, res) => {
-    try {k
+    try {
         const articleId = req.params.id;
         const articleData = req.body;
 

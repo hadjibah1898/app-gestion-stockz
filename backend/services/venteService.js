@@ -1,10 +1,11 @@
 const Vente = require('../models/vente');
 const Article = require('../models/Article');
+const notificationService = require('./notificationService');
 
 exports.traiterVente = async (articleId, quantite, userId, boutiqueId) => {
     try {
-        // 1. Récupérer l'article
-        const article = await Article.findById(articleId);
+        // 1. Récupérer l'article (avec les infos boutique pour l'email)
+        const article = await Article.findById(articleId).populate('boutique');
         if (!article) throw new Error("Article introuvable");
 
         // 2. Vérifier le stock
@@ -28,6 +29,11 @@ exports.traiterVente = async (articleId, quantite, userId, boutiqueId) => {
         await article.save();
         const savedVente = await vente.save();
 
+        // 5. Vérifier le seuil de stock (ex: 10) et notifier
+        if (article.quantite <= 10) {
+            notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
+        }
+
         return savedVente;
 
     } catch (error) {
@@ -45,7 +51,7 @@ exports.traiterPanier = async (items, userId, boutiqueId) => {
             const { article: articleId, quantite } = item;
 
             // 1. Récupérer l'article
-            const article = await Article.findById(articleId);
+            const article = await Article.findById(articleId).populate('boutique');
             if (!article) {
                 throw new Error(`Article introuvable (ID: ${articleId})`);
             }
@@ -58,6 +64,11 @@ exports.traiterPanier = async (items, userId, boutiqueId) => {
             // 3. Mettre à jour le stock de l'article
             article.quantite -= quantite;
             await article.save();
+
+            // Notification Stock Faible
+            if (article.quantite <= 10) {
+                notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
+            }
 
             // 4. Créer l'enregistrement de la vente
             const prixTotal = article.prixVente * quantite;
@@ -81,5 +92,5 @@ exports.traiterPanier = async (items, userId, boutiqueId) => {
 };
 
 exports.listerVentes = async (filter = {}) => {
-    return await Vente.find(filter).populate('article', 'nom').populate('gerant', 'nom').populate('boutique', 'nom');
+    return await Vente.find(filter).sort({ createdAt: -1 }).populate('article', 'nom').populate('gerant', 'nom').populate('boutique', 'nom');
 };

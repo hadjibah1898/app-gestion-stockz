@@ -13,16 +13,21 @@ const VentesView = ({ userRole }) => {
   const [error, setError] = useState('');
   const [selectedArticle, setSelectedArticle] = useState('');
   const [quantite, setQuantite] = useState(1);
+  const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [dateFilter]); // Recharger quand les dates changent
 
   const fetchData = async () => {
     try {
+      const params = {};
+      if (dateFilter.start) params.startDate = dateFilter.start;
+      if (dateFilter.end) params.endDate = dateFilter.end;
+
       const [articlesRes, historiqueRes] = await Promise.all([
         articleAPI.getAll(),
-        venteAPI.getHistorique()
+        venteAPI.getHistorique(params)
       ]);
       setArticles(articlesRes.data.filter(a => a.quantite > 0));
       setHistorique(historiqueRes.data);
@@ -96,22 +101,43 @@ const VentesView = ({ userRole }) => {
     
     const tableColumn = ["Date", "Article", "Quantité", "Prix Total", "Vendeur"];
     const tableRows = [];
+    let totalGlobal = 0;
 
     historique.forEach(vente => {
+      totalGlobal += vente.prixTotal;
       const venteData = [
         new Date(vente.createdAt).toLocaleDateString() + ' ' + new Date(vente.createdAt).toLocaleTimeString(),
         vente.article?.nom || 'Article supprimé',
         vente.quantite,
-        vente.prixTotal.toLocaleString() + ' GNF',
+        (vente.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
         vente.gerant?.nom || 'Inconnu'
       ];
       tableRows.push(venteData);
     });
 
+    // Ajout de la ligne de Total Global
+    tableRows.push([
+      "", 
+      "", 
+      "TOTAL GLOBAL", 
+      (totalGlobal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '), 
+      ""
+    ]);
+
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
       startY: 20,
+      columnStyles: {
+        3: { halign: 'right' }
+      },
+      // Mettre en gras et gris clair la dernière ligne (Total)
+      didParseCell: (data) => {
+        if (data.row.index === tableRows.length - 1) {
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.fillColor = [240, 240, 240];
+        }
+      }
     });
     doc.save("historique_ventes.pdf");
   };
@@ -120,12 +146,37 @@ const VentesView = ({ userRole }) => {
 
   return (
     <div className="p-4">
+      {/* Style pour colorer l'icône du calendrier natif en bleu primaire */}
+      <style>{`
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+            filter: invert(33%) sepia(78%) saturate(2646%) hue-rotate(203deg) brightness(102%) contrast(103%);
+        }
+      `}</style>
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h3 className="fw-bold mb-0 text-body">{userRole === 'Admin' ? 'Historique des Ventes' : 'Gestion des Ventes'}</h3>
-        <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
-            <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
-            Exporter PDF
-        </Button>
+        <div className="d-flex gap-2">
+            <Form.Control 
+                type="date" 
+                value={dateFilter.start}
+                onChange={(e) => setDateFilter({...dateFilter, start: e.target.value})}
+                className="rounded-pill shadow-sm"
+                style={{ maxWidth: '160px' }}
+                title="Date de début"
+            />
+            <Form.Control 
+                type="date" 
+                value={dateFilter.end}
+                onChange={(e) => setDateFilter({...dateFilter, end: e.target.value})}
+                className="rounded-pill shadow-sm"
+                style={{ maxWidth: '160px' }}
+                title="Date de fin"
+            />
+            <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
+                <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
+                Exporter PDF
+            </Button>
+        </div>
       </div>
 
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>

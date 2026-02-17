@@ -26,8 +26,6 @@ exports.login = async (req, res) => {
         }
 
         // Vérification du statut actif. 
-        // On vérifie explicitement 'false' pour ne pas bloquer les utilisateurs créés avant l'ajout de ce champ (undefined).
-        // On permet aux Admins de se connecter même si le flag est false pour éviter un blocage total.
         if (user.active === false && user.role !== 'Admin') {
             return res.status(403).json({ message: "Votre compte est désactivé. Veuillez contacter l'administrateur." });
         }

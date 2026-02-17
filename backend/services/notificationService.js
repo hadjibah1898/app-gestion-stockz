@@ -1,0 +1,48 @@
+const nodemailer = require('nodemailer');
+const User = require('../models/User');
+
+// Configuration du transporteur (réutilisation des variables d'environnement existantes)
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+
+/**
+ * Envoie une alerte par email aux administrateurs si le stock est faible
+ * @param {Object} article - L'article concerné (doit avoir les champs nom, quantite, boutique)
+ */
+exports.sendLowStockAlert = async (article) => {
+    try {
+        // Récupérer les emails de tous les administrateurs
+        const admins = await User.find({ role: 'Admin' }).select('email');
+        const adminEmails = admins.map(u => u.email);
+
+        if (adminEmails.length === 0) return;
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: adminEmails, // Envoi groupé aux admins
+            subject: `⚠️ Alerte Stock Faible : ${article.nom}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                    <h2 style="color: #dc3545; margin-top: 0;">Alerte Stock Faible</h2>
+                    <p>Le stock de l'article suivant est passé sous le seuil critique :</p>
+                    <ul style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; list-style: none;">
+                        <li style="margin-bottom: 10px;"><strong>📦 Article :</strong> ${article.nom}</li>
+                        <li style="margin-bottom: 10px;"><strong>📉 Quantité restante :</strong> <span style="color: #dc3545; font-weight: bold;">${article.quantite}</span></li>
+                        <li><strong>🏪 Boutique :</strong> ${article.boutique?.nom || 'Non assignée'}</li>
+                    </ul>
+                    <p style="color: #6c757d; font-size: 12px; margin-top: 20px;">Ceci est un message automatique de votre application de gestion de stock.</p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+        console.log(`📧 Alerte stock envoyée pour l'article : ${article.nom}`);
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'alerte stock:", error);
+    }
+};

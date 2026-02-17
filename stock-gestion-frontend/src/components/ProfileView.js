@@ -1,6 +1,7 @@
 // src/components/ProfileView.js
 import React, { useState, useEffect } from 'react';
-import { Card, Form, Button, Alert, Spinner, Row, Col, InputGroup, ProgressBar } from 'react-bootstrap';
+import { Card, Form, Button, Alert, Spinner, Row, Col, InputGroup, ProgressBar, Image, Badge } from 'react-bootstrap';
+import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../services/api';
 
 const ProfileView = () => {
@@ -17,6 +18,8 @@ const ProfileView = () => {
     const [showNewPwd, setShowNewPwd] = useState(false);
     const [showConfirmPwd, setShowConfirmPwd] = useState(false);
     const [strength, setStrength] = useState({ score: 0, label: '', color: '', progress: 0 });
+
+    const navigate = useNavigate();
 
     useEffect(() => {
         fetchUserData();
@@ -116,39 +119,98 @@ const ProfileView = () => {
 
     if (loading) return <div className="text-center p-5"><Spinner animation="border" /></div>;
 
+    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.nom || 'User')}&background=0D6EFD&color=fff&rounded=true&bold=true&size=128`;
+
     return (
         <div className="p-4">
-            <h3 className="fw-bold mb-4 text-body">Mon Profil</h3>
+            <div className="d-flex align-items-center mb-4">
+                <Button 
+                    variant="light" 
+                    className="me-3 shadow-sm rounded-circle d-flex align-items-center justify-content-center p-0" 
+                    style={{ width: '45px', height: '45px', backgroundColor: 'var(--bs-body-bg)' }}
+                    onClick={() => navigate(-1)}
+                    title="Retour"
+                >
+                    <iconify-icon icon="solar:arrow-left-linear" style={{ fontSize: '24px' }}></iconify-icon>
+                </Button>
+                <h3 className="fw-bold mb-0 text-body">Mon Profil</h3>
+            </div>
             <Row className="justify-content-center">
-                <Col md={8} lg={6}>
+                <Col md={4} lg={3} className="mb-4">
+                    <Card className="border-0 shadow-sm rounded-4 text-center h-100">
+                        <Card.Body className="p-4 d-flex flex-column align-items-center justify-content-center">
+                            <div className="position-relative mb-3">
+                                <Image 
+                                    src={avatarUrl} 
+                                    alt="Profile" 
+                                    roundedCircle 
+                                    className="border border-4 border-white shadow-sm"
+                                    width={120}
+                                    height={120}
+                                />
+                            </div>
+                            <h4 className="fw-bold mb-1">{formData.nom}</h4>
+                            <p className="text-muted mb-3">{formData.email}</p>
+                            <Badge bg="primary" className="px-3 py-2 rounded-pill">Utilisateur</Badge>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col md={8} lg={9}>
                     <Card className="border-0 shadow-sm rounded-4 mb-4">
                         <Card.Body className="p-4">
-                            <h5 className="fw-bold mb-3">Informations personnelles</h5>
+                            <div className="d-flex align-items-center mb-4">
+                                <div className="bg-primary-subtle text-primary rounded-circle d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}>
+                                    <iconify-icon icon="solar:user-id-bold" style={{fontSize: '20px'}}></iconify-icon>
+                                </div>
+                                <h5 className="fw-bold mb-0">Informations personnelles</h5>
+                            </div>
+                            
                             {message.text && <Alert variant={message.type}>{message.text}</Alert>}
                             <Form onSubmit={handleSubmit}>
-                                <Form.Group className="mb-3">
-                                    <Form.Label>Nom complet</Form.Label>
-                                    <Form.Control 
-                                        type="text" 
-                                        name="nom" 
-                                        value={formData.nom} 
-                                        onChange={handleChange} 
-                                        required 
-                                    />
-                                </Form.Group>
-                                <Form.Group className="mb-4">
-                                    <Form.Label>Identifiant</Form.Label>
-                                    <Form.Control 
-                                        type="email" 
-                                        name="email" 
-                                        value={formData.email} 
-                                        onChange={handleChange} 
-                                        required 
-                                    />
-                                </Form.Group>
-                                <div className="d-grid">
-                                    <Button variant="primary" type="submit" disabled={saving}>
-                                        {saving ? <Spinner size="sm" animation="border" /> : 'Enregistrer les modifications'}
+                                <Row>
+                                    <Col md={6}>
+                                        <Form.Group className="mb-3">
+                                            <Form.Label>Nom complet</Form.Label>
+                                            <InputGroup>
+                                                <InputGroup.Text className="bg-light border-end-0">
+                                                    <iconify-icon icon="solar:user-linear"></iconify-icon>
+                                                </InputGroup.Text>
+                                                <Form.Control 
+                                                    type="text" 
+                                                    name="nom" 
+                                                    value={formData.nom} 
+                                                    onChange={handleChange} 
+                                                    required 
+                                                    className="border-start-0 bg-light"
+                                                />
+                                            </InputGroup>
+                                        </Form.Group>
+                                    </Col>
+                                    <Col md={6}>
+                                        <Form.Group className="mb-4">
+                                            <Form.Label>Email</Form.Label>
+                                            <InputGroup>
+                                                <InputGroup.Text className="bg-light border-end-0">
+                                                    <iconify-icon icon="solar:letter-linear"></iconify-icon>
+                                                </InputGroup.Text>
+                                                <Form.Control 
+                                                    type="email" 
+                                                    name="email" 
+                                                    value={formData.email} 
+                                                    onChange={handleChange} 
+                                                    required 
+                                                    className="border-start-0 bg-light"
+                                                />
+                                            </InputGroup>
+                                        </Form.Group>
+                                    </Col>
+                                </Row>
+                                <div className="d-flex justify-content-end">
+                                    <Button variant="primary" type="submit" disabled={saving} className="px-4 rounded-pill">
+                                        {saving ? <Spinner size="sm" animation="border" /> : <>
+                                            <iconify-icon icon="solar:disk-bold" className="me-2 align-middle"></iconify-icon>
+                                            Enregistrer
+                                        </>}
                                     </Button>
                                 </div>
                             </Form>
@@ -157,65 +219,94 @@ const ProfileView = () => {
 
                     <Card className="border-0 shadow-sm rounded-4">
                         <Card.Body className="p-4">
-                            <h5 className="fw-bold mb-3">Sécurité</h5>
+                            <div className="d-flex align-items-center mb-4">
+                                <div className="bg-warning-subtle text-warning rounded-circle d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}>
+                                    <iconify-icon icon="solar:shield-keyhole-bold" style={{fontSize: '20px'}}></iconify-icon>
+                                </div>
+                                <h5 className="fw-bold mb-0">Sécurité</h5>
+                            </div>
+
                             {pwdMessage.text && <Alert variant={pwdMessage.type}>{pwdMessage.text}</Alert>}
                             <Form onSubmit={handlePasswordChange}>
-                                <Form.Group className="mb-3">
-                                    <Form.Label>Mot de passe actuel</Form.Label>
-                                    <InputGroup>
-                                        <Form.Control 
-                                            type={showCurrentPwd ? "text" : "password"} 
-                                            required 
-                                            value={pwdData.currentPassword}
-                                            onChange={(e) => setPwdData({...pwdData, currentPassword: e.target.value})}
-                                        />
-                                        <Button variant="outline-secondary" onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
-                                            <iconify-icon icon={showCurrentPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                                        </Button>
-                                    </InputGroup>
-                                </Form.Group>
-                                <Form.Group className="mb-3">
-                                    <Form.Label>Nouveau mot de passe</Form.Label>
-                                    <InputGroup>
-                                        <Form.Control 
-                                            type={showNewPwd ? "text" : "password"} 
-                                            required 
-                                            minLength="6"
-                                            value={pwdData.newPassword}
-                                            onChange={handleNewPasswordChange}
-                                        />
-                                        <Button variant="outline-secondary" onClick={() => setShowNewPwd(!showNewPwd)}>
-                                            <iconify-icon icon={showNewPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                                        </Button>
-                                    </InputGroup>
-                                    {pwdData.newPassword && (
-                                        <div className="mt-2">
-                                            <ProgressBar 
-                                                now={strength.progress} 
-                                                variant={strength.color} 
-                                                style={{ height: '6px' }} 
-                                            />
-                                            <small className={`text-${strength.color} fw-bold`}>{strength.label}</small>
-                                        </div>
-                                    )}
-                                </Form.Group>
-                                <Form.Group className="mb-4">
-                                    <Form.Label>Confirmer le nouveau mot de passe</Form.Label>
-                                    <InputGroup>
-                                        <Form.Control 
-                                            type={showConfirmPwd ? "text" : "password"} 
-                                            required 
-                                            value={pwdData.confirmPassword}
-                                            onChange={(e) => setPwdData({...pwdData, confirmPassword: e.target.value})}
-                                        />
-                                        <Button variant="outline-secondary" onClick={() => setShowConfirmPwd(!showConfirmPwd)}>
-                                            <iconify-icon icon={showConfirmPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                                        </Button>
-                                    </InputGroup>
-                                </Form.Group>
-                                <div className="d-grid">
-                                    <Button variant="warning" type="submit" disabled={pwdLoading} className="text-white fw-bold">
-                                        {pwdLoading ? <Spinner size="sm" animation="border" /> : 'Changer le mot de passe'}
+                                <Row>
+                                    <Col md={12}>
+                                        <Form.Group className="mb-3">
+                                            <Form.Label>Mot de passe actuel</Form.Label>
+                                            <InputGroup>
+                                                <InputGroup.Text className="bg-light border-end-0">
+                                                    <iconify-icon icon="solar:key-linear"></iconify-icon>
+                                                </InputGroup.Text>
+                                                <Form.Control 
+                                                    type={showCurrentPwd ? "text" : "password"} 
+                                                    required 
+                                                    value={pwdData.currentPassword}
+                                                    onChange={(e) => setPwdData({...pwdData, currentPassword: e.target.value})}
+                                                    className="border-start-0 bg-light"
+                                                />
+                                                <Button variant="outline-secondary" className="bg-light border-start-0" onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
+                                                    <iconify-icon icon={showCurrentPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
+                                                </Button>
+                                            </InputGroup>
+                                        </Form.Group>
+                                    </Col>
+                                    <Col md={6}>
+                                        <Form.Group className="mb-3">
+                                            <Form.Label>Nouveau mot de passe</Form.Label>
+                                            <InputGroup>
+                                                <InputGroup.Text className="bg-light border-end-0">
+                                                    <iconify-icon icon="solar:lock-password-linear"></iconify-icon>
+                                                </InputGroup.Text>
+                                                <Form.Control 
+                                                    type={showNewPwd ? "text" : "password"} 
+                                                    required 
+                                                    minLength="6"
+                                                    value={pwdData.newPassword}
+                                                    onChange={handleNewPasswordChange}
+                                                    className="border-start-0 bg-light"
+                                                />
+                                                <Button variant="outline-secondary" className="bg-light border-start-0" onClick={() => setShowNewPwd(!showNewPwd)}>
+                                                    <iconify-icon icon={showNewPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
+                                                </Button>
+                                            </InputGroup>
+                                            {pwdData.newPassword && (
+                                                <div className="mt-2">
+                                                    <ProgressBar 
+                                                        now={strength.progress} 
+                                                        variant={strength.color} 
+                                                        style={{ height: '6px', borderRadius: '10px' }} 
+                                                    />
+                                                    <small className={`text-${strength.color} fw-bold mt-1 d-block`}>{strength.label}</small>
+                                                </div>
+                                            )}
+                                        </Form.Group>
+                                    </Col>
+                                    <Col md={6}>
+                                        <Form.Group className="mb-4">
+                                            <Form.Label>Confirmer le nouveau mot de passe</Form.Label>
+                                            <InputGroup>
+                                                <InputGroup.Text className="bg-light border-end-0">
+                                                    <iconify-icon icon="solar:check-circle-linear"></iconify-icon>
+                                                </InputGroup.Text>
+                                                <Form.Control 
+                                                    type={showConfirmPwd ? "text" : "password"} 
+                                                    required 
+                                                    value={pwdData.confirmPassword}
+                                                    onChange={(e) => setPwdData({...pwdData, confirmPassword: e.target.value})}
+                                                    className="border-start-0 bg-light"
+                                                />
+                                                <Button variant="outline-secondary" className="bg-light border-start-0" onClick={() => setShowConfirmPwd(!showConfirmPwd)}>
+                                                    <iconify-icon icon={showConfirmPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
+                                                </Button>
+                                            </InputGroup>
+                                        </Form.Group>
+                                    </Col>
+                                </Row>
+                                <div className="d-flex justify-content-end">
+                                    <Button variant="warning" type="submit" disabled={pwdLoading} className="text-white fw-bold px-4 rounded-pill">
+                                        {pwdLoading ? <Spinner size="sm" animation="border" /> : <>
+                                            <iconify-icon icon="solar:refresh-circle-bold" className="me-2 align-middle"></iconify-icon>
+                                            Changer le mot de passe
+                                        </>}
                                     </Button>
                                 </div>
                             </Form>
@@ -228,5 +319,3 @@ const ProfileView = () => {
 };
 
 export default ProfileView;
-
-

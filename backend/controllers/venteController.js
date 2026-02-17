@@ -61,6 +61,22 @@ exports.getHistorique = async (req, res) => {
             }
             filter.boutique = req.user.boutique;
         }
+
+        // Ajout du filtre par date
+        const { startDate, endDate } = req.query;
+        if (startDate || endDate) {
+            filter.createdAt = {};
+            if (startDate) {
+                filter.createdAt.$gte = new Date(startDate);
+            }
+            if (endDate) {
+                // On met la fin de la journée pour inclure toutes les ventes du jour sélectionné
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                filter.createdAt.$lte = end;
+            }
+        }
+
         const ventes = await venteService.listerVentes(filter);
         res.status(200).json(ventes);
     } catch (error) {

@@ -14,6 +14,10 @@ exports.creerArticle = async (data) => {
     if (!data.boutique) {
         throw new Error("La boutique est obligatoire.");
     }
+
+    if (Number(data.quantite) < 0) {
+        throw new Error("La quantité ne peut pas être négative.");
+    }
  
     // 2. Préparation des données
     const articleData = {
@@ -52,6 +56,10 @@ exports.modifierArticle = async (id, data) => {
 
     if (prixVenteFinal <= prixAchatFinal) {
         throw new Error("Le prix de vente doit être supérieur au prix d'achat.");
+    }
+
+    if (data.quantite !== undefined && Number(data.quantite) < 0) {
+        throw new Error("La quantité ne peut pas être négative.");
     }
 
     // 4. Appel au repository pour la mise à jour

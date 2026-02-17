@@ -56,7 +56,7 @@ exports.deleteBoutique = async (req, res) => {
         
         if (articlesCount > 0) {
             return res.status(400).json({ 
-                message: `Impossible de supprimer cette boutique : elle contient encore ${articlesCount} article(s). Veuillez transférer ou vider le stock avant.` 
+                message: `⚠️ Suppression impossible : Cette boutique contient encore ${articlesCount} article(s). Veuillez utiliser le bouton "Transférer Stock" pour déplacer les articles vers une autre boutique avant de la supprimer.` 
             });
         }
 

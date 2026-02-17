@@ -1,6 +1,6 @@
 // src/components/ShopsView.js
 import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { boutiqueAPI, articleAPI } from '../services/api';
 
@@ -8,6 +8,7 @@ const ShopsView = () => {
   const [boutiques, setBoutiques] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentBoutique, setCurrentBoutique] = useState({
@@ -16,6 +17,9 @@ const ShopsView = () => {
     adresse: '',
     active: true
   });
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5; // Nombre de boutiques par page
+  const [searchTerm, setSearchTerm] = useState(''); // État pour la recherche
 
   // États pour le transfert de stock
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -24,6 +28,11 @@ const ShopsView = () => {
   const [sourceArticles, setSourceArticles] = useState([]);
   const [selectedArticles, setSelectedArticles] = useState([]);
   const [loadingArticles, setLoadingArticles] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
+
+  // États pour la confirmation de suppression (Modale moderne)
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [boutiqueToDelete, setBoutiqueToDelete] = useState(null);
 
   useEffect(() => {
     fetchBoutiques();
@@ -81,14 +90,19 @@ const ShopsView = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    setSuccessMessage('');
     try {
       if (editMode) {
         await boutiqueAPI.update(currentBoutique._id, currentBoutique);
+        setSuccessMessage('Boutique modifiée avec succès !');
       } else {
         await boutiqueAPI.create(currentBoutique);
+        setSuccessMessage('Boutique créée avec succès !');
       }
       fetchBoutiques();
       handleCloseModal();
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur d\'enregistrement');
     }
@@ -96,32 +110,49 @@ const ShopsView = () => {
 
   const handleTransfer = async (e) => {
     e.preventDefault();
+    setTransferLoading(true);
     setTransferMessage({ type: '', text: '' });
     if (transferData.sourceId === transferData.targetId) {
+        setTransferLoading(false);
         return setTransferMessage({ type: 'danger', text: "La boutique source et destination doivent être différentes." });
     }
     
     if (selectedArticles.length === 0) {
+        setTransferLoading(false);
         return setTransferMessage({ type: 'warning', text: "Veuillez sélectionner au moins un article (ou tout sélectionner)." });
     }
 
     try {
         const res = await articleAPI.transferStock({ ...transferData, articleIds: selectedArticles });
-        setTransferMessage({ type: 'success', text: res.data.message });
+        setShowTransferModal(false);
+        setSuccessMessage(res.data.message);
         setTransferData({ sourceId: '', targetId: '' });
+        setTransferMessage({ type: '', text: '' });
+        setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
         setTransferMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors du transfert." });
+    } finally {
+        setTransferLoading(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Êtes-vous sûr de vouloir supprimer cette boutique ? Assurez-vous d\'avoir transféré le stock avant.')) {
-      try {
-        await boutiqueAPI.delete(id);
-        fetchBoutiques();
-      } catch (err) {
-        setError(err.response?.data?.message || 'Erreur de suppression');
-      }
+  const confirmDelete = (id) => {
+    setBoutiqueToDelete(id);
+    setShowDeleteModal(true);
+  };
+
+  const executeDelete = async () => {
+    setError('');
+    setSuccessMessage('');
+    try {
+      await boutiqueAPI.delete(boutiqueToDelete);
+      fetchBoutiques();
+      setShowDeleteModal(false);
+      setSuccessMessage('Boutique supprimée avec succès !');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Erreur de suppression');
+      setShowDeleteModal(false);
     }
   };
 
@@ -155,7 +186,7 @@ const ShopsView = () => {
             <Button
               variant="link"
               className="text-danger p-0"
-              onClick={() => handleDelete(boutique._id)}
+              onClick={() => confirmDelete(boutique._id)}
             >
               <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
             </Button>
@@ -164,6 +195,15 @@ const ShopsView = () => {
       )
     }
   ];
+
+  // Logique de filtrage et pagination
+  const filteredBoutiques = boutiques.filter(boutique => 
+    boutique.nom.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentBoutiques = filteredBoutiques.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredBoutiques.length / itemsPerPage);
 
   if (loading) return <Spinner animation="border" />;
 
@@ -183,15 +223,41 @@ const ShopsView = () => {
         </div>
       </div>
 
+      {/* Barre de recherche */}
+      <div className="mb-4">
+        <Form.Control
+          type="text"
+          placeholder="Rechercher une boutique par nom..."
+          value={searchTerm}
+          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+          style={{ maxWidth: '300px' }}
+          className="shadow-sm"
+        />
+      </div>
+
+      {successMessage && <Alert variant="success">{successMessage}</Alert>}
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
 
       <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
         <Card.Body className="p-0">
           <TableComponent 
             columns={columns}
-            data={boutiques}
+            data={currentBoutiques}
             emptyMessage="Aucune boutique trouvée"
           />
+          {totalPages > 1 && (
+            <div className="d-flex justify-content-center p-3 border-top">
+              <Pagination className="mb-0">
+                <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
+                {[...Array(totalPages)].map((_, idx) => (
+                  <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
+                    {idx + 1}
+                  </Pagination.Item>
+                ))}
+                <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
+              </Pagination>
+            </div>
+          )}
         </Card.Body>
       </Card>
 
@@ -323,9 +389,29 @@ const ShopsView = () => {
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Fermer</Button>
-            <Button variant="primary" type="submit">Transférer</Button>
+            <Button variant="primary" type="submit" disabled={transferLoading}>
+              {transferLoading ? <Spinner as="span" animation="border" size="sm" /> : 'Transférer'}
+            </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modale de Confirmation de Suppression (Moderne) */}
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title className="text-danger">⚠️ Suppression de Boutique</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="fw-bold">Êtes-vous sûr de vouloir supprimer cette boutique ?</p>
+          <Alert variant="warning" className="mb-0 small">
+            <iconify-icon icon="solar:danger-triangle-bold" className="me-2 align-middle"></iconify-icon>
+            Cette action est irréversible. Assurez-vous que la boutique est vide ou utilisez "Transférer Stock" au préalable.
+          </Alert>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
+          <Button variant="danger" onClick={executeDelete}>Supprimer définitivement</Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

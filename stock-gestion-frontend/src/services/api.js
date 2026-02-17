@@ -24,6 +24,20 @@ api.interceptors.request.use(
   }
 );
 
+// Interceptor pour gérer les réponses (ex: token expiré)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      // Token expiré ou invalide : on nettoie et on redirige
+      localStorage.removeItem('token');
+      // Redirection forcée vers le login
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const authAPI = {
   login: (email, password) => api.post('auth/login', { email, password }),
   register: (data) => api.post('auth/register', data),
@@ -57,7 +71,7 @@ export const articleAPI = {
 
 export const venteAPI = {
   create: (data) => api.post('ventes', data),
-  getHistorique: () => api.get('ventes/historique'),
+  getHistorique: (params) => api.get('ventes/historique', { params }),
   getLogs: () => api.get('ventes/logs'),
 };
 

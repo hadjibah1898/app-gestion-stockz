@@ -10,6 +10,7 @@ const ManagersView = () => {
   const [boutiques, setBoutiques] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentManagerId, setCurrentManagerId] = useState(null);
@@ -21,6 +22,11 @@ const ManagersView = () => {
     password: '',
     boutique: ''
   });
+
+  // États pour la confirmation de suppression (Modale moderne)
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [managerToDelete, setManagerToDelete] = useState(null);
+  const [deleteType, setDeleteType] = useState('soft'); // 'soft' (corbeille) ou 'force' (définitif)
 
   useEffect(() => {
     fetchData();
@@ -71,6 +77,7 @@ const ManagersView = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
     try {
       if (editMode) {
         const updateData = { ...formData };
@@ -79,24 +86,42 @@ const ManagersView = () => {
           delete updateData.password;
         }
         await authAPI.updateManager(currentManagerId, updateData);
+        setSuccessMessage('Gérant modifié avec succès !');
       } else {
         await authAPI.createManager(formData);
+        setSuccessMessage('Gérant créé avec succès !');
       }
       fetchData();
       handleCloseModal();
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setError(err.response?.data?.message || err.response?.data?.error || "Erreur d'enregistrement");
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Êtes-vous sûr de vouloir supprimer ce gérant ? Cette action est irréversible.')) {
-      try {
-        await authAPI.deleteManager(id);
-        fetchData();
-      } catch (err) {
-        setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de suppression');
+  const confirmDelete = (id, type) => {
+    setManagerToDelete(id);
+    setDeleteType(type);
+    setShowDeleteModal(true);
+  };
+
+  const executeDelete = async () => {
+    setError('');
+    setSuccessMessage('');
+    try {
+      if (deleteType === 'force') {
+        await authAPI.forceDeleteManager(managerToDelete);
+        setSuccessMessage('Gérant supprimé définitivement !');
+      } else {
+        await authAPI.deleteManager(managerToDelete);
+        setSuccessMessage('Gérant mis à la corbeille avec succès !');
       }
+      fetchData();
+      setShowDeleteModal(false);
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de suppression');
+      setShowDeleteModal(false);
     }
   };
 
@@ -111,22 +136,14 @@ const ManagersView = () => {
   };
 
   const handleRestore = async (id) => {
+    setError('');
+    setSuccessMessage('');
     try {
       await authAPI.restoreManager(id);
+      setSuccessMessage('Gérant restauré avec succès !');
       fetchData();
     } catch (err) {
       setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de restauration');
-    }
-  };
-
-  const handleForceDelete = async (id) => {
-    if (window.confirm('Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT ce gérant ? Cette action est irréversible.')) {
-      try {
-        await authAPI.forceDeleteManager(id);
-        fetchData();
-      } catch (err) {
-        setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de suppression définitive');
-      }
     }
   };
 
@@ -170,7 +187,7 @@ const ManagersView = () => {
               </OverlayTrigger>
 
               <OverlayTrigger overlay={<Tooltip>Supprimer</Tooltip>}>
-                <Button variant="link" className="text-danger p-0" onClick={() => handleDelete(manager._id)}>
+                <Button variant="link" className="text-danger p-0" onClick={() => confirmDelete(manager._id, 'soft')}>
                   <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
                 </Button>
               </OverlayTrigger>
@@ -178,7 +195,7 @@ const ManagersView = () => {
           ) : (
             <>
               <Button variant="outline-success" size="sm" onClick={() => handleRestore(manager._id)}>Restaurer</Button>
-              <Button variant="danger" size="sm" onClick={() => handleForceDelete(manager._id)}>Supprimer définitivement</Button>
+              <Button variant="danger" size="sm" onClick={() => confirmDelete(manager._id, 'force')}>Supprimer définitivement</Button>
             </>
           )}
         </div>
@@ -206,6 +223,9 @@ const ManagersView = () => {
         </div>
       </div>
 
+      {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>
+        {successMessage}
+      </Alert>}
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>
         {error}
       </Alert>}
@@ -298,6 +318,26 @@ const ManagersView = () => {
             </Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modale de Confirmation de Suppression (Moderne) */}
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title className="text-danger">⚠️ Suppression de Gérant</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="fw-bold">
+            {deleteType === 'force' ? "Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT ce gérant ?" : "Êtes-vous sûr de vouloir mettre ce gérant à la corbeille ?"}
+          </p>
+          <Alert variant="warning" className="mb-0 small">
+            <iconify-icon icon="solar:danger-triangle-bold" className="me-2 align-middle"></iconify-icon>
+            {deleteType === 'force' ? "Cette action est irréversible et supprimera toutes les données associées." : "Le gérant ne pourra plus se connecter, mais pourra être restauré depuis la corbeille."}
+          </Alert>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
+          <Button variant="danger" onClick={executeDelete}>{deleteType === 'force' ? "Supprimer définitivement" : "Mettre à la corbeille"}</Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

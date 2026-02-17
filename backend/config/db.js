@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const connectDB = async () => {
     try {
         // Connexion à MongoDB en utilisant la variable d'environnement
-        // La chaîne de connexion doit être dans un fichier .env (ex: MONGO_URI=mongodb://localhost:27017/app-gestion-stock)
+        // La chaîne de connexion doit être dans un fichier .env 
         const conn = await mongoose.connect(process.env.MONGO_URI);
         console.log(`✅ MongoDB connecté avec succès sur : ${conn.connection.host}`);
     } catch (err) {

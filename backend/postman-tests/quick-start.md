@@ -26,7 +26,7 @@
 2. **Ajoutez les variables** :
    ```
    baseUrl: http://localhost:3001/api
-   adminToken: (vide pour l'instant)
+   adminToken: (eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5ODljN2I0YTE0ODZlOWE1OTU0ZDc2MyIsInJvbGUiOiJBZG1pbiIsImlhdCI6MTc3MTI0NTQzNiwiZXhwIjoxNzcxMzMxODM2fQ.KzpD4dR0dadTHmpeQPYzpLlHg--8QFQznr7VzKlLyiw)
    gerantToken: (vide pour l'instant)
    ```
 
