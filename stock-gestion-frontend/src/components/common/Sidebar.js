@@ -48,8 +48,32 @@ const Sidebar = ({ userRole }) => {
                                 <span className="hide-menu">Articles</span>
                             </NavLink>
                         </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/etat-stock">
+                                 <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">État des stocks</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/fournisseurs">
+                                 <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Fournisseurs</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/centrale">
+                                 <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Boutique Centrale</span>
+                            </NavLink>
+                        </li>
 
                         <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/mouvements">
+                                <iconify-icon icon="solar:graph-up-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Mouvements Stock</span>
+                            </NavLink>
+                        </li>
                          <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/ventes">
                                 <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
@@ -85,5 +109,6 @@ const Sidebar = ({ userRole }) => {
         </aside>
     );
 };
+
 
 export default Sidebar;

@@ -28,19 +28,8 @@ exports.getAllArticles = async (req, res) => {
 
 //  Une seule version de addArticle (Gestion des articles - Point 5.4 [cite: 40, 41])
 exports.addArticle = async (req, res) => {
-    try {
-        // Le service gère la logique (Prix d'achat/vente - Point 5.4 [cite: 45])
-        const article = await articleService.creerArticle(req.body);
-        res.status(201).json(article);
-    } catch (error) {
-        console.error("❌ Erreur ArticleController:", error.message);
-        // Si c'est une erreur de validation métier, renvoyer une erreur 400 (Bad Request)
-        if (error.message.includes("prix de vente") || error.message.includes("boutique")) {
-            return res.status(400).json({ message: error.message });
-        }
-        // Pour les autres erreurs, une erreur 500 générique est plus sûre
-        res.status(500).json({ message: "Une erreur interne est survenue lors de la création de l'article." });
-    }
+    // Action désactivée pour forcer l'utilisation du module d'approvisionnement
+    return res.status(403).json({ message: "La création manuelle d'article est désactivée. Veuillez utiliser le module d'approvisionnement." });
 };
 
 //  Ajoute l'export pour la suppression (Point 5.4 [cite: 43])
@@ -75,13 +64,28 @@ exports.updateArticle = async (req, res) => {
 
 exports.transferArticles = async (req, res) => {
     try {
-        const { sourceId, targetId, articleIds } = req.body;
+        const { sourceId, targetId, articles, details } = req.body;
         if (!sourceId || !targetId) {
             return res.status(400).json({ message: "Les boutiques source et destination sont requises." });
         }
-        const result = await articleService.transfererStock(sourceId, targetId, articleIds);
+        const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details);
         res.status(200).json({ message: `${result.modifiedCount} articles transférés avec succès.` });
     } catch (error) {
         res.status(500).json({ message: error.message });
+    }
+};
+
+/**
+ * @desc    Réapprovisionner une boutique secondaire depuis la boutique centrale
+ * @route   POST /api/articles/restock
+ * @access  Private/Admin
+ */
+exports.restockFromCentral = async (req, res) => {
+    try {
+        const { targetId, articles, details } = req.body;
+        const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, details);
+        res.status(200).json({ message: `${result.modifiedCount} articles réapprovisionnés avec succès.` });
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ message: error.message });
     }
 };

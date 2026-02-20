@@ -1,50 +1,13 @@
 const Vente = require('../models/vente');
 const Article = require('../models/Article');
+const Mouvement = require('../models/Mouvement');
 const notificationService = require('./notificationService');
-
-exports.traiterVente = async (articleId, quantite, userId, boutiqueId) => {
-    try {
-        // 1. Récupérer l'article (avec les infos boutique pour l'email)
-        const article = await Article.findById(articleId).populate('boutique');
-        if (!article) throw new Error("Article introuvable");
-
-        // 2. Vérifier le stock
-        if (article.quantite < quantite) {
-            throw new Error(`Stock insuffisant. Disponible: ${article.quantite}`);
-        }
-
-        // 3. Calculer le total et préparer la vente
-        const prixTotal = article.prixVente * quantite;
-        const vente = new Vente({
-            article: articleId,
-            quantite,
-            prixTotal,
-            gerant: userId,
-            boutique: boutiqueId
-        });
-
-        // 4. Mettre à jour le stock de l'article
-        article.quantite -= quantite;
-        
-        await article.save();
-        const savedVente = await vente.save();
-
-        // 5. Vérifier le seuil de stock (ex: 10) et notifier
-        if (article.quantite <= 10) {
-            notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
-        }
-
-        return savedVente;
-
-    } catch (error) {
-        throw error; // Renvoyer l'erreur au contrôleur
-    }
-};
 
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
 exports.traiterPanier = async (items, userId, boutiqueId) => {
     try {
         const resultats = [];
+        const articlesVendusPourMouvement = [];
 
         for (const item of items) {
             // Correction pour correspondre aux données envoyées par le frontend (`article` et `quantite`)
@@ -83,6 +46,18 @@ exports.traiterPanier = async (items, userId, boutiqueId) => {
             const savedVente = await vente.save();
             
             resultats.push(savedVente);
+            articlesVendusPourMouvement.push({ nomArticle: article.nom, quantite: quantite });
+        }
+
+        // Enregistrer un seul mouvement pour tout le panier
+        if (articlesVendusPourMouvement.length > 0) {
+            await Mouvement.create({
+                type: 'Vente',
+                boutiqueSource: boutiqueId,
+                articles: articlesVendusPourMouvement,
+                operateur: userId,
+                details: `Vente de ${articlesVendusPourMouvement.length} type(s) d'article(s).`
+            });
         }
 
         return resultats;
@@ -92,5 +67,46 @@ exports.traiterPanier = async (items, userId, boutiqueId) => {
 };
 
 exports.listerVentes = async (filter = {}) => {
-    return await Vente.find(filter).sort({ createdAt: -1 }).populate('article', 'nom').populate('gerant', 'nom').populate('boutique', 'nom');
+    return await Vente.find(filter).sort({ createdAt: -1 }).populate('article', 'nom image').populate('gerant', 'nom').populate('boutique', 'nom');
+};
+
+exports.annulerVente = async (venteId, user) => {
+    const vente = await Vente.findById(venteId);
+    if (!vente) throw new Error("Vente introuvable.");
+    if (vente.isCancelled) throw new Error("Cette vente est déjà annulée.");
+
+    // Règle métier : Un gérant ne peut annuler une vente que dans les 24h.
+    if (user.role === 'Gérant') {
+        const now = new Date();
+        const saleDate = new Date(vente.createdAt);
+        const diffInHours = (now - saleDate) / (1000 * 60 * 60);
+
+        if (diffInHours > 24) {
+            throw new Error("L'annulation par un gérant n'est possible que dans les 24 heures suivant la vente.");
+        }
+    }
+
+    const article = await Article.findById(vente.article);
+    // Si l'article a été supprimé, on ne peut pas restaurer le stock facilement.
+    if (!article) throw new Error("Impossible d'annuler : L'article associé n'existe plus.");
+
+    // Restauration du stock
+    article.quantite += vente.quantite;
+    await article.save();
+
+    // Marquer la vente comme annulée
+    vente.isCancelled = true;
+    await vente.save();
+
+    // Enregistrer un mouvement d'annulation pour la traçabilité
+    await Mouvement.create({
+        type: 'Vente',
+        details: `ANNULATION Vente #${vente._id} - Retour Stock`,
+        boutiqueSource: vente.boutique, // Le stock revient ici
+        articles: [{ nomArticle: article.nom, quantite: vente.quantite }],
+        operateur: user.id,
+        isCancelled: true
+    });
+
+    return { message: "Vente annulée avec succès. Le stock a été restauré." };
 };

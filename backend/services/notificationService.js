@@ -31,6 +31,7 @@ exports.sendLowStockAlert = async (article) => {
                     <h2 style="color: #dc3545; margin-top: 0;">Alerte Stock Faible</h2>
                     <p>Le stock de l'article suivant est passé sous le seuil critique :</p>
                     <ul style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; list-style: none;">
+                        ${article.image ? `<li style="text-align: center; margin-bottom: 15px;"><img src="${article.image}" alt="${article.nom}" style="max-height: 150px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);" /></li>` : ''}
                         <li style="margin-bottom: 10px;"><strong>📦 Article :</strong> ${article.nom}</li>
                         <li style="margin-bottom: 10px;"><strong>📉 Quantité restante :</strong> <span style="color: #dc3545; font-weight: bold;">${article.quantite}</span></li>
                         <li><strong>🏪 Boutique :</strong> ${article.boutique?.nom || 'Non assignée'}</li>

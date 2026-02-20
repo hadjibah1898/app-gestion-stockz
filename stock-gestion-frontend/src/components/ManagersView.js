@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, InputGroup, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { Card } from 'react-bootstrap'; // Import Card
 import TableComponent from './common/Table';
-import { authAPI, boutiqueAPI } from '../services/api';
+import { authAPI, boutiqueAPI, venteAPI } from '../services/api';
 
 const ManagersView = () => {
   const [managers, setManagers] = useState([]);
@@ -14,7 +14,6 @@ const ManagersView = () => {
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentManagerId, setCurrentManagerId] = useState(null);
-  const [showTrash, setShowTrash] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     nom: '',
@@ -23,19 +22,20 @@ const ManagersView = () => {
     boutique: ''
   });
 
-  // États pour la confirmation de suppression (Modale moderne)
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [managerToDelete, setManagerToDelete] = useState(null);
-  const [deleteType, setDeleteType] = useState('soft'); // 'soft' (corbeille) ou 'force' (définitif)
+  // États pour l'historique des ventes d'un gérant
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [managerHistory, setManagerHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedManagerName, setSelectedManagerName] = useState('');
 
   useEffect(() => {
     fetchData();
-  }, [showTrash]);
+  }, []);
 
   const fetchData = async () => {
     try {
       const [managersRes, boutiquesRes] = await Promise.all([
-        showTrash ? authAPI.getDeletedUsers() : authAPI.getUsers(),
+        authAPI.getUsers(),
         boutiqueAPI.getAll()
       ]);
       // Filtrage côté client maintenu pour compatibilité, mais le backend envoie maintenant les objets boutique complets
@@ -99,32 +99,6 @@ const ManagersView = () => {
     }
   };
 
-  const confirmDelete = (id, type) => {
-    setManagerToDelete(id);
-    setDeleteType(type);
-    setShowDeleteModal(true);
-  };
-
-  const executeDelete = async () => {
-    setError('');
-    setSuccessMessage('');
-    try {
-      if (deleteType === 'force') {
-        await authAPI.forceDeleteManager(managerToDelete);
-        setSuccessMessage('Gérant supprimé définitivement !');
-      } else {
-        await authAPI.deleteManager(managerToDelete);
-        setSuccessMessage('Gérant mis à la corbeille avec succès !');
-      }
-      fetchData();
-      setShowDeleteModal(false);
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de suppression');
-      setShowDeleteModal(false);
-    }
-  };
-
   const handleToggleActive = async (manager) => {
     try {
       await authAPI.updateManager(manager._id, { active: !manager.active });
@@ -135,15 +109,17 @@ const ManagersView = () => {
     }
   };
 
-  const handleRestore = async (id) => {
-    setError('');
-    setSuccessMessage('');
+  const handleShowHistory = async (manager) => {
+    setSelectedManagerName(manager.nom);
+    setShowHistoryModal(true);
+    setHistoryLoading(true);
     try {
-      await authAPI.restoreManager(id);
-      setSuccessMessage('Gérant restauré avec succès !');
-      fetchData();
+      const res = await venteAPI.getHistorique({ gerantId: manager._id });
+      setManagerHistory(res.data);
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de restauration');
+      setError("Impossible de charger l'historique des ventes.");
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -168,7 +144,12 @@ const ManagersView = () => {
       label: 'Actions',
       render: (_, manager) => (
         <div className="d-flex gap-2">
-          {!showTrash ? (
+            <OverlayTrigger overlay={<Tooltip>Voir l'historique des ventes</Tooltip>}>
+                <Button variant="link" className="text-info p-0" onClick={() => handleShowHistory(manager)}>
+                  <iconify-icon icon="solar:bill-list-bold" style={{ fontSize: '20px' }}></iconify-icon>
+                </Button>
+            </OverlayTrigger>
+
             <>
               <OverlayTrigger overlay={<Tooltip>Modifier</Tooltip>}>
                 <Button variant="link" className="text-primary p-0" onClick={() => handleShowModal(manager)}>
@@ -185,19 +166,7 @@ const ManagersView = () => {
                   <iconify-icon icon={manager.active ? "solar:user-block-rounded-linear" : "solar:user-check-rounded-linear"} style={{ fontSize: '20px' }}></iconify-icon>
                 </Button>
               </OverlayTrigger>
-
-              <OverlayTrigger overlay={<Tooltip>Supprimer</Tooltip>}>
-                <Button variant="link" className="text-danger p-0" onClick={() => confirmDelete(manager._id, 'soft')}>
-                  <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
-                </Button>
-              </OverlayTrigger>
             </>
-          ) : (
-            <>
-              <Button variant="outline-success" size="sm" onClick={() => handleRestore(manager._id)}>Restaurer</Button>
-              <Button variant="danger" size="sm" onClick={() => confirmDelete(manager._id, 'force')}>Supprimer définitivement</Button>
-            </>
-          )}
         </div>
       )
     }
@@ -210,16 +179,10 @@ const ManagersView = () => {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h3 className="fw-bold mb-0 text-body">Gestion des Gérants</h3>
         <div className="d-flex gap-2">
-          <Button variant={showTrash ? "secondary" : "outline-secondary"} onClick={() => setShowTrash(!showTrash)} className="rounded-pill px-4 shadow-sm">
-            <iconify-icon icon={showTrash ? "solar:users-group-rounded-bold" : "solar:trash-bin-trash-bold"} class="me-2 align-middle"></iconify-icon>
-            {showTrash ? "Voir les actifs" : "Corbeille"}
-          </Button>
-          {!showTrash && (
             <Button variant="primary" onClick={() => handleShowModal(null)} className="rounded-pill px-4 shadow-sm">
-              <iconify-icon icon="solar:add-circle-bold" class="me-2 align-middle"></iconify-icon>
+              <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
               Ajouter un Gérant
             </Button>
-          )}
         </div>
       </div>
 
@@ -294,6 +257,9 @@ const ManagersView = () => {
               >
                 <option value="">Aucune boutique</option>
                 {boutiques.map(boutique => {
+                  // La Boutique Centrale ne peut pas être assignée à un gérant
+                  if (boutique.type === 'Centrale') return null;
+
                   const isAssigned = assignedBoutiqueIds.has(boutique._id);
                   const isAssignedToCurrentUser = editMode && formData.boutique === boutique._id;
 
@@ -320,23 +286,35 @@ const ManagersView = () => {
         </Form>
       </Modal>
 
-      {/* Modale de Confirmation de Suppression (Moderne) */}
-      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+      {/* Modale Historique des Ventes */}
+      <Modal show={showHistoryModal} onHide={() => setShowHistoryModal(false)} size="lg">
         <Modal.Header closeButton>
-          <Modal.Title className="text-danger">⚠️ Suppression de Gérant</Modal.Title>
+          <Modal.Title>Historique des ventes - {selectedManagerName}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          <p className="fw-bold">
-            {deleteType === 'force' ? "Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT ce gérant ?" : "Êtes-vous sûr de vouloir mettre ce gérant à la corbeille ?"}
-          </p>
-          <Alert variant="warning" className="mb-0 small">
-            <iconify-icon icon="solar:danger-triangle-bold" className="me-2 align-middle"></iconify-icon>
-            {deleteType === 'force' ? "Cette action est irréversible et supprimera toutes les données associées." : "Le gérant ne pourra plus se connecter, mais pourra être restauré depuis la corbeille."}
-          </Alert>
+          {historyLoading ? (
+            <div className="text-center py-4"><Spinner animation="border" /></div>
+          ) : (
+            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              <TableComponent
+                columns={[
+                  { key: 'createdAt', label: 'Date', render: (d) => new Date(d).toLocaleDateString() + ' ' + new Date(d).toLocaleTimeString() },
+                  { key: 'article', label: 'Article', render: (a) => a?.nom || 'Article supprimé' },
+                  { key: 'quantite', label: 'Qté' },
+                  { key: 'prixTotal', label: 'Total', render: (p) => p.toLocaleString() + ' GNF' },
+                  { key: 'boutique', label: 'Boutique', render: (b) => b?.nom || 'N/A' }
+                ]}
+                data={managerHistory}
+                emptyMessage="Aucune vente enregistrée pour ce gérant."
+              />
+            </div>
+          )}
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
-          <Button variant="danger" onClick={executeDelete}>{deleteType === 'force' ? "Supprimer définitivement" : "Mettre à la corbeille"}</Button>
+          <div className="me-auto fw-bold">
+            Total CA: {managerHistory.reduce((acc, curr) => acc + curr.prixTotal, 0).toLocaleString()} GNF
+          </div>
+          <Button variant="secondary" onClick={() => setShowHistoryModal(false)}>Fermer</Button>
         </Modal.Footer>
       </Modal>
     </div>

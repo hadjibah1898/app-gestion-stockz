@@ -16,6 +16,7 @@ const GerantDashboard = () => {
         articlesPeuStock: 0,
     });
     const [historique, setHistorique] = useState([]);
+    const [recentArticles, setRecentArticles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -31,6 +32,29 @@ const GerantDashboard = () => {
         series: [{ name: 'Revenu', data: [] }],
     });
 
+    const [categoryChartData, setCategoryChartData] = useState({
+        options: {
+            chart: { type: 'donut', fontFamily: 'inherit' },
+            labels: [],
+            colors: ['#0d6efd', '#198754', '#ffc107', '#dc3545', '#6610f2', '#6c757d'],
+            plotOptions: {
+                pie: {
+                    donut: {
+                        size: '65%',
+                        labels: { 
+                            show: true, 
+                            total: { show: true, label: 'Total', fontSize: '16px', fontWeight: 600 } 
+                        }
+                    }
+                }
+            },
+            dataLabels: { enabled: false },
+            legend: { position: 'bottom' },
+            stroke: { show: true, width: 2, colors: ['transparent'] }
+        },
+        series: [],
+    });
+
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -41,7 +65,9 @@ const GerantDashboard = () => {
                 ]);
 
                 const today = new Date().toISOString().split('T')[0];
-                const ventesDuJour = historiqueRes.data.filter(v => v.createdAt.startsWith(today));
+                // Filtrer les ventes annulées
+                const validSales = historiqueRes.data.filter(v => !v.isCancelled);
+                const ventesDuJour = validSales.filter(v => v.createdAt.startsWith(today));
                 const revenuDuJour = ventesDuJour.reduce((sum, v) => sum + v.prixTotal, 0);
                 const articlesEnDessousSeuil = articlesRes.data.filter(a => a.quantite <= 10).length;
 
@@ -54,6 +80,29 @@ const GerantDashboard = () => {
 
                 setHistorique(historiqueRes.data);
 
+                // Trier les articles par date de création pour trouver les plus récents
+                const sortedArticles = [...articlesRes.data].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                setRecentArticles(sortedArticles.slice(0, 5)); // Garder les 5 plus récents
+
+                // Préparer les données pour le graphique circulaire (Répartition du stock par article)
+                const sortedByStock = [...articlesRes.data].sort((a, b) => b.quantite - a.quantite);
+                const topStock = sortedByStock.slice(0, 5);
+                const otherStock = sortedByStock.slice(5).reduce((acc, curr) => acc + curr.quantite, 0);
+                
+                const donutLabels = topStock.map(a => a.nom);
+                const donutSeries = topStock.map(a => a.quantite);
+                
+                if (otherStock > 0) {
+                    donutLabels.push('Autres');
+                    donutSeries.push(otherStock);
+                }
+
+                setCategoryChartData(prev => ({
+                    ...prev,
+                    options: { ...prev.options, labels: donutLabels },
+                    series: donutSeries
+                }));
+
                 const salesByDay = {};
                 for (let i = 6; i >= 0; i--) {
                     const d = new Date();
@@ -61,7 +110,7 @@ const GerantDashboard = () => {
                     salesByDay[d.toISOString().split('T')[0]] = 0;
                 }
 
-                historiqueRes.data.forEach(vente => {
+                validSales.forEach(vente => {
                     const venteDate = vente.createdAt.split('T')[0];
                     if (salesByDay[venteDate] !== undefined) {
                         salesByDay[venteDate] += vente.prixTotal;
@@ -121,6 +170,16 @@ const GerantDashboard = () => {
         grid: { borderColor: gridColor }
     };
 
+    const donutChartOptions = {
+        ...categoryChartData.options,
+        chart: {
+            ...categoryChartData.options.chart,
+            foreColor: textColor
+        },
+        stroke: { colors: [theme === 'dark' ? '#22272e' : '#ffffff'] },
+        tooltip: { theme: theme }
+    };
+
     return (
         <div className="p-4">
             {error && <Alert variant="danger">{error}</Alert>}
@@ -177,9 +236,10 @@ const GerantDashboard = () => {
                              <div style={{maxHeight: '300px', overflowY: 'auto'}}>
                                 <Table hover responsive size="sm" className="align-middle">
                                     <tbody>
-                                        {historique.slice(0, 7).map(vente => (
+                                        {historique.filter(v => !v.isCancelled).slice(0, 7).map(vente => (
                                             <tr key={vente._id}>
                                                 <td>
+                                                    {vente.article?.image && <img src={vente.article.image} alt="" className="rounded me-2 float-start" style={{width: '35px', height: '35px', objectFit: 'cover'}} />}
                                                     <div className="fw-bold">{vente.article.nom}</div>
                                                     <div className="text-muted small">Qté: {vente.quantite}</div>
                                                 </td>
@@ -194,6 +254,45 @@ const GerantDashboard = () => {
                                 </Table>
                                 {historique.length === 0 && <Alert variant="info" className="mt-3">Aucune vente récente.</Alert>}
                              </div>
+                        </Card.Body>
+                    </Card>
+                </Col>
+            </Row>
+
+            <Row className="g-4 mt-1">
+                <Col lg={8}>
+                    <Card className="border-0 shadow-sm h-100 rounded-4">
+                        <Card.Body className="p-4">
+                             <h5 className="fw-bold mb-4">Articles Récemment Ajoutés au Stock</h5>
+                             <div style={{maxHeight: '300px', overflowY: 'auto'}}>
+                                <Table hover responsive size="sm" className="align-middle">
+                                    <tbody>
+                                        {recentArticles.map(article => (
+                                            <tr key={article._id}>
+                                                <td>
+                                                    {article.image && <img src={article.image} alt="" className="rounded me-2 float-start" style={{width: '35px', height: '35px', objectFit: 'cover'}} />}
+                                                    <div className="fw-bold">{article.nom}</div>
+                                                    <div className="text-muted small">Ajouté le: {new Date(article.createdAt).toLocaleDateString()}</div>
+                                                </td>
+                                                <td className="text-end">
+                                                    <Badge bg="info-subtle" text="info" pill>
+                                                        Stock: {article.quantite}
+                                                    </Badge>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </Table>
+                                {recentArticles.length === 0 && <Alert variant="info" className="mt-3">Aucun article n'a été ajouté récemment.</Alert>}
+                             </div>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col lg={4}>
+                    <Card className="border-0 shadow-sm h-100 rounded-4">
+                        <Card.Body className="p-4">
+                             <h5 className="fw-bold mb-4">Répartition du Stock</h5>
+                             <Chart options={donutChartOptions} series={categoryChartData.series} type="donut" height={300} />
                         </Card.Body>
                     </Card>
                 </Col>

@@ -10,6 +10,7 @@ const api = axios.create({
   },
 });
 
+
 // Interceptor pour ajouter le token à chaque requête
 api.interceptors.request.use(
   (config) => {
@@ -67,16 +68,32 @@ export const articleAPI = {
   update: (id, data) => api.put(`articles/${id}`, data),
   delete: (id) => api.delete(`articles/${id}`),
   transferStock: (data) => api.post('articles/transfer', data),
+  restock: (data) => api.post('articles/restock', data),
+};
+
+export const fournisseurAPI = {
+  getAll: () => api.get('fournisseurs'),
+  create: (data) => api.post('fournisseurs', data),
+  update: (id, data) => api.put(`fournisseurs/${id}`, data),
+  delete: (id) => api.delete(`fournisseurs/${id}`),
+  approvisionner: (data) => api.post('fournisseurs/approvisionner', data),
+};
+
+export const mouvementAPI = {
+  getAll: (params) => api.get('mouvements', { params }),
+  cancel: (id) => api.post(`mouvements/${id}/cancel`),
 };
 
 export const venteAPI = {
   create: (data) => api.post('ventes', data),
   getHistorique: (params) => api.get('ventes/historique', { params }),
+  cancel: (id) => api.post(`ventes/${id}/cancel`),
   getLogs: () => api.get('ventes/logs'),
 };
 
 export const dashboardAPI = {
   getStats: (params) => api.get('dashboard/stats', { params }),
 };
+
 
 export default api;

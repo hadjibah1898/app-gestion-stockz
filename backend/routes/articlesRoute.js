@@ -12,5 +12,6 @@ router.post('/', protect, authorize('Admin'), articleController.addArticle);
 router.delete('/:id', protect, authorize('Admin'), articleController.deleteArticle);
 router.put('/:id', protect, authorize('Admin'), articleController.updateArticle);
 router.post('/transfer', protect, authorize('Admin'), articleController.transferArticles);
+router.post('/restock', protect, authorize('Admin'), articleController.restockFromCentral);
 
 module.exports = router;

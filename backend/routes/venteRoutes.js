@@ -12,6 +12,7 @@ if (!venteController || !venteController.effectuerVente) {
 // Ligne 7 :
 router.post('/', protect, venteController.effectuerVente);
 router.get('/historique', protect, venteController.getHistorique);
+router.post('/:id/cancel', protect, venteController.annulerVente);
 
 // Nouvelle route pour les logs (Admin seulement)
 router.get('/logs', protect, authorize('Admin'), venteController.getLogs);

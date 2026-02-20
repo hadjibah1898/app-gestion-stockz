@@ -22,8 +22,6 @@ router.get('/users/trash', protect, authorize('Admin'), authController.getDelete
 
 // Routes de modification et suppression des gérants
 router.put('/managers/:id', protect, authorize('Admin'), authController.updateManager);
-router.delete('/managers/:id', protect, authorize('Admin'), authController.deleteManager);
 router.put('/managers/:id/restore', protect, authorize('Admin'), authController.restoreManager);
-router.delete('/managers/:id/force', protect, authorize('Admin'), authController.forceDeleteManager);
 
 module.exports = router;

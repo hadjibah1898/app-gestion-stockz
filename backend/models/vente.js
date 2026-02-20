@@ -23,7 +23,8 @@ const venteSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Boutique',
         required: true
-    }
+    },
+    isCancelled: { type: Boolean, default: false }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Vente', venteSchema);

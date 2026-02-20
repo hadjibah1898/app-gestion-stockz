@@ -12,7 +12,11 @@ import ManagersView from './components/ManagersView';
 import ShopsView from './components/ShopsView';
 import ArticlesView from './components/ArticlesView';
 import VentesView from './components/VentesView';
+import SuppliersView from './components/SuppliersView';
+import StockMovementsView from './components/StockMovementsView';
 import ProfileView from './components/ProfileView';
+import CentraleStockView from './components/CentraleStockView';
+import StockStatusView from './components/StockStatusView';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import './App.css';
 
@@ -108,13 +112,19 @@ function App() {
                 <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
               </ProtectedRoute>
             }
+            
           >
             <Route path="/admin" element={<Dashboard />} />
             <Route path="/admin/managers" element={<ManagersView />} />
             <Route path="/admin/shops" element={<ShopsView />} />
             <Route path="/admin/articles" element={<ArticlesView userRole="Admin" />} />
+            <Route path="/admin/etat-stock" element={<StockStatusView />} />
+            <Route path="/admin/centrale" element={<CentraleStockView />} />
             <Route path="/admin/ventes" element={<VentesView userRole="Admin" />} />
+            <Route path="/admin/fournisseurs" element={<SuppliersView />} />
+            <Route path="/admin/mouvements" element={<StockMovementsView />} />
           </Route>
+          
 
           {/* Routes Protégées pour le Gérant */}
           <Route 
@@ -143,6 +153,8 @@ function App() {
           <Route path="/" element={<Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
+        
+      
       </div>
 
       {/* Modale de changement de mot de passe obligatoire */}

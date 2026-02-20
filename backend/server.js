@@ -23,6 +23,8 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/articles', require('./routes/articlesRoute'));
 app.use('/api/ventes', require('./routes/venteRoutes'));
 app.use('/api/boutiques', require('./routes/boutiqueRoutes'));
+app.use('/api/fournisseurs', require('./routes/fournisseursRoute'));
+app.use('/api/mouvements', require('./routes/mouvementsRoute'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 
 // Route de test santé

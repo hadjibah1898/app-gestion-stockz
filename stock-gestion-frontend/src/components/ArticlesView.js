@@ -6,10 +6,10 @@ import { articleAPI, boutiqueAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const ArticlesView = ({ userRole }) => {
+const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [articles, setArticles] = useState([]);
   const [boutiques, setBoutiques] = useState([]);
-  const [filterBoutique, setFilterBoutique] = useState('');
+  const [filterBoutique, setFilterBoutique] = useState(boutiqueId || '');
   const [searchTerm, setSearchTerm] = useState(''); // État pour la barre de recherche
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -19,10 +19,12 @@ const ArticlesView = ({ userRole }) => {
   const [currentArticle, setCurrentArticle] = useState({
     _id: '',
     nom: '',
+    code: '',
     prixAchat: '',
     prixVente: '',
     quantite: '',
-    boutique: '' // Ajout du champ boutique
+    boutique: '', // Ajout du champ boutique
+    image: ''
   });
 
   // États pour la confirmation de suppression
@@ -60,10 +62,12 @@ const ArticlesView = ({ userRole }) => {
     } else {
       setCurrentArticle({
         nom: '',
+        code: '',
         prixAchat: '',
         prixVente: '',
         quantite: '',
-        boutique: ''
+        boutique: '',
+        image: ''
       });
       setEditMode(false);
     }
@@ -79,6 +83,21 @@ const ArticlesView = ({ userRole }) => {
       ...currentArticle,
       [e.target.name]: e.target.value
     });
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) { // Limite 2Mo
+        setError("L'image est trop volumineuse (max 2Mo)");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCurrentArticle({ ...currentArticle, image: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -158,11 +177,26 @@ const ArticlesView = ({ userRole }) => {
   };
 
   const columns = [
+    {
+      key: 'image',
+      label: 'Image',
+      render: (img) => img ? <img src={img} alt="produit" className="rounded shadow-sm" style={{width: '40px', height: '40px', objectFit: 'cover'}} /> : <div className="bg-light rounded d-flex align-items-center justify-content-center text-muted small" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:camera-linear"></iconify-icon></div>
+    },
+    { key: 'code', label: 'Code' },
     { key: 'nom', label: 'Nom' },
     {
       key: 'boutique',
       label: 'Boutique',
-      render: (boutique) => boutique?.nom || <Badge bg="secondary">Non assignée</Badge>
+      render: (boutique) => {
+        if (!boutique) {
+          return <Badge bg="secondary">Non assignée</Badge>;
+        }
+        return (
+          <span>
+            {boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill className="ms-2">Centrale</Badge>}
+          </span>
+        );
+      }
     },
     { 
       key: 'prixAchat', 
@@ -207,7 +241,8 @@ const ArticlesView = ({ userRole }) => {
   // Filtrer les articles en fonction de la boutique sélectionnée et du terme de recherche
   const filteredArticles = articles.filter(article => {
     const matchBoutique = !filterBoutique || (article.boutique?._id || article.boutique) === filterBoutique;
-    const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        (article.code && article.code.toLowerCase().includes(searchTerm.toLowerCase()));
     return matchBoutique && matchSearch;
   });
 
@@ -216,18 +251,13 @@ const ArticlesView = ({ userRole }) => {
   return (
     <div className="p-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h3 className="fw-bold mb-0 text-body">Gestion des Articles</h3>
+        <h3 className="fw-bold mb-0 text-body">{title || 'Gestion des Articles'}</h3>
         <div className="d-flex gap-2">
             <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                 Exporter PDF
             </Button>
-            {userRole === 'Admin' && (
-            <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
-                <iconify-icon icon="solar:add-circle-bold" class="me-2 align-middle"></iconify-icon>
-                Ajouter un Article
-            </Button>
-            )}
+            {headerActions}
         </div>
       </div>
 
@@ -236,7 +266,7 @@ const ArticlesView = ({ userRole }) => {
         <Col md={4}>
           <Form.Control
             type="text"
-            placeholder="Rechercher par nom..."
+            placeholder="Rechercher par nom ou code..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -246,6 +276,7 @@ const ArticlesView = ({ userRole }) => {
             <Form.Select 
               value={filterBoutique} 
               onChange={(e) => setFilterBoutique(e.target.value)}
+              disabled={!!boutiqueId}
             >
               <option value="">Toutes les boutiques</option>
               {boutiques.map(boutique => (
@@ -279,6 +310,28 @@ const ArticlesView = ({ userRole }) => {
         </Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
+            <Form.Group className="mb-3">
+              <Form.Label>Image du produit</Form.Label>
+              <Form.Control type="file" accept="image/*" onChange={handleImageChange} />
+              {currentArticle.image && (
+                <div className="mt-2 text-center position-relative">
+                  <img src={currentArticle.image} alt="Aperçu" className="img-fluid rounded shadow-sm" style={{maxHeight: '150px'}} />
+                  <Button variant="danger" size="sm" className="position-absolute top-0 end-0 m-1 rounded-circle p-1 d-flex align-items-center justify-content-center" style={{width:'24px', height:'24px'}} onClick={() => setCurrentArticle({...currentArticle, image: ''})}>
+                    <iconify-icon icon="solar:close-circle-bold"></iconify-icon>
+                  </Button>
+                </div>
+              )}
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Code Article (Référence)</Form.Label>
+              <Form.Control
+                type="text"
+                name="code"
+                value={currentArticle.code}
+                onChange={handleChange}
+                placeholder="Ex: REF-001"
+              />
+            </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Nom de l'article</Form.Label>
               <Form.Control

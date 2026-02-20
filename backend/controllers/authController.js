@@ -52,6 +52,11 @@ exports.updateManager = async (req, res) => {
 
         // Vérifier si la boutique est changée et si elle est déjà prise
         if (req.body.boutique && req.body.boutique !== (user.boutique ? user.boutique.toString() : null)) {
+            const boutiqueObj = await Boutique.findById(req.body.boutique);
+            if (boutiqueObj && boutiqueObj.type === 'Centrale') {
+                return res.status(400).json({ message: "La Boutique Centrale ne peut pas être attribuée à un gérant. Elle sert de stock d'entreprise." });
+            }
+
             const assignedManager = await User.findOne({ 
                 boutique: req.body.boutique, 
                 _id: { $ne: req.params.id }, // Exclure l'utilisateur actuel
@@ -88,28 +93,6 @@ exports.updateManager = async (req, res) => {
     }
 };
 
-exports.deleteManager = async (req, res) => {
-    try {
-        const user = await User.findById(req.params.id);
-
-        if (!user) {
-            return res.status(404).json({ message: "Gérant introuvable." });
-        }
-
-        if (user.role === 'Admin') {
-            return res.status(403).json({ message: "Impossible de supprimer un administrateur." });
-        }
-
-        await User.findByIdAndUpdate(req.params.id, { deleted: true, active: false });
-
-        res.status(200).json({ message: "Gérant déplacé dans la corbeille." });
-
-    } catch (error) {
-        if (error.name === 'CastError') return res.status(400).json({ message: "ID invalide." });
-        res.status(500).json({ message: error.message });
-    }
-};
-
 /**
  * @desc    Créer un utilisateur (Gérant) par un Admin
  * @route   POST /api/auth/create-manager
@@ -125,6 +108,11 @@ exports.createManager = async (req, res) => {
             if (!boutiqueExists) {
                 return res.status(404).json({ message: "La boutique spécifiée est introuvable." });
             }
+            
+            if (boutiqueExists.type === 'Centrale') {
+                return res.status(400).json({ message: "La Boutique Centrale ne peut pas être attribuée à un gérant. Elle sert de stock d'entreprise." });
+            }
+
             // Vérifier si un autre gérant a déjà cette boutique
             const assignedManager = await User.findOne({ 
                 boutique: boutique, 
@@ -263,19 +251,6 @@ exports.restoreManager = async (req, res) => {
     try {
         await User.findByIdAndUpdate(req.params.id, { deleted: false });
         res.status(200).json({ message: "Gérant restauré avec succès." });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
-exports.forceDeleteManager = async (req, res) => {
-    try {
-        const user = await User.findById(req.params.id);
-        if (user && user.role === 'Admin') {
-            return res.status(403).json({ message: "Impossible de supprimer un administrateur." });
-        }
-        await User.findByIdAndDelete(req.params.id);
-        res.status(200).json({ message: "Gérant supprimé définitivement." });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

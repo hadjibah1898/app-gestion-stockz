@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Spinner, Alert, Table, Badge, Button, Pagination } from 'react-bootstrap';
+import { Row, Col, Card, Spinner, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
 import { Link, useOutletContext } from 'react-router-dom';
-import { dashboardAPI, articleAPI } from '../services/api'; // Import the new API
+import { dashboardAPI, articleAPI, venteAPI } from '../services/api'; // Import the new API
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './Dashboard.css';
@@ -14,12 +14,71 @@ const formatCurrency = (value) => {
   return (value.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
 };
 
+// --- Composants Modernes UI ---
+
+// 1. Carte avec effet de survol (Micro-interaction)
+const HoverCard = ({ children, className = "", style = {}, ...props }) => {
+  const [isHovered, setIsHovered] = useState(false);
+  return (
+    <Card 
+      className={`border-0 shadow-sm ${className}`}
+      style={{ 
+        ...style,
+        transform: isHovered ? 'translateY(-5px)' : 'translateY(0)',
+        transition: 'transform 0.3s ease, box-shadow 0.3s ease',
+        boxShadow: isHovered ? '0 1rem 3rem rgba(0,0,0,.175) !important' : '0 .125rem .25rem rgba(0,0,0,.075)'
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      {...props}
+    >
+      {children}
+    </Card>
+  );
+};
+
+// 2. Squelette de chargement (Perceived Performance)
+const DashboardSkeleton = () => (
+  <div className="dashboard-content p-4">
+    {/* Banner Skeleton */}
+    <Card className="border-0 mb-4 shadow-sm" style={{ height: '200px', backgroundColor: '#e9ecef' }}>
+      <Card.Body className="p-4 d-flex flex-column justify-content-center">
+        <Placeholder as="h2" animation="glow"><Placeholder xs={6} /></Placeholder>
+        <Placeholder as="p" animation="glow"><Placeholder xs={4} /> <Placeholder xs={3} /></Placeholder>
+      </Card.Body>
+    </Card>
+    {/* Stats Skeleton */}
+    <Row className="mb-4 g-4">
+      {[1, 2, 3].map(i => (
+        <Col md={4} key={i}>
+          <Card className="border-0 shadow-sm h-100">
+            <Card.Body className="p-4">
+              <Placeholder as="div" animation="glow" className="d-flex align-items-center">
+                 <Placeholder xs={3} style={{ height: '50px', width: '50px' }} className="rounded-circle me-3" />
+                 <div className="w-100">
+                    <Placeholder xs={5} />
+                    <Placeholder xs={8} size="lg" />
+                 </div>
+              </Placeholder>
+            </Card.Body>
+          </Card>
+        </Col>
+      ))}
+    </Row>
+    {/* Charts Skeleton */}
+    <Row className="g-4">
+        <Col lg={8}><Card className="border-0 shadow-sm" style={{height: '400px'}}><Card.Body><Placeholder animation="glow" className="w-100 h-100" /></Card.Body></Card></Col>
+        <Col lg={4}><Card className="border-0 shadow-sm" style={{height: '400px'}}><Card.Body><Placeholder animation="glow" className="w-100 h-100" /></Card.Body></Card></Col>
+    </Row>
+  </div>
+);
+
 const Dashboard = () => {
   const { theme } = useOutletContext(); // Récupération du thème (light/dark)
   const [stats, setStats] = useState(null);
   const [lowStockArticles, setLowStockArticles] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [toast, setToast] = useState({ show: false, message: '', variant: 'light' });
   const [timeRange, setTimeRange] = useState('monthly'); // 1. Ajouter l'état pour le filtre
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // Nombre d'articles par page
@@ -28,20 +87,39 @@ const Dashboard = () => {
     const fetchStats = async () => {
       try {
         setLoading(true);
-        const [statsRes, articlesRes] = await Promise.all([
+        // On récupère aussi l'historique des ventes pour corriger les calculs côté client (exclusion des annulés)
+        const [statsRes, articlesRes, ventesRes] = await Promise.all([
           dashboardAPI.getStats({ range: timeRange }),
-          articleAPI.getAll()
+          articleAPI.getAll(),
+          venteAPI.getHistorique()
         ]);
         
-        setStats(statsRes.data);
+        let statsData = statsRes.data;
+
+        // --- CORRECTIF : Recalcul des stats en excluant les ventes annulées ---
+        if (ventesRes.data) {
+            const validSales = ventesRes.data.filter(v => !v.isCancelled);
+            const today = new Date().toISOString().split('T')[0];
+            const todaySales = validSales.filter(v => v.createdAt.startsWith(today));
+
+            statsData.dailySales = todaySales.reduce((acc, v) => acc + v.prixTotal, 0);
+            statsData.dailyOrders = todaySales.length;
+            statsData.totalCA = validSales.reduce((acc, v) => acc + v.prixTotal, 0);
+            statsData.totalVentes = validSales.length;
+            statsData.totalBenefice = validSales.reduce((acc, v) => {
+                const prixAchat = v.article?.prixAchat || 0;
+                return acc + (v.prixTotal - (prixAchat * v.quantite));
+            }, 0);
+        }
+        
+        setStats(statsData);
         
         // Calcul du stock faible (seuil arbitraire à 10 unités)
         const lowStockItems = articlesRes.data.filter(a => a.quantite <= 10);
         setLowStockArticles(lowStockItems);
         
-        setError('');
       } catch (err) {
-        setError(err.response?.data?.message || "Erreur lors du chargement des statistiques du tableau de bord.");
+        setToast({ show: true, message: err.response?.data?.message || "Erreur lors du chargement des statistiques du tableau de bord.", variant: 'danger' });
         // Use some fallback data so the page doesn't crash
         setStats({
           dailySales: 0, dailyOrders: 0, totalCA: 0, totalRefunds: 0, totalBenefice: 0,
@@ -143,16 +221,19 @@ const Dashboard = () => {
   };
 
   if (loading) {
-    return (
-      <div className="d-flex justify-content-center align-items-center" style={{ height: '80vh' }}>
-        <Spinner animation="border" variant="primary" />
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   return (
-    <div className="dashboard-content p-4">
-      {error && <Alert variant="danger">{error}</Alert>}
+    <div className="dashboard-content p-4 position-relative">
+      <ToastContainer position="top-end" className="p-3" style={{ zIndex: 9999, position: 'fixed' }}>
+        <Toast onClose={() => setToast({ ...toast, show: false })} show={toast.show} delay={5000} autohide bg={toast.variant}>
+          <Toast.Header>
+            <strong className="me-auto">Notification</strong>
+          </Toast.Header>
+          <Toast.Body className={toast.variant === 'danger' ? 'text-white' : ''}>{toast.message}</Toast.Body>
+        </Toast>
+      </ToastContainer>
 
       {/* A. La Bannière de Bienvenue */}
       <Card className="welcome-banner border-0 mb-4 text-white overflow-hidden">
@@ -161,7 +242,7 @@ const Dashboard = () => {
             <div className="d-flex align-items-center gap-3 mb-2">
                 <h2 className="fw-bold mb-0">Bienvenue sur votre Dashboard ! 👋</h2>
                 <Button variant="light" size="sm" onClick={handleExportPDF} className="text-primary fw-bold shadow-sm">
-                    <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
+                    <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                     Exporter Rapport
                 </Button>
             </div>
@@ -194,7 +275,7 @@ const Dashboard = () => {
           { title: 'Alerte Stock Faible', value: `${lowStockArticles.length} articles`, icon: 'solar:box-minimalistic-bold-duotone', color: 'danger', trend: '< 10 unités', trendColor: 'danger' },
         ].map((stat, idx) => (
           <Col md={4} key={idx}>
-            <Card className="stat-card border-0 shadow-sm h-100">
+            <HoverCard className="h-100">
               <Card.Body className="d-flex align-items-center p-4">
                 <div className={`icon-box bg-${stat.color}-subtle text-${stat.color} rounded-circle d-flex align-items-center justify-content-center me-3`}>
                   <iconify-icon icon={stat.icon} style={{ fontSize: '28px' }}></iconify-icon>
@@ -210,7 +291,7 @@ const Dashboard = () => {
                   </h4>
                 </div>
               </Card.Body>
-            </Card>
+            </HoverCard>
           </Col>
         ))}
       </Row>
