@@ -1,3 +1,8 @@
+// src/components/Dashboard.js
+// Tableau de bord principal pour les administrateurs
+// Affiche les statistiques clés, les graphiques et les raccourcis vers les fonctionnalités principales
+// Permet de visualiser rapidement l'état du stock et les performances
+
 import React, { useState, useEffect } from 'react';
 import { Row, Col, Card, Spinner, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
@@ -94,11 +99,13 @@ const Dashboard = () => {
           venteAPI.getHistorique()
         ]);
         
-        let statsData = statsRes.data;
+        let statsData = statsRes.data || {};
+        const allArticles = articlesRes.data || [];
+        const allVentes = ventesRes.data || [];
 
         // --- CORRECTIF : Recalcul des stats en excluant les ventes annulées ---
-        if (ventesRes.data) {
-            const validSales = ventesRes.data.filter(v => !v.isCancelled);
+        if (allVentes.length > 0) {
+            const validSales = allVentes.filter(v => !v.isCancelled);
             const today = new Date().toISOString().split('T')[0];
             const todaySales = validSales.filter(v => v.createdAt.startsWith(today));
 
@@ -115,7 +122,7 @@ const Dashboard = () => {
         setStats(statsData);
         
         // Calcul du stock faible (seuil arbitraire à 10 unités)
-        const lowStockItems = articlesRes.data.filter(a => a.quantite <= 10);
+        const lowStockItems = allArticles.filter(a => a.quantite <= 10);
         setLowStockArticles(lowStockItems);
         
       } catch (err) {

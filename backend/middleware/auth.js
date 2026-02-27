@@ -9,7 +9,7 @@ exports.protect = (req, res, next) => {
     }
 
     if (!token) {
-        return res.status(401).json({ message: "Accès refusé, aucun jeton fourni." });
+        return res.status(401).json({ message: "Accès refusé, aucun jeton fourni.", redirect: '/login' });
     }
 
     try {
@@ -17,7 +17,7 @@ exports.protect = (req, res, next) => {
         req.user = decoded; // On ajoute les infos de l'utilisateur (id et rôle) à la requête
         next();
     } catch (error) {
-        res.status(401).json({ message: "Jeton invalide ou expiré." });
+        res.status(401).json({ message: "Jeton invalide ou expiré.", redirect: '/login' });
     }
 };
 

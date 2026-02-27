@@ -1,4 +1,9 @@
 // src/components/Auth.js
+// src/components/Auth.js
+// Composant d'authentification (connexion)
+// Permet aux utilisateurs de se connecter avec email et mot de passe
+// Gère la validation des champs et l'affichage des messages d'erreur
+
 import React, { useState } from 'react';
 import { Container, Row, Col, Card, Form, Button, Alert, Spinner, Modal } from 'react-bootstrap';
 import { authAPI } from '../services/api';

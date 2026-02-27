@@ -1,30 +1,19 @@
 const mongoose = require('mongoose');
 
 const venteSchema = new mongoose.Schema({
-    article: { // Renommé de 'articleId' pour correspondre au service
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'Article', 
-        required: true 
+    article: { type: mongoose.Schema.Types.ObjectId, ref: 'Article', required: true },
+    quantite: { type: Number, required: true },
+    prixTotal: { type: Number, required: true },
+    gerant: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    boutique: { type: mongoose.Schema.Types.ObjectId, ref: 'Boutique' },
+    client: { type: mongoose.Schema.Types.ObjectId, ref: 'Client' },
+    statut: { 
+        type: String, 
+        enum: ['finalisee', 'en_attente_remise', 'refusee'], 
+        default: 'finalisee' 
     },
-    quantite: { // Renommé de 'quantiteVendue'
-        type: Number, 
-        required: true 
-    },
-    prixTotal: { // Renommé de 'prixTotal' pour la cohérence
-        type: Number, 
-        required: true 
-    },
-    gerant: { // Ajout du champ 'gerant' qui est crucial pour savoir qui a fait la vente
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
-    },
-    boutique: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Boutique',
-        required: true
-    },
-    isCancelled: { type: Boolean, default: false }
+    isCancelled: { type: Boolean, default: false },
+    remiseAppliquee: { type: Number, default: 0 }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Vente', venteSchema);

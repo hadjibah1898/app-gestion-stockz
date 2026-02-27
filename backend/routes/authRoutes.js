@@ -12,6 +12,8 @@ router.post('/change-password', protect, authController.changePassword);
 // Routes protégées (nécessitent un token JWT)
 router.get('/me', protect, authController.getCurrentUser);
 router.put('/profile', protect, authController.updateProfile);
+router.get('/notifications', protect, authController.getNotifications);
+router.put('/notifications/:id/read', protect, authController.markNotificationRead);
 
 // --- Routes Admin ---
 // Créer un gérant
@@ -23,5 +25,8 @@ router.get('/users/trash', protect, authorize('Admin'), authController.getDelete
 // Routes de modification et suppression des gérants
 router.put('/managers/:id', protect, authorize('Admin'), authController.updateManager);
 router.put('/managers/:id/restore', protect, authorize('Admin'), authController.restoreManager);
+
+// Route pour l'historique complet des notifications (Admin)
+router.get('/admin/notifications', protect, authorize('Admin'), authController.getAllNotifications);
 
 module.exports = router;

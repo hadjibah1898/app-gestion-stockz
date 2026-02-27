@@ -1,20 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const venteController = require('../controllers/venteController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// Le test de sécurité :
-if (!venteController || !venteController.effectuerVente) {
-    console.log("❌ ALERTE : La fonction effectuerVente est introuvable dans le contrôleur !");
-    console.log("Contenu actuel du contrôleur :", venteController);
+// Vérification de sécurité pour le debug
+if (!venteController.getPendingSales) {
+    console.error("ERREUR: getPendingSales est introuvable dans le contrôleur !");
 }
 
-// Ligne 7 :
+// Routes
 router.post('/', protect, venteController.effectuerVente);
 router.get('/historique', protect, venteController.getHistorique);
-router.post('/:id/cancel', protect, venteController.annulerVente);
-
-// Nouvelle route pour les logs (Admin seulement)
+router.get('/pending', protect, venteController.getPendingSales); // <-- L'erreur venait souvent d'ici
 router.get('/logs', protect, authorize('Admin'), venteController.getLogs);
+
+router.post('/:id/cancel', protect, venteController.annulerVente);
+router.post('/:id/validate-remise', protect, authorize('Admin'), venteController.validateRemise);
+router.post('/:id/reject-remise', protect, authorize('Admin'), venteController.rejectRemise);
 
 module.exports = router;

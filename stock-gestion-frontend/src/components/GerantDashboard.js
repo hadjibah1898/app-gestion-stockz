@@ -1,4 +1,10 @@
 // src/components/GerantDashboard.js
+// Composant du tableau de bord gérant
+// Affiche les statistiques et performances de la boutique gérée
+// Permet de visualiser les ventes, le stock et les alertes
+// Contient les fonctionnalités de gestion rapide
+// src/components/GerantDashboard.js
+
 import React, { useState, useEffect } from 'react';
 import { Row, Col, Card, Spinner, Alert, Table, Badge, Button } from 'react-bootstrap';
 import { Link, useOutletContext } from 'react-router-dom';
@@ -60,32 +66,35 @@ const GerantDashboard = () => {
             try {
                 setLoading(true);
                 const [historiqueRes, articlesRes] = await Promise.all([
-                    venteAPI.getHistorique(),
+                    venteAPI.getHistorique({ limit: 0 }), // On charge tout l'historique pour les stats
                     articleAPI.getAll(),
                 ]);
 
+                const allHistorique = historiqueRes.data.ventes || [];
+                const allArticles = articlesRes.data || [];
+
                 const today = new Date().toISOString().split('T')[0];
                 // Filtrer les ventes annulées
-                const validSales = historiqueRes.data.filter(v => !v.isCancelled);
+                const validSales = allHistorique.filter(v => !v.isCancelled);
                 const ventesDuJour = validSales.filter(v => v.createdAt.startsWith(today));
                 const revenuDuJour = ventesDuJour.reduce((sum, v) => sum + v.prixTotal, 0);
-                const articlesEnDessousSeuil = articlesRes.data.filter(a => a.quantite <= 10).length;
+                const articlesEnDessousSeuil = allArticles.filter(a => a.quantite <= 10).length;
 
                 setStats({
                     ventesAujourdhui: ventesDuJour.length,
                     revenuAujourdhui: revenuDuJour,
-                    totalArticles: articlesRes.data.length,
+                    totalArticles: allArticles.length,
                     articlesPeuStock: articlesEnDessousSeuil,
                 });
 
-                setHistorique(historiqueRes.data);
+                setHistorique(allHistorique);
 
                 // Trier les articles par date de création pour trouver les plus récents
-                const sortedArticles = [...articlesRes.data].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                const sortedArticles = [...allArticles].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
                 setRecentArticles(sortedArticles.slice(0, 5)); // Garder les 5 plus récents
 
                 // Préparer les données pour le graphique circulaire (Répartition du stock par article)
-                const sortedByStock = [...articlesRes.data].sort((a, b) => b.quantite - a.quantite);
+                const sortedByStock = [...allArticles].sort((a, b) => b.quantite - a.quantite);
                 const topStock = sortedByStock.slice(0, 5);
                 const otherStock = sortedByStock.slice(5).reduce((acc, curr) => acc + curr.quantite, 0);
                 
@@ -150,7 +159,7 @@ const GerantDashboard = () => {
         autoTable(doc, {
             startY: 50,
             head: [['Article', 'Quantité', 'Total']],
-            body: historique.slice(0, 20).map(v => [v.article.nom, v.quantite, (v.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')])
+            body: historique.slice(0, 20).map(v => [v.article?.nom || 'Article supprimé', v.quantite, (v.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')])
         });
 
         doc.save("dashboard_gerant.pdf");
@@ -239,8 +248,8 @@ const GerantDashboard = () => {
                                         {historique.filter(v => !v.isCancelled).slice(0, 7).map(vente => (
                                             <tr key={vente._id}>
                                                 <td>
-                                                    {vente.article?.image && <img src={vente.article.image} alt="" className="rounded me-2 float-start" style={{width: '35px', height: '35px', objectFit: 'cover'}} />}
-                                                    <div className="fw-bold">{vente.article.nom}</div>
+                                                    {vente.article?.image && <img src={vente.article?.image} alt="" className="rounded me-2 float-start" style={{width: '35px', height: '35px', objectFit: 'cover'}} />}
+                                                    <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
                                                     <div className="text-muted small">Qté: {vente.quantite}</div>
                                                 </td>
                                                 <td className="text-end">

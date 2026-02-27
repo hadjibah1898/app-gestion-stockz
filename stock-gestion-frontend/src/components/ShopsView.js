@@ -1,4 +1,9 @@
 // src/components/ShopsView.js
+// Composant de gestion des boutiques
+// Permet de visualiser, créer, modifier et supprimer les boutiques
+// Affiche les informations sur les gérants et le stock
+// Contient les fonctionnalités de recherche et de filtres
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';

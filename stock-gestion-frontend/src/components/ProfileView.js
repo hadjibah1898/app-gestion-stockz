@@ -1,4 +1,10 @@
 // src/components/ProfileView.js
+// Composant d'affichage et de gestion du profil utilisateur
+// Permet de visualiser et modifier les informations personnelles
+// Affiche l'historique des actions et les statistiques personnelles
+// Contient les fonctionnalités de changement de mot de passe
+
+// src/components/ProfileView.js
 import React, { useState, useEffect } from 'react';
 import { Card, Form, Button, Alert, Spinner, Row, Col, InputGroup, ProgressBar, Image, Badge } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
@@ -45,7 +51,7 @@ const ProfileView = () => {
         setSaving(true);
         setMessage({ type: '', text: '' });
         try {
-            const response = await authAPI.updateProfile(formData);
+            await authAPI.updateProfile(formData);
             setMessage({ type: 'success', text: 'Profil mis à jour avec succès.' });
             // Mise à jour du nom dans le localStorage pour l'affichage immédiat dans le header
             localStorage.setItem('userName', formData.nom);

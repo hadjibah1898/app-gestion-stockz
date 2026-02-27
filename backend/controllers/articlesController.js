@@ -1,3 +1,32 @@
+const notificationService = require('../services/notificationService');
+// Demande de remise par le gérant (stocke la demande et notifie les admins)
+exports.demanderRemise = async (req, res) => {
+    try {
+        if (req.user.role !== 'Gérant') {
+            return res.status(403).json({ message: "Seul un gérant peut demander une remise." });
+        }
+        const articleId = req.params.id;
+        const { remise, clientNom } = req.body;
+        if (!remise || remise <= 0) {
+            return res.status(400).json({ message: "La remise demandée doit être supérieure à 0%." });
+        }
+        // Stocker la demande dans le champ remiseEnAttente
+        const article = await articleService.modifierArticle(articleId, {
+            remiseEnAttente: {
+                valeur: remise,
+                clientNom: clientNom || '',
+                gerant: req.user.id || req.user._id,
+                dateDemande: new Date()
+            }
+        });
+        // Notifier les admins
+        await notificationService.sendRemiseRequestToAdmins(article, remise, req.user, clientNom);
+        res.status(200).json({ message: "Demande de remise envoyée à l'administrateur pour validation." });
+    } catch (error) {
+        console.error("Erreur demande remise:", error);
+        res.status(500).json({ message: "Erreur lors de la demande de remise." });
+    }
+};
 const articleService = require('../services/articleService');
 
 //  Nom synchronisé avec ton fichier de routes (articlesRoute.js)

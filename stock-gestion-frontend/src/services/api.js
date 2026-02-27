@@ -32,6 +32,9 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       // Token expiré ou invalide : on nettoie et on redirige
       localStorage.removeItem('token');
+      localStorage.removeItem('userRole');
+      localStorage.removeItem('userName');
+      localStorage.removeItem('mustChangePassword');
       // Redirection forcée vers le login
       window.location.href = '/login';
     }
@@ -53,6 +56,9 @@ export const authAPI = {
   changePassword: (data) => api.post('auth/change-password', data),
   forgotPassword: (email) => api.post('auth/forgot-password', { email }),
   updateProfile: (data) => api.put('auth/profile', data),
+  getNotifications: () => api.get('auth/notifications'),
+  markNotificationRead: (id) => api.put(`auth/notifications/${id}/read`),
+  getAllNotifications: () => api.get('auth/admin/notifications'),
 };
 
 export const boutiqueAPI = {
@@ -69,6 +75,7 @@ export const articleAPI = {
   delete: (id) => api.delete(`articles/${id}`),
   transferStock: (data) => api.post('articles/transfer', data),
   restock: (data) => api.post('articles/restock', data),
+  demanderRemise: (id, data) => api.post(`articles/${id}/demander-remise`, data),
 };
 
 export const fournisseurAPI = {
@@ -89,10 +96,20 @@ export const venteAPI = {
   getHistorique: (params) => api.get('ventes/historique', { params }),
   cancel: (id) => api.post(`ventes/${id}/cancel`),
   getLogs: () => api.get('ventes/logs'),
+  getPendingSales: () => api.get('ventes/pending'),
+  validateRemise: (id) => api.post(`ventes/${id}/validate-remise`),
+  rejectRemise: (id) => api.post(`ventes/${id}/reject-remise`),
 };
 
 export const dashboardAPI = {
   getStats: (params) => api.get('dashboard/stats', { params }),
+};
+
+export const clientAPI = {
+  getAll: () => api.get('clients'),
+  create: (data) => api.post('clients', data),
+  update: (id, data) => api.put(`clients/${id}`, data),
+  delete: (id) => api.delete(`clients/${id}`),
 };
 
 

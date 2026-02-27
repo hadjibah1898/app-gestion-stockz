@@ -1,7 +1,13 @@
 // src/components/ArticlesView.js
+// Composant de gestion des articles
+// Permet de visualiser, créer, modifier et supprimer les articles
+// Affiche les informations sur le stock, les promotions et les remises
+// Contient les fonctionnalités d'export PDF et de filtres avancés
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col } from 'react-bootstrap';
 import TableComponent from './common/Table';
+import DemandeRemiseButton from './DemandeRemiseButton';
 import { articleAPI, boutiqueAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -11,6 +17,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [boutiques, setBoutiques] = useState([]);
   const [filterBoutique, setFilterBoutique] = useState(boutiqueId || '');
   const [searchTerm, setSearchTerm] = useState(''); // État pour la barre de recherche
+  const [showPromoOnly, setShowPromoOnly] = useState(false); // État pour le filtre promo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -24,7 +31,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     prixVente: '',
     quantite: '',
     boutique: '', // Ajout du champ boutique
-    image: ''
+    image: '',
+    promo: 0,
+    promoActive: false,
+    dateDebutPromo: '',
+    dateFinPromo: '',
+    remise: 0
   });
 
   // États pour la confirmation de suppression
@@ -67,7 +79,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         prixVente: '',
         quantite: '',
         boutique: '',
-        image: ''
+        image: '',
+        promo: 0,
+        promoActive: false,
+        dateDebutPromo: '',
+        dateFinPromo: '',
+        remise: 0
       });
       setEditMode(false);
     }
@@ -81,7 +98,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const handleChange = (e) => {
     setCurrentArticle({
       ...currentArticle,
-      [e.target.name]: e.target.value
+      [e.target.name]: e.target.type === 'checkbox' ? e.target.checked : e.target.value
     });
   };
 
@@ -185,6 +202,11 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     { key: 'code', label: 'Code' },
     { key: 'nom', label: 'Nom' },
     {
+      key: 'type',
+      label: 'Type',
+      render: (type) => type || 'Divers'
+    },
+    {
       key: 'boutique',
       label: 'Boutique',
       render: (boutique) => {
@@ -198,15 +220,25 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         );
       }
     },
-    { 
-      key: 'prixAchat', 
-      label: 'Prix Achat',
-      render: (value) => `${value.toLocaleString()} GNF`
+    {
+      key: 'promo',
+      label: 'Promo/Remise',
+      render: (_, article) => {
+        if (article.promoActive && article.promo > 0) return <Badge bg="danger">Promo -{article.promo}%</Badge>;
+        if (article.remise > 0) return <Badge bg="warning" text="dark">Remise -{article.remise}%</Badge>;
+        if (article.remiseEnAttente?.valeur > 0) return <Badge bg="info">Demande: {article.remiseEnAttente.valeur}%</Badge>;
+        return '-';
+      }
     },
-    { 
-      key: 'prixVente', 
-      label: 'Prix Vente',
-      render: (value) => `${value.toLocaleString()} GNF`
+    {
+      key: 'dateFinPromo',
+      label: 'Fin Promo',
+      render: (date, article) => {
+        if (article.promoActive && article.promo > 0 && date) {
+          return new Date(date).toLocaleDateString('fr-FR');
+        }
+        return '-';
+      }
     },
     { 
       key: 'quantite', 
@@ -220,19 +252,25 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     { 
       key: 'actions',
       label: 'Actions',
-      render: (_, article) => userRole === 'Admin' && (
+      render: (_, article) => (
         <div className="d-flex gap-2">
-          <OverlayTrigger overlay={<Tooltip>Modifier</Tooltip>}>
-            <Button variant="link" className="text-primary p-0" onClick={() => handleShowModal(article)}>
-              <iconify-icon icon="solar:pen-new-square-linear" style={{ fontSize: '20px' }}></iconify-icon>
-            </Button>
-          </OverlayTrigger>
-
-          <OverlayTrigger overlay={<Tooltip>Supprimer</Tooltip>}>
-            <Button variant="link" className="text-danger p-0" onClick={() => confirmDelete(article._id)}>
-              <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
-            </Button>
-          </OverlayTrigger>
+          {userRole === 'Gérant' && (
+             <DemandeRemiseButton articleId={article._id} onSuccess={fetchData} />
+          )}
+          {userRole === 'Admin' && (
+            <>
+              <OverlayTrigger overlay={<Tooltip>Modifier</Tooltip>}>
+                <Button variant="link" className="text-primary p-0" onClick={() => handleShowModal(article)}>
+                  <iconify-icon icon="solar:pen-new-square-linear" style={{ fontSize: '20px' }}></iconify-icon>
+                </Button>
+              </OverlayTrigger>
+              <OverlayTrigger overlay={<Tooltip>Supprimer</Tooltip>}>
+                <Button variant="link" className="text-danger p-0" onClick={() => confirmDelete(article._id)}>
+                  <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
+                </Button>
+              </OverlayTrigger>
+            </>
+          )}
         </div>
       )
     }
@@ -243,7 +281,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     const matchBoutique = !filterBoutique || (article.boutique?._id || article.boutique) === filterBoutique;
     const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
                         (article.code && article.code.toLowerCase().includes(searchTerm.toLowerCase()));
-    return matchBoutique && matchSearch;
+    const matchPromo = !showPromoOnly || (article.promoActive && article.promo > 0);
+
+    return matchBoutique && matchSearch && matchPromo;
   });
 
   if (loading) return <Spinner animation="border" />;
@@ -262,7 +302,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       </div>
 
       {/* Filtres */}
-      <Row className="mb-4">
+      <Row className="mb-4 align-items-center">
         <Col md={4}>
           <Form.Control
             type="text"
@@ -271,12 +311,11 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </Col>
-        {userRole === 'Admin' && (
+        {userRole === 'Admin' && !boutiqueId && (
           <Col md={4}>
             <Form.Select 
               value={filterBoutique} 
               onChange={(e) => setFilterBoutique(e.target.value)}
-              disabled={!!boutiqueId}
             >
               <option value="">Toutes les boutiques</option>
               {boutiques.map(boutique => (
@@ -285,6 +324,16 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             </Form.Select>
           </Col>
         )}
+        <Col>
+          <Form.Check 
+            type="switch"
+            id="promo-filter-switch"
+            label="Promotions uniquement"
+            checked={showPromoOnly}
+            onChange={(e) => setShowPromoOnly(e.target.checked)}
+            className="fw-medium"
+          />
+        </Col>
       </Row>
 
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
@@ -330,6 +379,16 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 value={currentArticle.code}
                 onChange={handleChange}
                 placeholder="Ex: REF-001"
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Type de produit</Form.Label>
+              <Form.Control
+                type="text"
+                name="type"
+                value={currentArticle.type}
+                onChange={handleChange}
+                placeholder="Ex: Boisson, Ciment..."
               />
             </Form.Group>
             <Form.Group className="mb-3">
@@ -394,6 +453,94 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 required
               />
             </Form.Group>
+
+            {/* Section Promotion & Remise (Admin Uniquement) */}
+            {userRole === 'Admin' && (
+              <div className="border-top pt-3 mt-3">
+                <h6 className="text-primary mb-3">Gestion Promotions & Remises</h6>
+                <Row>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Promotion (%)</Form.Label>
+                      <Form.Control
+                        type="number"
+                        name="promo"
+                        value={currentArticle.promo}
+                        onChange={handleChange}
+                        min="0"
+                        max="100"
+                      />
+                    </Form.Group>
+                  </Col>
+                  <Col md={6} className="d-flex align-items-center">
+                    <Form.Check 
+                      type="switch"
+                      id="promo-switch"
+                      label="Activer la promotion"
+                      name="promoActive"
+                      checked={currentArticle.promoActive}
+                      onChange={handleChange}
+                      className="mt-3"
+                    />
+                  </Col>
+                </Row>
+                {currentArticle.promoActive && (
+                  <Row className="mb-3">
+                    <Col md={6}>
+                      <Form.Label>Date début</Form.Label>
+                      <Form.Control type="date" name="dateDebutPromo" value={currentArticle.dateDebutPromo ? currentArticle.dateDebutPromo.split('T')[0] : ''} onChange={handleChange} />
+                    </Col>
+                    <Col md={6}>
+                      <Form.Label>Date fin</Form.Label>
+                      <Form.Control type="date" name="dateFinPromo" value={currentArticle.dateFinPromo ? currentArticle.dateFinPromo.split('T')[0] : ''} onChange={handleChange} />
+                    </Col>
+                  </Row>
+                )}
+                <Form.Group className="mb-3">
+                  <Form.Label>
+                    Remise exceptionnelle (%) 
+                    {currentArticle.remiseEnAttente?.valeur > 0 && (
+                        <span className="ms-2">
+                            <Badge bg="success" className="me-1"
+                                onClick={() => setCurrentArticle({
+                                    ...currentArticle, 
+                                    remise: currentArticle.remiseEnAttente.valeur,
+                                    remiseEnAttente: null // On applique la remise et on vide la demande
+                                })}
+                                style={{cursor: 'pointer'}}
+                                title="Accepter la demande"
+                            >
+                                <iconify-icon icon="solar:check-circle-bold" className="me-1 align-middle"></iconify-icon>
+                                Accepter {currentArticle.remiseEnAttente.valeur}%
+                            </Badge>
+                            <Badge bg="danger" 
+                                onClick={() => setCurrentArticle({
+                                    ...currentArticle, 
+                                    remiseEnAttente: null // On vide la demande SANS changer la remise actuelle -> Refus
+                                })}
+                                style={{cursor: 'pointer'}}
+                                title="Refuser la demande"
+                            >
+                                <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
+                                Refuser
+                            </Badge>
+                            {currentArticle.remiseEnAttente.clientNom && <small className="text-muted ms-1">({currentArticle.remiseEnAttente.clientNom})</small>}
+                        </span>
+                    )}
+                  </Form.Label>
+                  <Form.Control
+                    type="number"
+                    name="remise"
+                    value={currentArticle.remise}
+                    onChange={handleChange}
+                    min="0"
+                    max="100"
+                    placeholder="Saisir pour valider une remise"
+                  />
+                  <Form.Text className="text-muted">Une remise s'applique si aucune promotion n'est active.</Form.Text>
+                </Form.Group>
+              </div>
+            )}
           </Modal.Body>
           <Modal.Footer>
             <Button variant="secondary" onClick={handleCloseModal}>

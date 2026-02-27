@@ -1,3 +1,9 @@
+// src/components/CentraleStockView.js
+// Composant d'affichage du stock de la boutique centrale
+// Permet de visualiser le stock de la boutique centrale et de gérer les réapprovisionnements
+// Affiche les alertes de stock faible et les mouvements récents
+// Contient les fonctionnalités de recherche et de filtres
+
 import React, { useState, useEffect } from 'react';
 import { Spinner, Alert, Button, Toast, ToastContainer } from 'react-bootstrap';
 import { boutiqueAPI } from '../services/api';

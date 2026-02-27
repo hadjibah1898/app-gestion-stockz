@@ -1,3 +1,9 @@
+// src/components/SuppliersView.js
+// Composant de gestion des fournisseurs
+// Permet de visualiser, créer, modifier et supprimer les fournisseurs
+// Affiche les informations de contact et les articles fournis
+// Contient les fonctionnalités de recherche et de filtres
+
 import React, { useState, useEffect } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { fournisseurAPI } from '../services/api';

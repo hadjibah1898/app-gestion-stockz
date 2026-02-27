@@ -80,6 +80,18 @@ const Sidebar = ({ userRole }) => {
                                 <span className="hide-menu">Historique Ventes</span>
                             </NavLink>
                         </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/clients">
+                                <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Clients & Ouvriers</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/notifications">
+                                <iconify-icon icon="solar:bell-bing-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Notifications</span>
+                            </NavLink>
+                        </li>
                     </ul>
                 ) : ( // Vue pour le Gérant
                     <ul id="sidebarnav">
@@ -98,9 +110,21 @@ const Sidebar = ({ userRole }) => {
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant/historique">
+                                <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Historique Ventes</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/gerant/articles">
                                 <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Consulter le Stock</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant/clients">
+                                <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Clients & Ouvriers</span>
                             </NavLink>
                         </li>
                     </ul>

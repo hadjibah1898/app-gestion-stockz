@@ -1,3 +1,32 @@
+/**
+ * Envoie une notification aux admins lorsqu'un gérant demande une remise
+ * @param {Object} article - L'article concerné
+ * @param {Number} remise - Pourcentage de remise demandé
+ * @param {Object} gerant - Utilisateur gérant (doit avoir nom/email)
+ */
+exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) => {
+    try {
+        const admins = await User.find({ role: 'Admin' }).select('email');
+        const adminEmails = admins.map(u => u.email);
+        if (adminEmails.length === 0) return;
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: adminEmails,
+            subject: `Demande de remise à valider`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                    <h2 style="color: #0d6efd; margin-top: 0;">Demande de remise à valider</h2>
+                    <p>Le gérant <b>${gerant.nom}</b> demande une remise de <b>${remise}%</b> sur l'article <b>${article.nom}</b>${clientNom ? ` pour le client <b>${clientNom}</b>` : ''}.</p>
+                    <p>Merci de valider ou refuser cette demande dans l'interface d'administration.</p>
+                </div>
+            `
+        };
+        await transporter.sendMail(mailOptions);
+        console.log(`📧 Demande de remise envoyée aux admins pour l'article : ${article.nom}`);
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de la demande de remise:", error);
+    }
+};
 const nodemailer = require('nodemailer');
 const User = require('../models/User');
 

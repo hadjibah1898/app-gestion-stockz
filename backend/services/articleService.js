@@ -1,10 +1,11 @@
 const articleRepository = require('../repositories/articleRepository');
 const Article = require('../models/Article'); // Assurez-vous que le modèle est importé
 const Mouvement = require('../models/Mouvement');
+const Notification = require('../models/Notification');
 
 // Doit maintenant accepter un filtre et utiliser populate
 exports.listerArticles = async (filter = {}) => {
-    return await Article.find(filter).populate('boutique');
+    return await Article.find(filter).populate('boutique').populate('remiseEnAttente.gerant', 'nom');
 };
 
 exports.supprimerArticle = async (id) => {
@@ -22,6 +23,35 @@ exports.modifierArticle = async (id, data) => {
     const articleExistant = await articleRepository.findById(id);
     if (!articleExistant) {
         throw new Error("Article introuvable.");
+    }
+
+    // --- LOGIQUE DE NOTIFICATION (Validation ou Refus Remise) ---
+    // Si une remise en attente existait et qu'elle est traitée (remiseEnAttente devient null dans la mise à jour)
+    if (articleExistant.remiseEnAttente && articleExistant.remiseEnAttente.valeur && data.remiseEnAttente === null) {
+        
+        // Cas 1 : Validation (La remise finale correspond à la demande)
+        if (Number(data.remise) === articleExistant.remiseEnAttente.valeur) {
+            if (articleExistant.remiseEnAttente.gerant) {
+                // Sécurisation : on récupère l'ID que le champ soit peuplé (objet) ou non (string)
+                const recipientId = articleExistant.remiseEnAttente.gerant._id || articleExistant.remiseEnAttente.gerant;
+                await Notification.create({
+                    recipient: recipientId,
+                    message: `✅ Votre demande de remise de ${articleExistant.remiseEnAttente.valeur}% sur l'article "${articleExistant.nom}" a été approuvée.`,
+                    type: 'success'
+                });
+            }
+        } 
+        // Cas 2 : Refus (La remise finale est différente ou absente)
+        else {
+            if (articleExistant.remiseEnAttente.gerant) {
+                const recipientId = articleExistant.remiseEnAttente.gerant._id || articleExistant.remiseEnAttente.gerant;
+                await Notification.create({
+                    recipient: recipientId,
+                    message: `❌ Votre demande de remise de ${articleExistant.remiseEnAttente.valeur}% sur l'article "${articleExistant.nom}" a été refusée.`,
+                    type: 'error'
+                });
+            }
+        }
     }
 
     // 3. Logique métier : Vérification des prix

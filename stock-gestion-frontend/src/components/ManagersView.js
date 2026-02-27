@@ -1,4 +1,10 @@
 // src/components/ManagersView.js
+// Composant de gestion des gérants
+// Permet de visualiser, créer, modifier et supprimer les gérants
+// Affiche les informations sur les boutiques gérées et les performances
+// Contient les fonctionnalités de recherche et de filtres
+
+// src/components/ManagersView.js
 import React, { useState, useEffect } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, InputGroup, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { Card } from 'react-bootstrap'; // Import Card

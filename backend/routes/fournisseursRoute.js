@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const fournisseurController = require('../controllers/fournisseurController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
 // Routes CRUD
 router.get('/', protect, fournisseurController.getAllFournisseurs);

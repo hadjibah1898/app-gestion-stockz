@@ -1,3 +1,9 @@
+// src/components/StockStatusView.js
+// Composant d'affichage de l'état du stock
+// Permet de visualiser le stock par boutique et par article
+// Affiche les alertes de stock faible et les mouvements récents
+// Contient les fonctionnalités de recherche et de filtres
+
 import React, { useState, useEffect } from 'react';
 import { Card, Spinner, Alert, Table, Badge } from 'react-bootstrap';
 import { articleAPI, boutiqueAPI } from '../services/api';
@@ -87,28 +93,39 @@ const StockStatusView = () => {
                                         <th className="ps-4 border-0 text-muted small text-uppercase">Img</th>
                                         <th className="ps-4 border-0 text-muted small text-uppercase">Code</th>
                                         <th className="ps-4 border-0 text-muted small text-uppercase">Produit</th>
-                                        <th className="text-center border-0 text-muted small text-uppercase">Stock Disponible</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Valeur Unitaire (Achat)</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Valeur Totale</th>
+                                        <th className="text-center border-0 text-muted small text-uppercase">unite Disponible</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase">Prix d'Achat</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase">Prix de Vente</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase">Marge Unitaire</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase">Marge (%)</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase">Valeur Stock</th>
                                         <th className="text-center border-0 text-muted small text-uppercase">Seuil d'Alerte</th>
                                         <th className="text-center pe-4 border-0 text-muted small text-uppercase">Statut</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {articles.length > 0 ? articles.map(article => (
-                                        <tr key={article._id}>
-                                            <td className="ps-4">{article.image ? <img src={article.image} alt="" className="rounded shadow-sm" style={{width: '35px', height: '35px', objectFit: 'cover'}} /> : <span className="text-muted small">-</span>}</td>
-                                            <td className="ps-4 text-muted small">{article.code || '-'}</td>
-                                            <td className="ps-4 fw-bold">{article.nom}</td>
-                                            <td className="text-center">{article.quantite}</td>
-                                            <td className="text-end">{formatCurrency(article.prixAchat)}</td>
-                                            <td className="text-end fw-bold">{formatCurrency(article.quantite * article.prixAchat)}</td>
-                                            <td className="text-center text-muted">10</td>
-                                            <td className="text-center pe-4">{getStatusBadge(article.quantite)}</td>
-                                        </tr>
-                                    )) : (
+                                    {articles.length > 0 ? articles.map(article => {
+                                        const margeUnitaire = article.prixVente - article.prixAchat;
+                                        const margePourcentage = article.prixVente > 0 ? (margeUnitaire / article.prixVente) * 100 : 0;
+
+                                        return (
+                                            <tr key={article._id}>
+                                                <td className="ps-4">{article.image ? <img src={article.image} alt="" className="rounded shadow-sm" style={{width: '35px', height: '35px', objectFit: 'cover'}} /> : <span className="text-muted small">-</span>}</td>
+                                                <td className="ps-4 text-muted small">{article.code || '-'}</td>
+                                                <td className="ps-4 fw-bold">{article.nom}</td>
+                                                <td className="text-center">{article.quantite}</td>
+                                                <td className="text-end text-danger">{formatCurrency(article.prixAchat)}</td>
+                                                <td className="text-end text-success">{formatCurrency(article.prixVente)}</td>
+                                                <td className="text-end text-primary fw-bold">{formatCurrency(margeUnitaire)}</td>
+                                                <td className="text-end text-primary">{margePourcentage.toFixed(1)}%</td>
+                                                <td className="text-end fw-bold">{formatCurrency(article.quantite * article.prixAchat)}</td>
+                                                <td className="text-center text-muted">10</td>
+                                                <td className="text-center pe-4">{getStatusBadge(article.quantite)}</td>
+                                            </tr>
+                                        );
+                                    }) : (
                                         <tr>
-                                            <td colSpan="6" className="text-center text-muted p-4">Aucun article dans cette boutique.</td>
+                                            <td colSpan="11" className="text-center text-muted p-4">Aucun article dans cette boutique.</td>
                                         </tr>
                                     )}
                                 </tbody>

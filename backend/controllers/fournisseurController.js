@@ -89,6 +89,8 @@ exports.approvisionnerCentrale = async (req, res) => {
                 article.prixAchat = item.prixAchat;
                 // On met à jour le prix de vente seulement s'il est fourni et différent
                 if (item.prixVente) article.prixVente = item.prixVente;
+                if (item.code) article.code = item.code;
+                if (item.type) article.type = item.type;
                 
                 await article.save();
                 articlesMisAJour++;
@@ -96,6 +98,8 @@ exports.approvisionnerCentrale = async (req, res) => {
                 // Création d'un nouvel article dans la CENTRALE
                 await Article.create({
                     nom: item.nom,
+                    code: item.code,
+                    type: item.type,
                     prixAchat: item.prixAchat,
                     prixVente: item.prixVente || (item.prixAchat * 1.2), // Marge par défaut si non fourni
                     quantite: quantiteAjout,

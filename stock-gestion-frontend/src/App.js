@@ -1,4 +1,8 @@
 // src/App.js
+// Application principale de gestion de stock
+// Cette page sert de point d'entrée et de routeur pour toute l'application
+// Contient la structure de navigation et la gestion de l'authentification
+
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Modal, Form, Button, Alert, Spinner, InputGroup } from 'react-bootstrap';
@@ -17,8 +21,11 @@ import StockMovementsView from './components/StockMovementsView';
 import ProfileView from './components/ProfileView';
 import CentraleStockView from './components/CentraleStockView';
 import StockStatusView from './components/StockStatusView';
+import ClientsView from './components/ClientsView';
+import NotificationsHistoryView from './components/NotificationsHistoryView';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import './App.css';
+import setupAxiosInterceptors from './utils/axiosConfig';
 
 // Le Layout principal qui inclut la Sidebar et la zone de contenu
 const MainLayout = ({ userName, userRole, handleLogout, theme, toggleTheme }) => (
@@ -45,6 +52,11 @@ function App() {
   const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
+
+  useEffect(() => {
+    // Configure l'intercepteur Axios pour gérer les erreurs 401 (redirection auto)
+    setupAxiosInterceptors();
+  }, []);
 
   useEffect(() => {
     // Applique le thème au body et sauvegarde le choix
@@ -123,6 +135,8 @@ function App() {
             <Route path="/admin/ventes" element={<VentesView userRole="Admin" />} />
             <Route path="/admin/fournisseurs" element={<SuppliersView />} />
             <Route path="/admin/mouvements" element={<StockMovementsView />} />
+            <Route path="/admin/clients" element={<ClientsView />} />
+            <Route path="/admin/notifications" element={<NotificationsHistoryView />} />
           </Route>
           
 
@@ -136,7 +150,9 @@ function App() {
           >
             <Route path="/gerant" element={<GerantDashboard />} />
             <Route path="/gerant/articles" element={<ArticlesView userRole="Gérant" />} />
-            <Route path="/gerant/ventes" element={<VentesView userRole="Gérant" />} />
+            <Route path="/gerant/ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
+            <Route path="/gerant/historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
+            <Route path="/gerant/clients" element={<ClientsView userRole="Gérant" />} />
           </Route>
 
           {/* Routes Partagées (Profil) */}

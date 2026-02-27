@@ -17,12 +17,12 @@ exports.protect = async (req, res, next) => {
             req.user = await User.findById(decoded.id).select('-password');
             next();
         } catch (error) {
-            return res.status(401).json({ message: 'Non autorisé, le token a échoué.' });
+            return res.status(401).json({ message: 'Non autorisé, le token a échoué.', redirect: '/login' });
         }
     }
 
     if (!token) {
-        return res.status(401).json({ message: 'Non autorisé, aucun token fourni.' });
+        return res.status(401).json({ message: 'Non autorisé, aucun token fourni.', redirect: '/login' });
     }
 };
 

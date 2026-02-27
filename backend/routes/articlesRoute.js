@@ -2,7 +2,10 @@
 const express = require('express');
 const router = express.Router();
 const articleController = require('../controllers/articlesController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/authMiddleware');
+
+// Route pour qu'un gérant demande une remise (notification à l'admin)
+router.post('/:id/demander-remise', protect, authorize('Gérant'), articleController.demanderRemise);
 
 // Tout le monde peut voir les articles, mais...
 router.get('/', protect, articleController.getAllArticles);

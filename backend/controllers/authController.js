@@ -2,6 +2,7 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const Boutique = require('../models/Boutique');
 const nodemailer = require('nodemailer');
+const Notification = require('../models/Notification');
 
 exports.register = async (req, res) => {
     try {
@@ -38,6 +39,37 @@ exports.login = async (req, res) => {
         );
 
         res.json({ token, role: user.role, nom: user.nom, mustChangePassword: user.mustChangePassword });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.getNotifications = async (req, res) => {
+    try {
+        const notifications = await Notification.find({ recipient: req.user.id }).sort({ createdAt: -1 }).limit(20);
+        res.status(200).json(notifications);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.markNotificationRead = async (req, res) => {
+    try {
+        await Notification.findByIdAndUpdate(req.params.id, { read: true });
+        res.status(200).json({ message: "Notification marquée comme lue" });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.markAllNotificationsRead = async (req, res) => {
+    try {
+        // Met à jour toutes les notifications non lues pour l'utilisateur courant
+        await Notification.updateMany(
+            { recipient: req.user.id, read: false },
+            { $set: { read: true } }
+        );
+        res.status(200).json({ message: "Toutes les notifications ont été marquées comme lues." });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -332,6 +364,18 @@ exports.updateProfile = async (req, res) => {
         if (error.code === 11000) {
             return res.status(400).json({ message: "Cet email est déjà utilisé." });
         }
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.getAllNotifications = async (req, res) => {
+    try {
+        const notifications = await Notification.find()
+            .populate('recipient', 'nom email role')
+            .sort({ createdAt: -1 })
+            .limit(100); // Limite pour éviter de surcharger
+        res.status(200).json(notifications);
+    } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };

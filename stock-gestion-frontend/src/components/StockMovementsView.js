@@ -1,6 +1,11 @@
+// src/components/StockMovementsView.js
+// Composant d'affichage des mouvements de stock
+// Permet de visualiser les entrées et sorties de stock
+// Affiche les informations sur les articles, les quantités et les dates
+// Contient les fonctionnalités de recherche et de filtres
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Spinner, Alert, Form, Row, Col, Badge, Button, Modal, Pagination, OverlayTrigger, Tooltip, Table } from 'react-bootstrap';
-import TableComponent from './common/Table';
 import { mouvementAPI, boutiqueAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -233,10 +238,14 @@ const StockMovementsView = () => {
 
             <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
                 <Card.Body className="p-0">
-                    <Table responsive hover className="align-middle mb-0">
-                        <thead className="bg-body-tertiary">
+                    <Table hover responsive className="align-middle mb-0">
+                        <thead className="bg-light">
                             <tr>
-                                {columns.map(col => <th key={col.key} className="border-0 px-3 small text-uppercase text-muted">{col.label}</th>)}
+                                {columns.map(col => (
+                                    <th key={col.key} className="border-0 small text-uppercase text-secondary">
+                                        {col.label}
+                                    </th>
+                                ))}
                             </tr>
                         </thead>
                         <tbody>
@@ -244,9 +253,9 @@ const StockMovementsView = () => {
                                 currentMouvements.map((item, index) => {
                                     const isCancelled = item.isCancelled || item.details?.includes('ANNULATION');
                                     return (
-                                        <tr key={item._id || index} className={isCancelled ? 'table-light' : ''} style={isCancelled ? { textDecoration: 'line-through', opacity: 0.6 } : {}}>
+                                        <tr key={item._id || index} className={isCancelled ? 'bg-light text-muted' : ''}>
                                             {columns.map(col => (
-                                                <td key={col.key} className="px-3">
+                                                <td key={col.key} className="border-0">
                                                     {col.render ? col.render(item[col.key], item) : item[col.key]}
                                                 </td>
                                             ))}
@@ -254,7 +263,10 @@ const StockMovementsView = () => {
                                     );
                                 })
                             ) : (
-                                <tr><td colSpan={columns.length} className="text-center p-4 text-muted">Aucun mouvement de stock trouvé.</td></tr>
+                                <tr><td colSpan={columns.length} className="text-center py-5 text-muted">
+                                    <iconify-icon icon="solar:bill-list-linear" style={{fontSize: '48px'}} className="mb-2 opacity-50"></iconify-icon>
+                                    <p className="mb-0">Aucun mouvement de stock trouvé.</p>
+                                </td></tr>
                             )}
                         </tbody>
                     </Table>

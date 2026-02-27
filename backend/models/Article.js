@@ -34,6 +34,33 @@ const articleSchema = new mongoose.Schema({
         type: String,
         trim: true,
         default: ''
+    },
+    type: {
+        type: String,
+        trim: true,
+        default: 'Divers'
+    },
+    // Champ pour la promotion (admin)
+    promo: {
+        type: Number, // en %
+        default: 0
+    },
+    promoActive: {
+        type: Boolean,
+        default: false
+    },
+    dateDebutPromo: Date,
+    dateFinPromo: Date,
+    // Champ pour la remise ponctuelle (gérant)
+    remise: {
+        type: Number, // en %
+        default: 0
+    },
+    remiseEnAttente: {
+        valeur: Number,
+        clientNom: String,
+        gerant: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        dateDemande: Date
     }
 }, {
     timestamps: true
