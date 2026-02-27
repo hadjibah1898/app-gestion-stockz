@@ -53,15 +53,15 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => 
                 prixTotal,
                 gerant: userId,
                 boutique: boutiqueId,
-                statut: hasRemise ? 'en_attente_remise' : 'finalisee',
+                statut: 'finalisee',
                 remiseAppliquee: remiseTemp || 0
             });
             
             // Sauvegarde simple sans transaction
             const savedVente = await vente.save();
             
-            // 4. Mettre à jour le stock de l'article seulement si la vente est finalisée
-            if (!hasRemise) {
+            // 4. Mettre à jour le stock de l'article (Toujours, car la vente est finalisée immédiatement)
+            if (true) {
                 article.quantite -= quantite;
                 await article.save();
                 
@@ -77,12 +77,27 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => 
 
         // Enregistrer un seul mouvement pour tout le panier
         if (articlesVendusPourMouvement.length > 0) {
+            let details = `Vente de ${articlesVendusPourMouvement.length} type(s) d'article(s).`;
+
+            if (hasRemise) {
+                const remises = items
+                    .filter(item => item.remiseTemp > 0)
+                    .map(item => `${item.remiseTemp}%`);
+                
+                const uniqueRemises = [...new Set(remises)];
+                if (uniqueRemises.length > 0) {
+                    details += ` Remise appliquée: ${uniqueRemises.join(', ')}.`;
+                } else {
+                    details += ` Avec remise appliquée.`;
+                }
+            }
+
             await Mouvement.create({
                 type: 'Vente',
                 boutiqueSource: boutiqueId,
                 articles: articlesVendusPourMouvement,
                 operateur: userId,
-                details: `Vente de ${articlesVendusPourMouvement.length} type(s) d'article(s). ${hasRemise ? 'Remise en attente de validation.' : ''}`
+                details: details
             });
         }
 
@@ -92,7 +107,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => 
     }
 };
 
-exports.listerVentes = async (filter = {}) => {
+exports.listerVentes = async (filter = {}, user = null) => {
     const page = parseInt(filter.page) || 1;
     // Si limit n'est pas défini, on pagine. Si limit=0, on retourne tout.
     const limit = filter.limit !== undefined ? parseInt(filter.limit) : 15;
@@ -114,8 +129,10 @@ exports.listerVentes = async (filter = {}) => {
         query.isCancelled = true;
     }
 
-    // Gérer le filtre par gérant
-    if (filter.gerantId) {
+    // Si l'utilisateur est un gérant, on force le filtre sur son ID pour la sécurité.
+    if (user && user.role === 'Gérant') {
+        query.gerant = user.id;
+    } else if (filter.gerantId) { // Sinon, si un filtre admin est passé, on l'utilise.
         query.gerant = filter.gerantId;
     }
     

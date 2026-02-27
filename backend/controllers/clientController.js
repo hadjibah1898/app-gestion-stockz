@@ -6,7 +6,8 @@ const nodemailer = require('nodemailer');
 // @access  Private (Admin, Gérant)
 exports.createClient = async (req, res) => {
     try {
-        const client = await Client.create(req.body);
+        // On enregistre l'ID du créateur (le gérant connecté)
+        const client = await Client.create({ ...req.body, createur: req.user.id });
 
         // Envoi de l'email de bienvenue si l'email est fourni
         if (client.email) {
@@ -55,7 +56,14 @@ exports.createClient = async (req, res) => {
 // @access  Private (Admin, Gérant)
 exports.getClients = async (req, res) => {
     try {
-        const clients = await Client.find({}).sort({ createdAt: -1 });
+        let query = {};
+
+        // Si l'utilisateur est un Gérant, on applique le filtre de confidentialité
+        if (req.user.role === 'Gérant') {
+            query = { createur: req.user.id };
+        }
+
+        const clients = await Client.find(query).sort({ createdAt: -1 });
         res.status(200).json(clients);
     } catch (error) {
         res.status(500).json({ message: "Erreur serveur lors de la récupération des clients." });

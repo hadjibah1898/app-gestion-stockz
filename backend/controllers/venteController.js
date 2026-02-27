@@ -16,14 +16,17 @@ exports.effectuerVente = async (req, res) => {
     }
 };
 
+// Fichier : backend/controllers/venteController.js (à modifier)
 exports.getHistorique = async (req, res) => {
     try {
-        const ventes = await venteService.listerVentes(req.query);
-        res.status(200).json(ventes);
+        // On passe l'objet utilisateur au service
+        const data = await venteService.listerVentes(req.query, req.user);
+        res.json(data);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
+
 
 exports.getPendingSales = async (req, res) => {
     try {

@@ -49,7 +49,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
   // État pour le filtre des ventes annulées
   const [showCancelledOnly, setShowCancelledOnly] = useState(false);
-  const [pendingSales, setPendingSales] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const itemsPerPage = 15;
@@ -75,53 +74,22 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         clientAPI.getAll() // Charger les clients
       ];
 
-      // Admin et Gérant peuvent voir les ventes en attente (le backend filtre pour le gérant)
-      if (userRole === 'Admin' || userRole === 'Gérant') {
-        promises.push(venteAPI.getPendingSales());
-      }
-
-      const [articlesRes, historiqueRes, clientsRes, pendingSalesRes] = await Promise.all(promises);
+      const [articlesRes, historiqueRes, clientsRes] = await Promise.all(promises);
 
       setArticles((articlesRes.data || []).filter(a => a.quantite > 0));
       setHistorique(historiqueRes.data.ventes || []);
       setTotalPages(historiqueRes.data.totalPages || 0);
       setClients(clientsRes.data || []);
-
-      if ((userRole === 'Admin' || userRole === 'Gérant') && pendingSalesRes) {
-        setPendingSales(pendingSalesRes.data || []);
-      }
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur de chargement');
     } finally {
       setLoading(false);
     }
-  }, [dateFilter, userRole, currentPage, showCancelledOnly]);
+  }, [dateFilter, currentPage, showCancelledOnly]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]); // Recharger quand les filtres ou la page changent
-
-  const handleValidateRemise = async (venteId) => {
-    try {
-      await venteAPI.validateRemise(venteId);
-      setSuccessMessage("Remise validée avec succès !");
-      fetchData();
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la validation.");
-    }
-  };
-
-  const handleRejectRemise = async (venteId) => {
-    try {
-      await venteAPI.rejectRemise(venteId);
-      setSuccessMessage("Remise refusée avec succès !");
-      fetchData();
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors du refus.");
-    }
-  };
 
   // Fonction utilitaire pour calculer le prix effectif d'un article (avec promo/remise)
   // Ajout d'un paramètre remise temporaire (pour le panier)
@@ -255,11 +223,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     try {
       await venteAPI.create(venteData);
 
-      if (hasRemise) {
-        setSuccessMessage('Vente effectuée avec succès ! En attente de validation de l\'admin pour la remise.');
-        // Pas de reçu pour les ventes en attente, l'admin le gérera
-      } else {
-        // Préparer les données pour le reçu pour les ventes normales
+      // Préparer les données pour le reçu (Vente finalisée immédiatement)
         const clientObj = clients.find(c => c._id === selectedClientId);
         const receiptData = {
             items: [...panier],
@@ -273,18 +237,13 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         setLastSaleData(receiptData);
         setShowReceiptModal(true); // Ouvrir la modale de reçu
         setSuccessMessage('Vente effectuée avec succès !');
-      }
+
       setPanier([]);
       setSelectedClientId(''); // Réinitialiser le client
       setMontantPaye(''); // Réinitialiser le montant payé
       setEcheanceDette(''); // Réinitialiser l'échéance
       fetchData();
       setTimeout(() => setSuccessMessage(''), 3000);
-      // Refocus sur le champ scanner pour la prochaine vente
-      if (hasRemise) {
-        // Si pas de modale de reçu, on focus directement
-        setTimeout(() => barcodeInputRef.current?.focus(), 100);
-      }
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur lors de la vente');
     }
@@ -308,10 +267,16 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     const tableRows = [];
 
     lastSaleData.items.forEach(item => {
+      let nomArticle = item.article.nom;
+      // Afficher la remise si elle existe
+      if (item.remiseTemp && item.remiseTemp > 0) {
+        nomArticle += ` (Remise -${item.remiseTemp}%)`;
+      }
+
       const row = [
-        item.article.nom,
+        nomArticle,
         item.quantite,
-        (getEffectivePrice(item.article).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
+        (getEffectivePrice(item.article, item.remiseTemp).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
         (item.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')
       ];
       tableRows.push(row);
@@ -606,93 +571,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
       {userRole === 'Admin' ? (
         <>
-          {/* Section Ventes en Attente */}
-          <Card className="border-0 shadow-sm rounded-4 mb-4">
-            <Card.Header className="bg-warning-subtle">
-              <div className="d-flex justify-content-between align-items-center">
-                <h5 className="mb-0 fw-bold text-warning">
-                  <iconify-icon icon="solar:clock-circle-bold" className="me-2"></iconify-icon>
-                  Ventes en Attente de Validation
-                </h5>
-                <Button variant="outline-warning" size="sm" onClick={fetchData}>
-                  <iconify-icon icon="solar:refresh-bold" className="me-1"></iconify-icon>
-                  Actualiser
-                </Button>
-              </div>
-            </Card.Header>
-            <Card.Body>
-              {pendingSales.length === 0 ? (
-                <Alert variant="warning" className="text-center">
-                  <iconify-icon icon="solar:box-minimalistic-bold" style={{fontSize: '48px'}} className="mb-2 opacity-50"></iconify-icon>
-                  <p className="mb-0">Aucune vente en attente de validation pour le moment.</p>
-                </Alert>
-              ) : (
-                <Table hover responsive className="align-middle mb-0">
-                  <thead className="bg-light">
-                    <tr>
-                      <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Date</th>
-                      <th className="py-3 border-0 text-secondary small text-uppercase">Article</th>
-                      <th className="py-3 border-0 text-secondary small text-uppercase text-center">Qté</th>
-                      <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                      <th className="py-3 border-0 text-secondary small text-uppercase">Vendeur</th>
-                      <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
-                      <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingSales.map(vente => (
-                      <tr key={vente._id} className="bg-warning-subtle">
-                        <td className="ps-4">
-                          <div className="fw-bold">{new Date(vente.createdAt).toLocaleDateString()}</div>
-                          <div className="small text-muted">{new Date(vente.createdAt).toLocaleTimeString()}</div>
-                        </td>
-                        <td>
-                          <div className="d-flex align-items-center">
-                            {vente.article?.image ? (
-                              <img src={vente.article?.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer'}} onClick={() => handleImageClick(vente.article?.image)} />
-                            ) : (
-                              <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                            )}
-                            <div>
-                              <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
-                              {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="text-center"><Badge bg="warning" text="dark" className="border">{vente.quantite}</Badge></td>
-                        <td className="text-end fw-bold text-warning">{vente.prixTotal.toLocaleString()} GNF</td>
-                        <td>{vente.gerant?.nom || 'Inconnu'}</td>
-                        <td>{vente.client?.nom || 'Passage'}</td>
-                        <td className="pe-4 text-end">
-                          <div className="d-flex gap-2 justify-content-end">
-                            <Button 
-                              variant="success" 
-                              size="sm" 
-                              className="rounded-pill px-3"
-                              onClick={() => handleValidateRemise(vente._id)}
-                            >
-                              <iconify-icon icon="solar:check-circle-bold" className="me-1 align-middle"></iconify-icon>
-                              Valider
-                            </Button>
-                            <Button 
-                              variant="danger" 
-                              size="sm" 
-                              className="rounded-pill px-3"
-                              onClick={() => handleRejectRemise(vente._id)}
-                            >
-                              <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                              Refuser
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              )}
-            </Card.Body>
-          </Card>
-
           {/* Section Historique Complet */}
           <Card className="border-0 shadow-sm rounded-4">
             <Card.Header>Historique complet des transactions</Card.Header>
@@ -1069,75 +947,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                     </Card>
                     </Col>
                 </Row>
-            </Tab>
-            <Tab 
-                eventKey="pending" 
-                title={
-                    <span className="d-flex align-items-center">
-                        <iconify-icon icon="solar:clock-circle-bold" className="me-2"></iconify-icon>
-                        Ventes en Attente
-                        {pendingSales.length > 0 && <Badge pill bg="warning" text="dark" className="ms-2">{pendingSales.length}</Badge>}
-                    </span>
-                }
-            >
-                <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
-                    <Card.Header className="bg-white py-3">
-                        <h5 className="mb-0 fw-bold">Ventes avec remise en attente de validation par l'administrateur</h5>
-                    </Card.Header>
-                    <Card.Body className="p-0">
-                        {pendingSales.length > 0 ? (
-                            <Table hover responsive className="align-middle mb-0">
-                                <thead className="bg-light">
-                                    <tr>
-                                        <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Date</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase">Article</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase text-center">Qté</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
-                                        <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-center">Statut</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {pendingSales.map(vente => (
-                                        <tr key={vente._id}>
-                                            <td className="ps-4">
-                                                <div className="fw-bold">{new Date(vente.createdAt).toLocaleDateString()}</div>
-                                                <div className="small text-muted">{new Date(vente.createdAt).toLocaleTimeString()}</div>
-                                            </td>
-                                            <td>
-                                                <div className="d-flex align-items-center">
-                                                    {vente.article?.image ? (
-                                                        <img src={vente.article?.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer'}} onClick={() => handleImageClick(vente.article?.image)} />
-                                                    ) : (
-                                                        <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                                                    )}
-                                                    <div>
-                                                        <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
-                                                        {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td className="text-center"><Badge bg="light" text="dark" className="border">{vente.quantite}</Badge></td>
-                                            <td className="text-end fw-bold text-primary">{vente.prixTotal.toLocaleString()} GNF</td>
-                                            <td>{vente.client?.nom || 'Passage'}</td>
-                                            <td className="pe-4 text-center">
-                                                <Badge bg="warning-subtle" text="warning" className="px-3 py-2 rounded-pill">
-                                                    <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                    En attente
-                                                </Badge>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </Table>
-                        ) : (
-                            <Alert variant="success" className="m-4 text-center">
-                                <iconify-icon icon="solar:check-circle-bold" style={{fontSize: '48px'}} className="mb-2 opacity-50"></iconify-icon>
-                                <p className="mb-0">Vous n'avez aucune vente en attente de validation.</p>
-                            </Alert>
-                        )}
-                    </Card.Body>
-                </Card>
             </Tab>
             <Tab eventKey="history" title={<span className="d-flex align-items-center"><iconify-icon icon="solar:bill-list-bold" className="me-2"></iconify-icon>Historique Complet</span>}>
                 <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
