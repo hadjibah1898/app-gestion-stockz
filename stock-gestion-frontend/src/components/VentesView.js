@@ -786,6 +786,19 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                 </tbody>
               </Table>
             </Card.Body>
+            {totalPages > 1 && (
+              <Card.Footer className="d-flex justify-content-center border-0 pt-0">
+                <Pagination>
+                  <Pagination.Prev onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} />
+                  {[...Array(totalPages)].map((_, idx) => (
+                    <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
+                      {idx + 1}
+                    </Pagination.Item>
+                  ))}
+                  <Pagination.Next onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} />
+                </Pagination>
+              </Card.Footer>
+            )}
           </Card>
         </>
       ) : (

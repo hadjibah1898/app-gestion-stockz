@@ -4,7 +4,7 @@
 // Permet de visualiser rapidement l'état du stock et les performances
 
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Spinner, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer } from 'react-bootstrap';
+import { Row, Col, Card, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
 import { Link, useOutletContext } from 'react-router-dom';
 import { dashboardAPI, articleAPI, venteAPI } from '../services/api'; // Import the new API

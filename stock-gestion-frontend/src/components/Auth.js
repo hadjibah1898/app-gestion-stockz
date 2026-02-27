@@ -122,13 +122,13 @@ const Auth = ({ onLogin }) => {
                       
                       <div className="d-flex justify-content-between align-items-center mb-4">
                         <Form.Check type="checkbox" label="Se souvenir de moi" id="remember-me" className="small text-muted" />
-                        <a 
-                          href="#" 
-                          className="small text-decoration-none text-primary fw-bold"
-                          onClick={(e) => { e.preventDefault(); setShowForgotModal(true); }}
+                        <button
+                          type="button"
+                          className="small text-decoration-none text-primary fw-bold bg-transparent border-0 p-0"
+                          onClick={() => setShowForgotModal(true)}
                         >
                           Mot de passe oublié ?
-                        </a>
+                        </button>
                       </div>
 
                       <div className="d-grid">
