@@ -30,10 +30,10 @@ const CentraleStockView = () => {
                 if (centrale) {
                     setCentralShop(centrale);
                 } else {
-                    setError("Aucune Boutique Centrale n'est configurée.");
+                    setError("Aucun Dépôt Principal n'est configuré.");
                 }
             } catch (err) {
-                setError("Erreur lors de la recherche de la boutique centrale.");
+                setError("Erreur lors de la recherche du dépôt principal.");
             } finally {
                 setLoading(false);
             }

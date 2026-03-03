@@ -1,56 +1,24 @@
 // src/components/NotificationsHistoryView.js
 // Composant d'affichage de l'historique des notifications
-// Permet de visualiser les notifications envoyées aux clients
-// Affiche les informations sur les clients, les articles et les dates
+// Permet de visualiser toutes les notifications reçues
+// Affiche les informations sur le message, la date et le statut
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Card, Spinner, Alert, Badge, Form, Button, Table } from 'react-bootstrap';
+import React, { useState } from 'react';
+import { Card, Spinner, Badge, Form, Button, Table } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
-import { authAPI } from '../services/api';
+import { useNotifications } from '../NotificationContext';
 
 const NotificationsHistoryView = () => {
     const userRole = (localStorage.getItem('userRole') || '').trim();
     const navigate = useNavigate();
-    const [notifications, setNotifications] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    const { notifications, loading, markAsRead, markAllAsRead } = useNotifications();
     const [searchTerm, setSearchTerm] = useState('');
-
-    const fetchNotifications = useCallback(async () => {
-        try {
-            setLoading(true);
-            // L'API pour les gérants ne retourne que leurs propres notifications
-            const res = userRole === 'Admin'
-                ? await authAPI.getAllNotifications()
-                : await authAPI.getNotifications();
-            setNotifications(res.data || []);
-        } catch (err) {
-            setError("Impossible de charger l'historique des notifications.");
-        } finally {
-            setLoading(false);
-        }
-    }, [userRole]);
-
-    useEffect(() => {
-        fetchNotifications();
-    }, [fetchNotifications]);
-
-    const handleMarkAllAsRead = async () => {
-        try {
-            await authAPI.markAllNotificationsRead();
-            setNotifications(notifications.map(n => ({ ...n, read: true })));
-        } catch (err) {
-            setError("Impossible de marquer toutes les notifications comme lues.");
-        }
-    };
 
     const handleRowClick = (notification) => {
         // Marquer comme lue si elle ne l'est pas déjà
         if (!notification.read) {
-            authAPI.markNotificationRead(notification._id).catch(err => console.error("Failed to mark as read", err));
-            // Mise à jour optimiste de l'UI
-            setNotifications(notifications.map(n => n._id === notification._id ? { ...n, read: true } : n));
+            markAsRead(notification._id);
         }
 
         // Naviguer si un lien existe
@@ -137,24 +105,22 @@ const NotificationsHistoryView = () => {
                     cursor: pointer;
                 }
             `}</style>
-            <div className="d-flex justify-content-between align-items-center mb-4">
+            <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
                 <h3 className="fw-bold mb-0">{userRole === 'Admin' ? 'Historique des Notifications' : 'Mes Notifications'}</h3>
-                <div className="d-flex gap-2">
-                    {userRole !== 'Admin' && hasUnread && (
-                        <Button variant="outline-success" onClick={handleMarkAllAsRead} className="rounded-pill shadow-sm">
+                <div className="d-flex flex-wrap gap-2">
+                    {hasUnread && (
+                        <Button variant="outline-success" onClick={markAllAsRead} className="rounded-pill shadow-sm">
                             <iconify-icon icon="solar:check-read-bold" className="me-2 align-middle"></iconify-icon>
                             Tout marquer comme lu
                         </Button>
                     )}
-                    <Button variant="outline-primary" onClick={fetchNotifications} className="rounded-pill shadow-sm">
+                    <Button variant="outline-primary" disabled className="rounded-pill shadow-sm">
                         <iconify-icon icon="solar:refresh-bold" className="me-2 align-middle"></iconify-icon>
                         Actualiser
                     </Button>
                 </div>
             </div>
             
-            {error && <Alert variant="danger">{error}</Alert>}
-
             <div className="mb-4">
                 <Form.Control
                     type="text"
@@ -181,7 +147,7 @@ const NotificationsHistoryView = () => {
                         <tbody>
                             {filteredNotifications.length > 0 ? (
                                 filteredNotifications.map((item) => (
-                                    <tr key={item._id} onClick={() => handleRowClick(item)} className={`${item.link ? 'clickable' : ''} ${!item.read ? 'bg-primary-subtle' : ''}`}>
+                                    <tr key={item._id} onClick={() => handleRowClick(item)} className={`${item.link ? 'clickable' : ''} ${!item.read ? 'table-primary-soft' : ''}`}>
                                         {columns.map(col => (
                                             <td key={col.key} className="px-4 py-3">
                                                 {col.render ? col.render(item[col.key], item) : item[col.key]}

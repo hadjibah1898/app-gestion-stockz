@@ -1,11 +1,13 @@
 const Vente = require('../models/Vente');
 const Article = require('../models/Article');
+const User = require('../models/User');
 const Mouvement = require('../models/Mouvement');
+const Client = require('../models/Client');
 const notificationService = require('./notificationService');
 const Notification = require('../models/Notification');
 
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
-exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => {
+exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null) => {
     try {
         const resultats = [];
         const articlesVendusPourMouvement = [];
@@ -54,7 +56,8 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => 
                 gerant: userId,
                 boutique: boutiqueId,
                 statut: 'finalisee',
-                remiseAppliquee: remiseTemp || 0
+                remiseAppliquee: remiseTemp || 0,
+                client: clientId // Ajout de l'ID client à chaque vente
             });
             
             // Sauvegarde simple sans transaction
@@ -72,23 +75,65 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => 
             }
             
             resultats.push(savedVente);
-            articlesVendusPourMouvement.push({ nomArticle: article.nom, quantite: quantite });
+            articlesVendusPourMouvement.push({ articleId: article._id, nomArticle: article.nom, quantite: quantite, prixAchatUnitaire: article.prixAchat });
+        }
+
+        const totalVentePanier = resultats.reduce((acc, v) => acc + v.prixTotal, 0);
+
+        // Gestion de la dette et mise à jour du client
+        if (clientId) {
+            const client = await Client.findById(clientId);
+            if (!client) {
+                // Si le client n'est pas trouvé, on ne bloque pas la vente mais on log une erreur
+                console.error(`Client avec ID ${clientId} non trouvé. Impossible de mettre à jour la dette ou le total des achats.`);
+            } else {
+                // Mettre à jour le total des achats du client
+                client.totalAchats += totalVentePanier;
+
+                // Gestion Automatique des Commissions pour les Ouvriers
+                if (client.type === 'Ouvrier' && client.tauxCommission > 0) {
+                    const commissionGagnee = (totalVentePanier * client.tauxCommission) / 100;
+                    client.commission = (client.commission || 0) + commissionGagnee;
+                }
+
+                // Vérifier s'il y a une dette
+                if (montantPaye !== null && montantPaye < totalVentePanier) {
+                    const detteAAjouter = totalVentePanier - montantPaye;
+                    client.dette += detteAAjouter;
+                    
+                    // Mettre à jour l'échéance de la dette
+                    if (echeanceDette) {
+                        client.echeanceDette = echeanceDette;
+                    }
+
+                    // Alerter les admins qu'une dette a été accordée
+                    const gerant = await User.findById(userId);
+                    if (gerant) {
+                        notificationService.sendDebtGrantedAlert(gerant, client, detteAAjouter, totalVentePanier)
+                            .catch(err => console.error("Erreur lors de la notification de dette :", err));
+                    }
+                }
+                await client.save();
+            }
         }
 
         // Enregistrer un seul mouvement pour tout le panier
         if (articlesVendusPourMouvement.length > 0) {
-            let details = `Vente de ${articlesVendusPourMouvement.length} type(s) d'article(s).`;
+            let details = `Vente de ${articlesVendusPourMouvement.length} article(s) pour un total de ${totalVentePanier.toLocaleString('fr-FR')} GNF.`;
 
             if (hasRemise) {
                 const remises = items
                     .filter(item => item.remiseTemp > 0)
                     .map(item => `${item.remiseTemp}%`);
                 
-                const uniqueRemises = [...new Set(remises)];
-                if (uniqueRemises.length > 0) {
-                    details += ` Remise appliquée: ${uniqueRemises.join(', ')}.`;
-                } else {
-                    details += ` Avec remise appliquée.`;
+                details += ` Remise(s) appliquée(s): ${[...new Set(remises)].join(', ')}.`;
+
+                // Alerter les admins qu'une remise a été appliquée
+                const gerant = await User.findById(userId);
+                const client = clientId ? await Client.findById(clientId) : null;
+                if (gerant) {
+                    notificationService.sendDiscountGrantedAlert(gerant, remises, totalVentePanier, client?.nom)
+                        .catch(err => console.error("Erreur lors de la notification de remise :", err));
                 }
             }
 
@@ -101,7 +146,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false) => 
             });
         }
 
-        return resultats;
+        return resultats
     } catch (error) {
         throw error;
     }
@@ -189,10 +234,10 @@ exports.annulerVente = async (venteId, user) => {
 
     // Enregistrer un mouvement d'annulation pour la traçabilité
     await Mouvement.create({
-        type: 'Vente',
-        details: `ANNULATION Vente #${vente._id} - Retour Stock`,
+        type: 'Annulation Vente',
+        details: `Annulation de la vente #${vente._id}. Retour de ${vente.quantite} unité(s) en stock.`,
         boutiqueSource: vente.boutique, // Le stock revient ici
-        articles: [{ nomArticle: article.nom, quantite: vente.quantite }],
+        articles: [{ articleId: article._id, nomArticle: article.nom, quantite: vente.quantite, prixAchatUnitaire: article.prixAchat }],
         operateur: user.id,
         isCancelled: true
     });

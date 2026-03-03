@@ -8,8 +8,16 @@ const logFilePath = path.join(__dirname, '../logs/ventes.log');
 
 exports.effectuerVente = async (req, res) => {
     try {
-        const { panier, clientId, hasRemise } = req.body;
-        const resultats = await venteService.traiterPanier(panier, req.user.id, req.user.boutique, hasRemise);
+        const { panier, clientId, montantPaye, echeanceDette, hasRemise } = req.body;
+        const resultats = await venteService.traiterPanier(
+            panier,
+            req.user.id,
+            req.user.boutique,
+            hasRemise,
+            clientId,
+            montantPaye,
+            echeanceDette
+        );
         res.status(201).json(resultats);
     } catch (error) {
         res.status(500).json({ message: error.message });

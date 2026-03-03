@@ -10,6 +10,8 @@ const clientSchema = new mongoose.Schema({
         type: String,
         trim: true,
         lowercase: true,
+        unique: true, // Assure l'unicité de l'email
+        sparse: true, // Permet d'avoir plusieurs clients sans email (null/undefined)
     },
     telephone: {
         type: String,
@@ -39,6 +41,12 @@ const clientSchema = new mongoose.Schema({
     commission: {
         type: Number,
         default: 0,
+    },
+    tauxCommission: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
     },
     totalAchats: {
         type: Number,

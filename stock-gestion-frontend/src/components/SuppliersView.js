@@ -5,7 +5,7 @@
 // Contient les fonctionnalités de recherche et de filtres
 
 import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip, InputGroup, Badge } from 'react-bootstrap';
 import { fournisseurAPI } from '../services/api';
 import TableComponent from './common/Table';
 
@@ -20,6 +20,12 @@ const SuppliersView = () => {
   const [showModal, setShowModal] = useState(false);
   const [currentFournisseur, setCurrentFournisseur] = useState({ nom: '', telephone: '', email: '', produitsProposes: '' });
   const [editMode, setEditMode] = useState(false);
+
+  const [newProduct, setNewProduct] = useState('');
+
+  // États pour la confirmation de suppression
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [supplierToDelete, setSupplierToDelete] = useState(null);
 
   useEffect(() => {
     fetchFournisseurs();
@@ -46,6 +52,7 @@ const SuppliersView = () => {
       setCurrentFournisseur({ nom: '', telephone: '', email: '', produitsProposes: '' });
       setEditMode(false);
     }
+    setNewProduct(''); // Réinitialiser le champ d'ajout de produit
     setShowModal(true);
   };
 
@@ -68,24 +75,55 @@ const SuppliersView = () => {
       fetchFournisseurs();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError("Erreur lors de l'enregistrement");
+      setError(err.response?.data?.message || "Erreur lors de l'enregistrement");
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm("Supprimer ce fournisseur ?")) {
-      try {
-        await fournisseurAPI.delete(id);
-        fetchFournisseurs();
-      } catch (err) {
-        setError("Impossible de supprimer");
-      }
+  const confirmDelete = (id) => {
+    setSupplierToDelete(id);
+    setShowDeleteModal(true);
+  };
+
+  const executeDelete = async () => {
+    try {
+      await fournisseurAPI.delete(supplierToDelete);
+      setSuccessMessage("Fournisseur supprimé avec succès.");
+      fetchFournisseurs();
+    } catch (err) {
+      setError(err.response?.data?.message || "Impossible de supprimer ce fournisseur. Il est peut-être lié à des mouvements de stock.");
+    } finally {
+      setShowDeleteModal(false);
+      setSupplierToDelete(null);
+      setTimeout(() => setSuccessMessage(''), 3000);
     }
   };
 
   const filteredFournisseurs = fournisseurs.filter(f =>
     f.nom.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const productsArray = currentFournisseur.produitsProposes.split(',').map(p => p.trim()).filter(p => p);
+
+  const handleAddProduct = () => {
+      if (newProduct.trim() === '' || productsArray.includes(newProduct.trim())) {
+          setNewProduct('');
+          return;
+      };
+      const updatedProducts = [...productsArray, newProduct.trim()];
+      setCurrentFournisseur({
+          ...currentFournisseur,
+          produitsProposes: updatedProducts.join(', ')
+      });
+      setNewProduct('');
+  };
+
+  const handleRemoveProduct = (productToRemove) => {
+      const updatedProducts = productsArray.filter(p => p !== productToRemove);
+      setCurrentFournisseur({
+          ...currentFournisseur,
+          produitsProposes: updatedProducts.join(', ')
+      });
+  };
 
   const columns = [
     { key: 'nom', label: 'Nom' },
@@ -102,7 +140,7 @@ const SuppliersView = () => {
             </Button>
           </OverlayTrigger>
           <OverlayTrigger overlay={<Tooltip>Supprimer</Tooltip>}>
-            <Button variant="link" className="text-danger p-0" onClick={() => handleDelete(fournisseur._id)}>
+            <Button variant="link" className="text-danger p-0" onClick={() => confirmDelete(fournisseur._id)}>
               <iconify-icon icon="solar:trash-bin-trash-linear" style={{ fontSize: '20px' }}></iconify-icon>
             </Button>
           </OverlayTrigger>
@@ -115,8 +153,8 @@ const SuppliersView = () => {
 
   return (
     <div className="p-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h3 className="fw-bold mb-0">Gestion des Fournisseurs</h3>
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+        <h3 className="fw-bold mb-0">Gestion des Fournisseurs</h3> 
         <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
           <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
           Ajouter un Fournisseur
@@ -161,8 +199,31 @@ const SuppliersView = () => {
               <Form.Control type="email" value={currentFournisseur.email} onChange={e => setCurrentFournisseur({...currentFournisseur, email: e.target.value})} placeholder="exemple@email.com" />
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Produits (séparés par des virgules)</Form.Label>
-              <Form.Control as="textarea" rows={3} value={currentFournisseur.produitsProposes} onChange={e => setCurrentFournisseur({...currentFournisseur, produitsProposes: e.target.value})} placeholder="Ex: Riz, Sucre, Huile" />
+              <Form.Label>Produits proposés</Form.Label>
+              <div className="border p-2 rounded" style={{ minHeight: '100px' }}>
+                  {productsArray.map((product, index) => (
+                      <Badge key={index} pill bg="primary" className="me-2 mb-2 p-2 fs-6 d-inline-flex align-items-center">
+                          {product}
+                          <Button variant="close" bsPrefix="btn-close-white" size="sm" className="ms-1" onClick={() => handleRemoveProduct(product)}></Button>
+                      </Badge>
+                  ))}
+                  <InputGroup className="mt-2">
+                      <Form.Control
+                          type="text"
+                          value={newProduct}
+                          onChange={e => setNewProduct(e.target.value)}
+                          onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ',') {
+                                  e.preventDefault();
+                                  handleAddProduct();
+                              }
+                          }}
+                          placeholder="Ajouter un produit..."
+                      />
+                      <Button variant="outline-secondary" onClick={handleAddProduct}>Ajouter</Button>
+                  </InputGroup>
+              </div>
+              <Form.Text className="text-muted">Ajoutez des produits en appuyant sur Entrée ou en cliquant sur "Ajouter".</Form.Text>
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>
@@ -170,6 +231,23 @@ const SuppliersView = () => {
             <Button variant="primary" type="submit">Enregistrer</Button>
           </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modale de Confirmation de Suppression */}
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title className="text-danger">⚠️ Suppression de Fournisseur</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="fw-bold">Êtes-vous sûr de vouloir supprimer ce fournisseur ?</p>
+          <Alert variant="warning" className="mb-0 small">
+            Cette action est irréversible.
+          </Alert>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
+          <Button variant="danger" onClick={executeDelete}>Supprimer définitivement</Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

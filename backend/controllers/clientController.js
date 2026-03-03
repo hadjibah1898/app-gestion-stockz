@@ -1,111 +1,94 @@
 const Client = require('../models/Client');
-const nodemailer = require('nodemailer');
 
-// @desc    Créer un nouveau client
-// @route   POST /api/clients
-// @access  Private (Admin, Gérant)
+/**
+ * @desc    Créer un client
+ * @route   POST /api/clients
+ * @access  Private
+ */
 exports.createClient = async (req, res) => {
     try {
-        // On enregistre l'ID du créateur (le gérant connecté)
-        const client = await Client.create({ ...req.body, createur: req.user.id });
-
-        // Envoi de l'email de bienvenue si l'email est fourni
-        if (client.email) {
-            const transporter = nodemailer.createTransport({
-                service: 'gmail',
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASS
-                }
-            });
-
-            const mailOptions = {
-                from: process.env.EMAIL_USER,
-                to: client.email,
-                subject: 'Bienvenue chez StockDash !',
-                html: `
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-                        <h2 style="color: #0d6efd; text-align: center;">Bienvenue ${client.nom} !</h2>
-                        <p>Nous sommes ravis de vous compter parmi nos clients.</p>
-                        <p>Votre fiche client a été créée avec succès.</p>
-                        <p>À très bientôt !</p>
-                        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-                        <p style="font-size: 12px; color: #999; text-align: center;">StockDash - Gestion de stock</p>
-                    </div>
-                `
-            };
-
-            // Envoi asynchrone sans bloquer la réponse HTTP
-            transporter.sendMail(mailOptions, (error, info) => {
-                if (error) {
-                    console.error("Erreur d'envoi d'email client:", error);
-                } else {
-                    console.log('Email client envoyé: ' + info.response);
-                }
-            });
-        }
-
+        // Ajout de l'ID du créateur pour la traçabilité
+        const clientData = { ...req.body, createur: req.user.id };
+        const client = await Client.create(clientData);
         res.status(201).json(client);
     } catch (error) {
-        res.status(400).json({ message: "Erreur lors de la création du client", error: error.message });
+        // Gestion spécifique de l'erreur d'email en double
+        if (error.code === 11000 && error.keyPattern && error.keyPattern.email) {
+            return res.status(400).json({ message: "Un client avec cet email existe déjà. Veuillez utiliser une autre adresse." });
+        }
+        // Gestion des autres erreurs de validation Mongoose
+        if (error.name === 'ValidationError') {
+            const messages = Object.values(error.errors).map(val => val.message);
+            return res.status(400).json({ message: messages.join(', ') });
+        }
+        res.status(500).json({ message: "Erreur interne du serveur.", error: error.message });
     }
 };
 
-// @desc    Récupérer tous les clients
-// @route   GET /api/clients
-// @access  Private (Admin, Gérant)
-exports.getClients = async (req, res) => {
+/**
+ * @desc    Lister tous les clients
+ * @route   GET /api/clients
+ * @access  Private
+ */
+exports.getAllClients = async (req, res) => {
     try {
-        let query = {};
-
-        // Si l'utilisateur est un Gérant, on applique le filtre de confidentialité
+        const query = {};
+        // Si l'utilisateur connecté est un Gérant, on ne lui montre que les clients qu'il a créés.
+        // L'administrateur n'aura pas ce filtre et verra tous les clients.
         if (req.user.role === 'Gérant') {
-            query = { createur: req.user.id };
+            query.createur = req.user.id;
         }
 
         const clients = await Client.find(query).sort({ createdAt: -1 });
         res.status(200).json(clients);
     } catch (error) {
-        res.status(500).json({ message: "Erreur serveur lors de la récupération des clients." });
+        res.status(500).json({ message: "Impossible de récupérer les clients.", error: error.message });
     }
 };
 
-// @desc    Mettre à jour un client
-// @route   PUT /api/clients/:id
-// @access  Private (Admin, Gérant)
+/**
+ * @desc    Modifier un client
+ * @route   PUT /api/clients/:id
+ * @access  Private
+ */
 exports.updateClient = async (req, res) => {
     try {
-        const client = await Client.findByIdAndUpdate(req.params.id, req.body, {
-            new: true,
-            runValidators: true,
-        });
+        const client = await Client.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
         if (!client) {
-            return res.status(404).json({ message: "Client non trouvé." });
+            return res.status(404).json({ message: "Client introuvable." });
         }
         res.status(200).json(client);
     } catch (error) {
-        res.status(400).json({ message: "Erreur lors de la mise à jour du client", error: error.message });
+        // Gestion spécifique de l'erreur d'email en double
+        if (error.code === 11000 && error.keyPattern && error.keyPattern.email) {
+            return res.status(400).json({ message: "Un client avec cet email existe déjà. Veuillez utiliser une autre adresse." });
+        }
+        // Gestion des autres erreurs de validation Mongoose
+        if (error.name === 'ValidationError') {
+            const messages = Object.values(error.errors).map(val => val.message);
+            return res.status(400).json({ message: messages.join(', ') });
+        }
+        res.status(500).json({ message: "Erreur lors de la mise à jour.", error: error.message });
     }
 };
 
-// @desc    Supprimer un client
-// @route   DELETE /api/clients/:id
-// @access  Private (Admin, Gérant)
+/**
+ * @desc    Supprimer un client
+ * @route   DELETE /api/clients/:id
+ * @access  Private
+ */
 exports.deleteClient = async (req, res) => {
     try {
         const client = await Client.findById(req.params.id);
         if (!client) {
-            return res.status(404).json({ message: "Client non trouvé." });
+            return res.status(404).json({ message: "Client introuvable." });
         }
-
-        // Règle métier : on ne peut pas supprimer un client qui a une dette.
         if (client.dette > 0) {
-            return res.status(400).json({ message: "Impossible de supprimer un client avec une dette en cours." });
+            return res.status(400).json({ message: `Suppression impossible : ce client a encore une dette de ${client.dette.toLocaleString()} GNF.` });
         }
-
         await Client.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: "Client supprimé avec succès." });
     } catch (error) {
-        res.status(500).json({ message: "Erreur serveur lors de la suppression du client." });
+        res.status(500).json({ message: "Erreur lors de la suppression.", error: error.message });
     }
 };

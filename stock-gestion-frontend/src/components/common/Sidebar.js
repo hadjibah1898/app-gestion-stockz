@@ -63,7 +63,7 @@ const Sidebar = ({ userRole }) => {
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/centrale">
                                  <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Boutique Centrale</span>
+                                <span className="hide-menu">Dépôt Principal</span>
                             </NavLink>
                         </li>
 

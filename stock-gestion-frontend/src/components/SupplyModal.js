@@ -143,11 +143,11 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
         <>
             <Modal show={show} onHide={onHide} size="lg">
             <Modal.Header closeButton>
-                <Modal.Title>Approvisionner la <span className="text-primary">Boutique Centrale</span></Modal.Title>
+                <Modal.Title>Approvisionner le <span className="text-primary">Dépôt Principal</span></Modal.Title>
             </Modal.Header>
             <Modal.Body>
                 <Alert variant="info" className="small">
-                    Les articles ajoutés ici iront directement dans le stock de la Boutique Centrale.
+                    Les articles ajoutés ici iront directement dans le stock du Dépôt Principal.
                 </Alert>
                 {error && <Alert variant="danger">{error}</Alert>}
 
@@ -189,14 +189,6 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                                             {selectedFournisseur?.produitsProposes?.map((p, i) => (
                                                 <option key={i} value={p}>{p}</option>
                                             ))}
-                                            {/* Ajout des articles existants pour compléter la liste */}
-                                            {articles.map(a => a.nom).filter(n => !selectedFournisseur?.produitsProposes?.includes(n))
-                                                .filter((v, i, a) => a.indexOf(v) === i) // Unique
-                                                .map((nom, i) => {
-                                                    const art = articles.find(a => a.nom === nom);
-                                                    return <option key={`existing-${i}`} value={nom}>{art?.code ? `[${art.code}] ` : ''}{nom}</option>
-                                                })
-                                            }
                                         </Form.Select>
                                         <Button variant="primary" onClick={() => setShowAddProductModal(true)} title="Ajouter un nouveau produit à ce fournisseur">
                                             <iconify-icon icon="solar:add-circle-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>

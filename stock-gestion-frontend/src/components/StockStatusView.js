@@ -80,8 +80,8 @@ const StockStatusView = () => {
 
                 return (
                     <Card key={boutique._id} className="border-0 shadow-sm rounded-4 mb-4">
-                        <Card.Header className="bg-body py-3 d-flex justify-content-between align-items-center">
-                            <h5 className="fw-bold mb-0">{boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill>Centrale</Badge>}</h5>
+                        <Card.Header className="bg-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <h5 className="fw-bold mb-0">{boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill>Dépôt Principal</Badge>}</h5>
                             <Badge bg="primary-subtle" text="primary-emphasis" className="p-2 fs-6">
                                 Valeur totale: {formatCurrency(totalStockValue)}
                             </Badge>

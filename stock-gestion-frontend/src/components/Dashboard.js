@@ -193,35 +193,82 @@ const Dashboard = () => {
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
-    doc.text("Rapport Tableau de Bord Admin", 14, 15);
     
-    // Stats Globales
-    doc.setFontSize(12);
-    doc.text(`Chiffre d'affaires: ${formatCurrency(stats?.totalCA)}`, 14, 25);
-    doc.text(`Bénéfice: ${formatCurrency(stats?.totalBenefice)}`, 14, 32);
-    doc.text(`Total Ventes: ${stats?.totalVentes}`, 14, 39);
+    // En-tête
+    doc.setFillColor(41, 128, 185);
+    doc.rect(0, 0, 210, 25, 'F');
+    doc.setFontSize(18);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Rapport Tableau de Bord Admin", 14, 16);
+    doc.setFontSize(10);
+    doc.setTextColor(220, 220, 220);
+    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 14, 22);
+
+    // Stats Globales Box
+    doc.setFillColor(245, 247, 250);
+    doc.setDrawColor(200, 200, 200);
+    doc.roundedRect(14, 30, 182, 30, 2, 2, 'FD');
+
+    doc.setFontSize(10);
+    doc.setTextColor(50);
     
-    let finalY = 45;
+    doc.text(`Chiffre d'affaires :`, 20, 40);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${formatCurrency(stats?.totalCA)}`, 60, 40);
+    
+    doc.setFont("helvetica", "normal");
+    doc.text(`Bénéfice Net :`, 110, 40);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${formatCurrency(stats?.totalBenefice)}`, 150, 40);
+
+    doc.setFont("helvetica", "normal");
+    doc.text(`Total Ventes :`, 20, 50);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${stats?.totalVentes}`, 60, 50);
+
+    let finalY = 70;
 
     // Performance Boutiques
     if (stats?.performanceBoutiques?.length > 0) {
-        doc.text("Performance par Boutique", 14, finalY + 10);
+        doc.setFontSize(14);
+        doc.setTextColor(41, 128, 185);
+        doc.text("Performance par Boutique", 14, finalY);
         autoTable(doc, {
-            startY: finalY + 15,
+            startY: finalY + 5,
             head: [['Boutique', 'CA']],
-            body: stats.performanceBoutiques.map(b => [b.nom, formatCurrency(b.chiffreAffaires)])
+            body: stats.performanceBoutiques.map(b => [b.nom, formatCurrency(b.chiffreAffaires)]),
+            theme: 'grid',
+            headStyles: { fillColor: [41, 128, 185] },
+            alternateRowStyles: { fillColor: [248, 249, 250] }
         });
-        finalY = doc.lastAutoTable.finalY;
+        finalY = doc.lastAutoTable.finalY + 15;
     }
 
     // Stock Faible
     if (lowStockArticles.length > 0) {
-        doc.text("Alerte Stock Faible", 14, finalY + 10);
+        doc.setFontSize(14);
+        doc.setTextColor(220, 53, 69); // Rouge pour l'alerte
+        doc.text("Alerte Stock Faible", 14, finalY);
         autoTable(doc, {
-            startY: finalY + 15,
+            startY: finalY + 5,
             head: [['Article', 'Boutique', 'Quantité']],
-            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', a.quantite])
+            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', a.quantite]),
+            theme: 'grid',
+            headStyles: { fillColor: [220, 53, 69] },
+            alternateRowStyles: { fillColor: [255, 245, 245] }
         });
+    }
+
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        const pageSize = doc.internal.pageSize;
+        const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+        doc.text(`StockDash - Admin`, 14, pageHeight - 10);
+        doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
     }
 
     doc.save("dashboard_admin.pdf");
@@ -245,18 +292,18 @@ const Dashboard = () => {
       {/* A. La Bannière de Bienvenue */}
       <Card className="welcome-banner border-0 mb-4 text-white overflow-hidden">
         <Card.Body className="p-4 d-flex align-items-center justify-content-between position-relative">
-          <div className="z-1 position-relative">
-            <div className="d-flex align-items-center gap-3 mb-2">
+          <div className="z-1 position-relative w-100">
+            <div className="d-flex flex-wrap align-items-center gap-3 mb-2">
                 <h2 className="fw-bold mb-0">Bienvenue sur votre Dashboard ! 👋</h2>
                 <Button variant="light" size="sm" onClick={handleExportPDF} className="text-primary fw-bold shadow-sm">
                     <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                     Exporter Rapport
                 </Button>
             </div>
-            <p className="mb-4 opacity-75" style={{ maxWidth: '500px' }}>
+            <p className="mb-4 opacity-75" style={{ maxWidth: '600px' }}>
               Voici un aperçu de vos performances aujourd'hui. Consultez les statistiques ci-dessous pour plus de détails.
             </p>
-            <div className="d-flex gap-4">
+            <div className="d-flex flex-wrap gap-4">
               <div className="glass-stat p-2 px-3 rounded-3">
                 <h4 className="mb-0 fw-bold">{formatCurrency(stats?.dailySales)}</h4>
                 <small className="opacity-75">Ventes du jour</small>

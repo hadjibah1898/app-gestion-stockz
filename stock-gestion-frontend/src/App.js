@@ -4,8 +4,9 @@
 // Contient la structure de navigation et la gestion de l'authentification
 
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { Modal, Form, Button, Alert, Spinner, InputGroup } from 'react-bootstrap';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { Modal, Form, Button, Alert, Spinner, InputGroup, Toast, ToastContainer } from 'react-bootstrap';
+import { NotificationProvider, useNotifications } from './NotificationContext';
 import Sidebar from './components/common/Sidebar';
 import Header from './components/common/Header'; // Importer le Header
 import Auth from './components/Auth';
@@ -38,6 +39,33 @@ const MainLayout = ({ userName, userRole, handleLogout, theme, toggleTheme }) =>
   </>
 );
 
+// Composant pour gérer l'affichage des Toasts de notification
+const NotificationToasts = () => {
+  const { toastQueue, removeToast, markAsRead } = useNotifications();
+  const navigate = useNavigate();
+
+  const handleToastClick = (notification) => {
+    if (!notification.read) {
+      markAsRead(notification._id);
+    }
+    if (notification.link) {
+      navigate(notification.link);
+    }
+    removeToast(notification._id);
+  };
+
+  return (
+    <ToastContainer position="bottom-end" className="p-3" style={{ zIndex: 9999 }}>
+      {toastQueue.map(toast => (
+        <Toast key={toast._id} onClose={() => removeToast(toast._id)} onClick={() => handleToastClick(toast)} bg="dark" autohide delay={8000} className="text-white" style={{ cursor: 'pointer' }}>
+          <Toast.Header closeButton><strong className="me-auto">Nouvelle Notification</strong></Toast.Header>
+          <Toast.Body>{toast.message}</Toast.Body>
+        </Toast>
+      ))}
+    </ToastContainer>
+  );
+};
+
 function App() {
   // On récupère les infos utilisateur depuis le localStorage pour la persistance
   const [userRole, setUserRole] = useState(localStorage.getItem('userRole'));
@@ -48,6 +76,7 @@ function App() {
   // États pour la modale de changement de mot de passe
   const [pwdData, setPwdData] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [pwdError, setPwdError] = useState('');
+  const [pwdSuccess, setPwdSuccess] = useState('');
   const [pwdLoading, setPwdLoading] = useState(false);
   const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
@@ -84,9 +113,8 @@ function App() {
     localStorage.removeItem('userRole');
     localStorage.removeItem('userName');
     localStorage.removeItem('mustChangePassword');
-    setUserRole(null);
-    setUserName(null);
-    setMustChangePassword(false);
+    // Redirection forcée pour garantir un état propre et la redirection vers la page de connexion.
+    window.location.href = '/login';
   };
 
   const handlePasswordChange = async (e) => {
@@ -101,9 +129,15 @@ function App() {
         currentPassword: pwdData.currentPassword, 
         newPassword: pwdData.newPassword 
       });
-      setMustChangePassword(false);
       localStorage.removeItem('mustChangePassword');
-      alert("Mot de passe changé avec succès !");
+      setPwdSuccess("Mot de passe changé avec succès ! Vous pouvez maintenant utiliser l'application.");
+      
+      // Fermer la modale et réinitialiser l'état après un court délai
+      setTimeout(() => {
+        setMustChangePassword(false);
+        setPwdSuccess('');
+        setPwdData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      }, 2500);
     } catch (err) {
       setPwdError(err.response?.data?.message || "Erreur lors du changement de mot de passe.");
     } finally {
@@ -112,10 +146,10 @@ function App() {
   };
 
   return (
-    <Router>
+    <NotificationProvider>
       <div id="main-wrapper" data-bs-theme={theme}>
         <Routes>
-          <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={userRole === 'Admin' ? '/admin' : '/gerant'} />} />
+          <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
 
           {/* Routes Protégées pour l'Admin */}
           <Route 
@@ -153,6 +187,7 @@ function App() {
             <Route path="/gerant/ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
             <Route path="/gerant/historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
             <Route path="/gerant/clients" element={<ClientsView userRole="Gérant" />} />
+            <Route path="/gerant/notifications" element={<NotificationsHistoryView />} />
           </Route>
 
           {/* Routes Partagées (Profil) */}
@@ -169,7 +204,7 @@ function App() {
           <Route path="/" element={<Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
-        
+        {userRole && <NotificationToasts />}
       
       </div>
 
@@ -180,59 +215,77 @@ function App() {
         </Modal.Header>
         <Form onSubmit={handlePasswordChange}>
           <Modal.Body>
-            <Alert variant="warning">
-              Pour votre sécurité, vous devez changer votre mot de passe par défaut avant de continuer.
-            </Alert>
-            {pwdError && <Alert variant="danger">{pwdError}</Alert>}
-            
-            <Form.Group className="mb-3">
-              <Form.Label>Mot de passe actuel</Form.Label>
-              <InputGroup>
-                <Form.Control type={showCurrentPwd ? "text" : "password"} required 
-                  value={pwdData.currentPassword}
-                  onChange={(e) => setPwdData({...pwdData, currentPassword: e.target.value})}
-                />
-                <Button variant="outline-secondary" onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
-                  <iconify-icon icon={showCurrentPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                </Button>
-              </InputGroup>
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Nouveau mot de passe</Form.Label>
-              <InputGroup>
-                <Form.Control type={showNewPwd ? "text" : "password"} required minLength="6"
-                  value={pwdData.newPassword}
-                  onChange={(e) => setPwdData({...pwdData, newPassword: e.target.value})}
-                />
-                <Button variant="outline-secondary" onClick={() => setShowNewPwd(!showNewPwd)}>
-                  <iconify-icon icon={showNewPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                </Button>
-              </InputGroup>
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Confirmer le nouveau mot de passe</Form.Label>
-              <InputGroup>
-                <Form.Control type={showConfirmPwd ? "text" : "password"} required 
-                  value={pwdData.confirmPassword}
-                  onChange={(e) => setPwdData({...pwdData, confirmPassword: e.target.value})}
-                />
-                <Button variant="outline-secondary" onClick={() => setShowConfirmPwd(!showConfirmPwd)}>
-                  <iconify-icon icon={showConfirmPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                </Button>
-              </InputGroup>
-            </Form.Group>
+            {pwdSuccess ? (
+              <Alert variant="success" className="text-center">
+                <iconify-icon icon="solar:check-circle-bold" style={{fontSize: '48px'}} className="mb-2"></iconify-icon>
+                <h5 className="fw-bold">Succès !</h5>
+                <p>{pwdSuccess}</p>
+              </Alert>
+            ) : (
+              <>
+                <Alert variant="warning">
+                  Pour votre sécurité, vous devez changer votre mot de passe par défaut avant de continuer.
+                </Alert>
+                {pwdError && <Alert variant="danger">{pwdError}</Alert>}
+                
+                <Form.Group className="mb-3">
+                  <Form.Label>Mot de passe actuel</Form.Label>
+                  <InputGroup>
+                    <Form.Control type={showCurrentPwd ? "text" : "password"} required 
+                      value={pwdData.currentPassword}
+                      onChange={(e) => setPwdData({...pwdData, currentPassword: e.target.value})}
+                    />
+                    <Button variant="outline-secondary" onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
+                      <iconify-icon icon={showCurrentPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
+                    </Button>
+                  </InputGroup>
+                </Form.Group>
+                <Form.Group className="mb-3">
+                  <Form.Label>Nouveau mot de passe</Form.Label>
+                  <InputGroup>
+                    <Form.Control type={showNewPwd ? "text" : "password"} required minLength="6"
+                      value={pwdData.newPassword}
+                      onChange={(e) => setPwdData({...pwdData, newPassword: e.target.value})}
+                    />
+                    <Button variant="outline-secondary" onClick={() => setShowNewPwd(!showNewPwd)}>
+                      <iconify-icon icon={showNewPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
+                    </Button>
+                  </InputGroup>
+                </Form.Group>
+                <Form.Group className="mb-3">
+                  <Form.Label>Confirmer le nouveau mot de passe</Form.Label>
+                  <InputGroup>
+                    <Form.Control type={showConfirmPwd ? "text" : "password"} required 
+                      value={pwdData.confirmPassword}
+                      onChange={(e) => setPwdData({...pwdData, confirmPassword: e.target.value})}
+                    />
+                    <Button variant="outline-secondary" onClick={() => setShowConfirmPwd(!showConfirmPwd)}>
+                      <iconify-icon icon={showConfirmPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
+                    </Button>
+                  </InputGroup>
+                </Form.Group>
+              </>
+            )}
           </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={handleLogout}>Se déconnecter</Button>
-            <Button variant="primary" type="submit" disabled={pwdLoading}>
-              {pwdLoading ? <Spinner size="sm" animation="border"/> : 'Changer le mot de passe'}
-            </Button>
-          </Modal.Footer>
+          {!pwdSuccess && (
+            <Modal.Footer>
+              <Button variant="secondary" onClick={handleLogout}>Se déconnecter</Button>
+              <Button variant="primary" type="submit" disabled={pwdLoading}>
+                {pwdLoading ? <Spinner size="sm" animation="border"/> : 'Changer le mot de passe'}
+              </Button>
+            </Modal.Footer>
+          )}
         </Form>
       </Modal>
-    </Router>
+    </NotificationProvider>
   );
 }
 
 
-export default App;
+const AppWrapper = () => (
+  <Router>
+    <App />
+  </Router>
+);
+
+export default AppWrapper;

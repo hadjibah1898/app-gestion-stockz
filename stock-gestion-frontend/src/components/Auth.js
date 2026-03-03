@@ -120,7 +120,7 @@ const Auth = ({ onLogin }) => {
                         </span>
                       </Form.Group>
                       
-                      <div className="d-flex justify-content-between align-items-center mb-4">
+                      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
                         <Form.Check type="checkbox" label="Se souvenir de moi" id="remember-me" className="small text-muted" />
                         <button
                           type="button"

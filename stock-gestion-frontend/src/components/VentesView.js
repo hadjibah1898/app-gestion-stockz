@@ -34,8 +34,9 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
   // États pour la création rapide de client
   const [showClientModal, setShowClientModal] = useState(false);
-  const [newClient, setNewClient] = useState({ nom: '', telephone: '', type: 'Client' });
+  const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '', adresse: '', type: 'Client', photo: '' });
   const [clientLoading, setClientLoading] = useState(false);
+  const [clientModalError, setClientModalError] = useState('');
 
   // Référence pour le champ de scan (pour garder le focus)
   const barcodeInputRef = useRef(null);
@@ -309,9 +310,25 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setTimeout(() => barcodeInputRef.current?.focus(), 100);
   };
 
+  const handleClientImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) { // Limite 2Mo
+        setError("L'image est trop volumineuse (max 2Mo)");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewClient({ ...newClient, photo: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleCreateClient = async (e) => {
     e.preventDefault();
     setClientLoading(true);
+    setClientModalError('');
     try {
         const res = await clientAPI.create(newClient);
         const createdClient = res.data;
@@ -322,10 +339,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         
         setSuccessMessage(`Client ${createdClient.nom} créé avec succès !`);
         setShowClientModal(false);
-        setNewClient({ nom: '', telephone: '', type: 'Client' }); // Reset form
+        setNewClient({ nom: '', telephone: '', email: '', adresse: '', type: 'Client', photo: '' }); // Reset form
         setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-        setError(err.response?.data?.message || "Erreur lors de la création du client.");
+        setClientModalError(err.response?.data?.message || "Erreur lors de la création du client.");
     } finally {
         setClientLoading(false);
     }
@@ -474,8 +491,17 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
-    doc.text("Historique des Ventes", 14, 15);
     
+    // En-tête
+    doc.setFillColor(41, 128, 185);
+    doc.rect(0, 0, 210, 25, 'F');
+    doc.setFontSize(18);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Historique des Ventes", 14, 16);
+    doc.setFontSize(10);
+    doc.setTextColor(220, 220, 220);
+    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')}`, 14, 22);
+
     const tableColumn = ["Date", "Article", "Quantité", "Prix Total", "Vendeur", "Client"];
     const tableRows = [];
     let totalGlobal = 0;
@@ -506,7 +532,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 20,
+      startY: 35,
+      theme: 'grid',
+      headStyles: { fillColor: [41, 128, 185] },
+      alternateRowStyles: { fillColor: [248, 249, 250] },
       columnStyles: {
         3: { halign: 'right' }
       },
@@ -518,6 +547,19 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         }
       }
     });
+
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        const pageSize = doc.internal.pageSize;
+        const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+        doc.text(`StockDash - Ventes`, 14, pageHeight - 10);
+        doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+    }
+
     doc.save("historique_ventes.pdf");
   };
 
@@ -532,20 +574,20 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
             filter: invert(33%) sepia(78%) saturate(2646%) hue-rotate(203deg) brightness(102%) contrast(103%);
         }
       `}</style>
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
         <h3 className="fw-bold mb-0 text-body">{userRole === 'Admin' ? 'Historique des Ventes' : 'Gestion des Ventes'}</h3>
-        <div className="d-flex gap-2">
+        <div className="d-flex gap-2 align-items-center">
             <Form.Control 
-                type="date" 
+                type="date"
                 value={dateFilter.start}
                 onChange={(e) => {
                     setCurrentPage(1);
                     setDateFilter({...dateFilter, start: e.target.value});
                 }}
-                className="rounded-pill shadow-sm"
-                style={{ maxWidth: '160px' }}
+                className="rounded-pill shadow-sm w-auto"
                 title="Date de début"
             />
+            <span className="text-muted d-none d-md-inline">-</span>
             <Form.Control 
                 type="date" 
                 value={dateFilter.end}
@@ -553,8 +595,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                     setCurrentPage(1);
                     setDateFilter({...dateFilter, end: e.target.value});
                 }}
-                className="rounded-pill shadow-sm"
-                style={{ maxWidth: '160px' }}
+                className="rounded-pill shadow-sm w-auto"
                 title="Date de fin"
             />
             <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
@@ -607,6 +648,9 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                           )}
                           <div>
                             <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
+                            {vente.remiseAppliquee > 0 && !vente.isCancelled && (
+                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee}%</Badge>
+                            )}
                             {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
                           </div>
                         </div>
@@ -928,16 +972,21 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                         <Card.Body>
                         {historique.filter(v => !v.isCancelled).slice(0, 5).map(vente => ( // Affiche les 5 ventes valides les plus récentes
                             <div key={vente._id} className="d-flex gap-3 mb-3 pb-3 border-bottom">
-                            {vente.article?.image && <img src={vente.article?.image} alt="" className="rounded" style={{width: '45px', height: '45px', objectFit: 'cover', cursor: 'pointer'}} onClick={() => handleImageClick(vente.article?.image)} />}
-                            <div className="flex-grow-1">
-                                <div className="d-flex justify-content-between">
-                                    <span className="fw-bold">{vente.article?.nom || 'Article supprimé'}</span>
-                                    <Badge bg="success" text="white">{vente.prixTotal.toLocaleString()} GNF</Badge>
+                                {vente.article?.image && <img src={vente.article?.image} alt="" className="rounded" style={{width: '45px', height: '45px', objectFit: 'cover', cursor: 'pointer'}} onClick={() => handleImageClick(vente.article?.image)} />}
+                                <div className="flex-grow-1">
+                                    <div className="d-flex justify-content-between">
+                                        <div>
+                                            <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
+                                            {vente.remiseAppliquee > 0 && (
+                                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee}%</Badge>
+                                            )}
+                                        </div>
+                                        <Badge bg="success" text="white">{vente.prixTotal.toLocaleString()} GNF</Badge>
+                                    </div>
+                                    <div className="text-muted small mt-1">
+                                        Quantité: {vente.quantite} | Date: {new Date(vente.createdAt).toLocaleDateString()}
+                                    </div>
                                 </div>
-                                <div className="text-muted small">
-                                    Quantité: {vente.quantite} | Date: {new Date(vente.createdAt).toLocaleDateString()}
-                                </div>
-                            </div>
                             </div>
                         ))}
                         {historique.length === 0 && (
@@ -995,6 +1044,9 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                                                 )}
                                                 <div>
                                                     <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
+                                                    {vente.remiseAppliquee > 0 && !vente.isCancelled && (
+                                                        <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee}%</Badge>
+                                                    )}
                                                     {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
                                                 </div>
                                             </div>
@@ -1113,12 +1165,23 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       </Modal>
 
       {/* Modale Création Rapide Client */}
-      <Modal show={showClientModal} onHide={() => setShowClientModal(false)} centered>
+      <Modal show={showClientModal} onHide={() => { setShowClientModal(false); setClientModalError(''); }} centered>
         <Modal.Header closeButton>
             <Modal.Title>Nouveau Client</Modal.Title>
         </Modal.Header>
         <Form onSubmit={handleCreateClient}>
             <Modal.Body>
+                {clientModalError && <Alert variant="danger">{clientModalError}</Alert>}
+                <div className="d-flex justify-content-center mb-4">
+                    <div className="position-relative">
+                        {newClient.photo ? (
+                            <img src={newClient.photo} alt="Aperçu" className="rounded-circle shadow-sm object-fit-cover" style={{width: '100px', height: '100px'}} />
+                        ) : (
+                            <div className="bg-light rounded-circle d-flex align-items-center justify-content-center text-muted shadow-sm" style={{width: '100px', height: '100px'}}><iconify-icon icon="solar:camera-add-bold" style={{fontSize: '32px'}}></iconify-icon></div>
+                        )}
+                        <Form.Control type="file" accept="image/*" onChange={handleClientImageChange} className="position-absolute top-0 start-0 w-100 h-100 opacity-0" style={{cursor: 'pointer'}} />
+                    </div>
+                </div>
                 <Form.Group className="mb-3">
                     <Form.Label>Nom complet</Form.Label>
                     <Form.Control 
@@ -1137,6 +1200,24 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                         value={newClient.telephone} 
                         onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} 
                         placeholder="Ex: 620..."
+                    />
+                </Form.Group>
+                <Form.Group className="mb-3">
+                    <Form.Label>Email</Form.Label>
+                    <Form.Control 
+                        type="email" 
+                        value={newClient.email} 
+                        onChange={(e) => setNewClient({...newClient, email: e.target.value})} 
+                        placeholder="Ex: client@example.com"
+                    />
+                </Form.Group>
+                <Form.Group className="mb-3">
+                    <Form.Label>Adresse</Form.Label>
+                    <Form.Control 
+                        type="text" 
+                        value={newClient.adresse} 
+                        onChange={(e) => setNewClient({...newClient, adresse: e.target.value})} 
+                        placeholder="Ex: Conakry, Kaloum"
                     />
                 </Form.Group>
                 <Form.Group className="mb-3">

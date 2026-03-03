@@ -14,6 +14,7 @@ router.get('/me', protect, authController.getCurrentUser);
 router.put('/profile', protect, authController.updateProfile);
 router.get('/notifications', protect, authController.getNotifications);
 router.put('/notifications/:id/read', protect, authController.markNotificationRead);
+router.put('/notifications/mark-all-read', protect, authController.markAllNotificationsRead);
 
 // --- Routes Admin ---
 // Créer un gérant

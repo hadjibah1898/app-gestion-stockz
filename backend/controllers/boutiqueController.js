@@ -9,10 +9,10 @@ const Article = require('../models/Article');
 exports.createBoutique = async (req, res) => {
     try {
         // Logique pour s'assurer qu'il n'y a qu'une seule Boutique Centrale
-        if (req.body.type === 'Centrale') {
+        if (req.body.type === 'Centrale') { // L'enum 'Centrale' reste, seul le texte affiché change
             const centraleExists = await Boutique.findOne({ type: 'Centrale' });
             if (centraleExists) {
-                return res.status(400).json({ message: "Une Boutique Centrale existe déjà. Il ne peut y en avoir qu'une." });
+                return res.status(400).json({ message: "Un Dépôt Principal existe déjà. Il ne peut y en avoir qu'un." });
             }
         }
 
@@ -76,13 +76,13 @@ exports.updateBoutique = async (req, res) => {
             if (req.body.type === 'Centrale' && boutiqueToUpdate.type !== 'Centrale') {
                 const centraleExists = await Boutique.findOne({ type: 'Centrale' });
                 if (centraleExists) {
-                    return res.status(400).json({ message: "Une Boutique Centrale existe déjà. Impossible d'en définir une deuxième." });
+                    return res.status(400).json({ message: "Un Dépôt Principal existe déjà. Impossible d'en définir un deuxième." });
                 }
             }
 
             // Cas 2 : On essaie de changer le type de la boutique 'Centrale' actuelle
             if (req.body.type !== 'Centrale' && boutiqueToUpdate.type === 'Centrale') {
-                return res.status(400).json({ message: "Le type de la Boutique Centrale ne peut pas être modifié. C'est le pilier du système." });
+                return res.status(400).json({ message: "Le type du Dépôt Principal ne peut pas être modifié. C'est le pilier du système." });
             }
         }
 
@@ -108,7 +108,7 @@ exports.deleteBoutique = async (req, res) => {
 
         // On ne peut pas supprimer la boutique centrale
         if (boutiqueToDelete.type === 'Centrale') {
-            return res.status(400).json({ message: "La Boutique Centrale ne peut pas être supprimée." });
+            return res.status(400).json({ message: "Le Dépôt Principal ne peut pas être supprimé." });
         }
 
         // Vérifier s'il reste des articles dans la boutique avant de supprimer

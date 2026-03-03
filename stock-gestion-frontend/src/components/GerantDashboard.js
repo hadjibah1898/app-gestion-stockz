@@ -148,19 +148,61 @@ const GerantDashboard = () => {
 
     const handleExportPDF = () => {
         const doc = new jsPDF();
-        doc.text("Rapport Tableau de Bord Gérant", 14, 15);
         
-        doc.setFontSize(12);
-        doc.text(`Revenu du Jour: ${(stats.revenuAujourdhui.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 14, 25);
-        doc.text(`Ventes du Jour: ${stats.ventesAujourdhui}`, 14, 32);
+        // En-tête du rapport avec fond coloré
+        doc.setFillColor(41, 128, 185);
+        doc.rect(0, 0, 210, 25, 'F');
         
+        doc.setFontSize(18);
+        doc.setTextColor(255, 255, 255);
+        doc.text("Rapport Quotidien Gérant", 14, 16);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(220, 220, 220);
+        doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 14, 22);
+
+        // Résumé des stats
+        doc.setFillColor(245, 247, 250);
+        doc.setDrawColor(200, 200, 200);
+        doc.roundedRect(14, 30, 182, 25, 2, 2, 'FD');
+
+        doc.setFontSize(10);
+        doc.setTextColor(50);
+        
+        doc.text(`Revenu du Jour :`, 20, 40);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${(stats.revenuAujourdhui.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 60, 40);
+        
+        doc.setFont("helvetica", "normal");
+        doc.text(`Ventes du Jour :`, 110, 40);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${stats.ventesAujourdhui}`, 150, 40);
+
         // Ventes Récentes
-        doc.text("Ventes Récentes", 14, 45);
+        doc.setFontSize(14);
+        doc.setTextColor(41, 128, 185);
+        doc.text("Ventes Récentes", 14, 65);
+        
         autoTable(doc, {
-            startY: 50,
+            startY: 70,
             head: [['Article', 'Quantité', 'Total']],
-            body: historique.slice(0, 20).map(v => [v.article?.nom || 'Article supprimé', v.quantite, (v.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')])
+            body: historique.slice(0, 20).map(v => [v.article?.nom || 'Article supprimé', v.quantite, (v.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')]),
+            theme: 'grid',
+            headStyles: { fillColor: [41, 128, 185] },
+            alternateRowStyles: { fillColor: [248, 249, 250] }
         });
+
+        // Pied de page
+        const pageCount = doc.internal.getNumberOfPages();
+        for(let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            const pageSize = doc.internal.pageSize;
+            const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+            doc.text(`StockDash - Gérant`, 14, pageHeight - 10);
+            doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+        }
 
         doc.save("dashboard_gerant.pdf");
     };
@@ -193,12 +235,12 @@ const GerantDashboard = () => {
         <div className="p-4">
             {error && <Alert variant="danger">{error}</Alert>}
 
-            <Row className="align-items-center mb-4">
-                <Col>
+            <Row className="align-items-center justify-content-between mb-4 g-3">
+                <Col xs={12} md="auto">
                     <h3 className="fw-bold  mb-0">Tableau de Bord Gérant</h3>
                     <p className="text-muted">Aperçu de vos performances et de votre stock.</p>
                 </Col>
-                <Col xs="auto" className="d-flex gap-2">
+                <Col xs={12} md="auto" className="d-flex flex-wrap gap-2 justify-content-start justify-content-md-end">
                     <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                         <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                         Rapport

@@ -120,10 +120,13 @@ const ManagersView = () => {
     setShowHistoryModal(true);
     setHistoryLoading(true);
     try {
-      const res = await venteAPI.getHistorique({ gerantId: manager._id });
-      setManagerHistory(res.data);
+      // L'API renvoie un objet { ventes: [], totalPages: X, ... }
+      // On doit donc extraire le tableau 'ventes'. On met limit=0 pour tout avoir.
+      const res = await venteAPI.getHistorique({ gerantId: manager._id, limit: 0 });
+      setManagerHistory(res.data.ventes || []); // On s'assure que c'est un tableau
     } catch (err) {
       setError("Impossible de charger l'historique des ventes.");
+      setManagerHistory([]); // En cas d'erreur, on initialise avec un tableau vide pour éviter un crash
     } finally {
       setHistoryLoading(false);
     }
@@ -182,7 +185,7 @@ const ManagersView = () => {
 
   return (
     <div className="p-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
         <h3 className="fw-bold mb-0 text-body">Gestion des Gérants</h3>
         <div className="d-flex gap-2">
             <Button variant="primary" onClick={() => handleShowModal(null)} className="rounded-pill px-4 shadow-sm">
@@ -263,7 +266,7 @@ const ManagersView = () => {
               >
                 <option value="">Aucune boutique</option>
                 {boutiques.map(boutique => {
-                  // La Boutique Centrale ne peut pas être assignée à un gérant
+                  // Le Dépôt Principal ne peut pas être assigné à un gérant
                   if (boutique.type === 'Centrale') return null;
 
                   const isAssigned = assignedBoutiqueIds.has(boutique._id);

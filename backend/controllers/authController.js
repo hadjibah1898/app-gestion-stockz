@@ -31,6 +31,11 @@ exports.login = async (req, res) => {
             return res.status(403).json({ message: "Votre compte est désactivé. Veuillez contacter l'administrateur." });
         }
 
+        // Vérification qu'une boutique est bien assignée pour les gérants
+        if (user.role === 'Gérant' && !user.boutique) {
+            return res.status(403).json({ message: "Accès refusé : Aucune boutique n'est associée à ce compte. Veuillez contacter l'administrateur." });
+        }
+
         // Création du Token JWT valide pour 24h 
         const token = jwt.sign(
             { id: user._id, role: user.role, boutique: user.boutique }, 
@@ -86,7 +91,7 @@ exports.updateManager = async (req, res) => {
         if (req.body.boutique && req.body.boutique !== (user.boutique ? user.boutique.toString() : null)) {
             const boutiqueObj = await Boutique.findById(req.body.boutique);
             if (boutiqueObj && boutiqueObj.type === 'Centrale') {
-                return res.status(400).json({ message: "La Boutique Centrale ne peut pas être attribuée à un gérant. Elle sert de stock d'entreprise." });
+                return res.status(400).json({ message: "Le Dépôt Principal ne peut pas être attribué à un gérant. Il sert de stock d'entreprise." });
             }
 
             const assignedManager = await User.findOne({ 
@@ -142,7 +147,7 @@ exports.createManager = async (req, res) => {
             }
             
             if (boutiqueExists.type === 'Centrale') {
-                return res.status(400).json({ message: "La Boutique Centrale ne peut pas être attribuée à un gérant. Elle sert de stock d'entreprise." });
+                return res.status(400).json({ message: "Le Dépôt Principal ne peut pas être attribué à un gérant. Il sert de stock d'entreprise." });
             }
 
             // Vérifier si un autre gérant a déjà cette boutique

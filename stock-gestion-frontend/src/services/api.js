@@ -58,6 +58,7 @@ export const authAPI = {
   updateProfile: (data) => api.put('auth/profile', data),
   getNotifications: () => api.get('auth/notifications'),
   markNotificationRead: (id) => api.put(`auth/notifications/${id}/read`),
+  markAllNotificationsRead: () => api.put('auth/notifications/mark-all-read'),
   getAllNotifications: () => api.get('auth/admin/notifications'),
 };
 

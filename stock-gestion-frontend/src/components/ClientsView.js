@@ -22,14 +22,19 @@ const ClientsView = () => {
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentClient, setCurrentClient] = useState({
-    nom: '', email: '', telephone: '', type: 'Client', adresse: '', photo: '', dette: 0, commission: 0
+    nom: '', email: '', telephone: '', type: 'Client', adresse: '', photo: '', dette: 0, commission: 0, totalAchats: 0, tauxCommission: 0
   });
+  const [modalError, setModalError] = useState('');
 
   // États pour Modale Paiement (Dette ou Commission)
   const [showPayModal, setShowPayModal] = useState(false);
   const [payType, setPayType] = useState('dette'); // 'dette' ou 'commission'
   const [paymentAmount, setPaymentAmount] = useState('');
   const [clientToPay, setClientToPay] = useState(null);
+
+  // États pour Modale Suppression
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [clientToDelete, setClientToDelete] = useState(null);
 
   useEffect(() => {
     fetchClients();
@@ -55,11 +60,12 @@ const ClientsView = () => {
 
   // --- Gestion Création / Édition ---
   const handleShowModal = (client = null) => {
+    setModalError(''); // Réinitialiser l'erreur de la modale à chaque ouverture
     if (client) {
       setCurrentClient(client);
       setEditMode(true);
     } else {
-      setCurrentClient({ nom: '', email: '', telephone: '', type: 'Client', adresse: '', photo: '', dette: 0, commission: 0 });
+      setCurrentClient({ nom: '', email: '', telephone: '', type: 'Client', adresse: '', photo: '', dette: 0, commission: 0, totalAchats: 0, tauxCommission: 0 });
       setEditMode(false);
     }
     setShowModal(true);
@@ -82,10 +88,10 @@ const ClientsView = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setModalError('');
     // Vérification frontend : si dette > 0, échéance obligatoire
     if (parseFloat(currentClient.dette) > 0 && !currentClient.echeanceDette) {
-      setError("L'échéance de la dette est obligatoire si une dette est saisie.");
+      setModalError("L'échéance de la dette est obligatoire si une dette est saisie.");
       return;
     }
     try {
@@ -100,7 +106,7 @@ const ClientsView = () => {
       setShowModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || "Erreur d'enregistrement");
+      setModalError(err.response?.data?.message || "Erreur d'enregistrement");
     }
   };
 
@@ -144,17 +150,23 @@ const ClientsView = () => {
     }
   };
 
-  const handleDelete = async (id) => {
-      if(window.confirm("Êtes-vous sûr de vouloir supprimer ce client ?")) {
-          try {
-              await clientAPI.delete(id);
-              setSuccessMessage("Client supprimé.");
-              fetchClients();
-          } catch (err) {
-              setError("Impossible de supprimer.");
-          }
+  const handleDelete = (id) => {
+      setClientToDelete(id);
+      setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+      try {
+          await clientAPI.delete(clientToDelete);
+          setSuccessMessage("Client supprimé.");
+          fetchClients();
+      } catch (err) {
+          setError(err.response?.data?.message || "Impossible de supprimer.");
+      } finally {
+          setShowDeleteModal(false);
+          setClientToDelete(null);
       }
-  }
+  };
 
   // --- Filtrage et Tri ---
   const filteredClients = clients.filter(c => 
@@ -189,6 +201,14 @@ const ClientsView = () => {
       key: 'totalAchats', 
       label: 'Total Achats',
       render: (val) => <span className="fw-bold text-success">{(val || 0).toLocaleString()} GNF</span>
+    },
+    {
+      key: 'montantPaye',
+      label: 'Montant Payé',
+      render: (_, row) => {
+          const paye = (row.totalAchats || 0) - (row.dette || 0);
+          return <span className="fw-bold text-primary">{paye.toLocaleString()} GNF</span>;
+      }
     },
     { 
       key: 'dette', 
@@ -245,8 +265,8 @@ const ClientsView = () => {
 
   return (
     <div className="p-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h3 className="fw-bold mb-0">Gestion Clients & Ouvriers</h3>
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+        <h3 className="fw-bold mb-0">Gestion des Clients & Ouvriers</h3>
         {userRole === 'Gérant' && (
           <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
             <iconify-icon icon="solar:user-plus-bold" className="me-2 align-middle"></iconify-icon>
@@ -299,6 +319,7 @@ const ClientsView = () => {
         </Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
+            {modalError && <Alert variant="danger">{modalError}</Alert>}
             <div className="d-flex justify-content-center mb-4">
                 <div className="position-relative">
                     {currentClient.photo ? (
@@ -347,26 +368,23 @@ const ClientsView = () => {
             
             {/* Champs Dettes et Commissions éditables manuellement si besoin */}
             <Row>
-                <Col md={6}>
-                    <Form.Group className="mb-3">
-                        <Form.Label>Dette Initiale (GNF)</Form.Label>
-                        <Form.Control type="number" value={currentClient.dette} onChange={e => setCurrentClient({...currentClient, dette: parseFloat(e.target.value) || 0})} />
-                    </Form.Group>
-              </Col>
-              <Col md={6}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Échéance de la dette</Form.Label>
-                  <Form.Control type="date" value={currentClient.echeanceDette ? currentClient.echeanceDette.substring(0,10) : ''} onChange={e => setCurrentClient({...currentClient, echeanceDette: e.target.value})} required />
-                  <Form.Text className="text-danger">Obligatoire si une dette est saisie</Form.Text>
-                </Form.Group>
-                </Col>
                 {currentClient.type === 'Ouvrier' && (
-                    <Col md={6}>
-                        <Form.Group className="mb-3">
-                            <Form.Label>Commission Due (GNF)</Form.Label>
-                            <Form.Control type="number" value={currentClient.commission} onChange={e => setCurrentClient({...currentClient, commission: parseFloat(e.target.value) || 0})} />
-                        </Form.Group>
-                    </Col>
+                    <>
+                        <Col md={editMode ? 6 : 12}>
+                            <Form.Group className="mb-3">
+                                <Form.Label>Taux Commission (%)</Form.Label>
+                                <Form.Control type="number" min="0" max="100" value={currentClient.tauxCommission} onChange={e => setCurrentClient({...currentClient, tauxCommission: parseFloat(e.target.value) || 0})} placeholder="Ex: 5" />
+                            </Form.Group>
+                        </Col>
+                        {editMode && (
+                            <Col md={6}>
+                                <Form.Group className="mb-3">
+                                    <Form.Label>Commission Due (GNF)</Form.Label>
+                                    <Form.Control type="number" value={currentClient.commission} onChange={e => setCurrentClient({...currentClient, commission: parseFloat(e.target.value) || 0})} />
+                                </Form.Group>
+                            </Col>
+                        )}
+                    </>
                 )}
             </Row>
           </Modal.Body>
@@ -411,6 +429,21 @@ const ClientsView = () => {
                 <Button variant="success" type="submit">Valider</Button>
             </Modal.Footer>
         </Form>
+      </Modal>
+
+      {/* Modale Suppression */}
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+        <Modal.Header closeButton>
+            <Modal.Title className="text-danger">⚠️ Suppression Client</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+            <p className="fw-bold">Êtes-vous sûr de vouloir supprimer ce client ?</p>
+            <p className="text-muted small">Cette action est irréversible.</p>
+        </Modal.Body>
+        <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
+            <Button variant="danger" onClick={confirmDelete}>Supprimer</Button>
+        </Modal.Footer>
       </Modal>
     </div>
   );

@@ -57,9 +57,9 @@ exports.approvisionnerCentrale = async (req, res) => {
         }
 
         // 1. Trouver la Boutique Centrale
-        const centrale = await Boutique.findOne({ type: 'Centrale' });
-        if (!centrale) {
-            return res.status(404).json({ message: "Aucune Boutique Centrale configurée. Impossible d'approvisionner." });
+        const depotPrincipal = await Boutique.findOne({ type: 'Centrale' });
+        if (!depotPrincipal) {
+            return res.status(404).json({ message: "Aucun Dépôt Principal n'est configuré. Impossible d'approvisionner." });
         }
 
         let articlesMisAJour = 0;
@@ -80,7 +80,7 @@ exports.approvisionnerCentrale = async (req, res) => {
             // Chercher si l'article existe déjà dans la CENTRALE
             let article = await Article.findOne({ 
                 nom: item.nom, 
-                boutique: centrale._id 
+                boutique: depotPrincipal._id 
             });
 
             if (article) {
@@ -103,7 +103,7 @@ exports.approvisionnerCentrale = async (req, res) => {
                     prixAchat: item.prixAchat,
                     prixVente: item.prixVente || (item.prixAchat * 1.2), // Marge par défaut si non fourni
                     quantite: quantiteAjout,
-                    boutique: centrale._id
+                    boutique: depotPrincipal._id
                 });
                 articlesCrees++;
             }
@@ -113,14 +113,14 @@ exports.approvisionnerCentrale = async (req, res) => {
         await Mouvement.create({
             type: 'Approvisionnement',
             fournisseur: fournisseur._id,
-            boutiqueDestination: centrale._id,
+            boutiqueDestination: depotPrincipal._id,
             articles: items.map(i => ({ nomArticle: i.nom, quantite: i.quantite })),
             operateur: req.user.id,
             details: `Depuis fournisseur ${fournisseur.nom}`
         });
 
         res.status(200).json({ 
-            message: `Approvisionnement réussi vers ${centrale.nom}.`,
+            message: `Approvisionnement réussi vers ${depotPrincipal.nom}.`,
             details: `${articlesCrees} nouveaux articles, ${articlesMisAJour} mis à jour.`
         });
 

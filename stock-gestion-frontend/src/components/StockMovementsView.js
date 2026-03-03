@@ -68,7 +68,16 @@ const StockMovementsView = () => {
 
     const handleExportPDF = () => {
         const doc = new jsPDF();
-        doc.text("Historique des Mouvements de Stock", 14, 15);
+        
+        // En-tête
+        doc.setFillColor(41, 128, 185);
+        doc.rect(0, 0, 210, 25, 'F');
+        doc.setFontSize(18);
+        doc.setTextColor(255, 255, 255);
+        doc.text("Mouvements de Stock", 14, 16);
+        doc.setFontSize(10);
+        doc.setTextColor(220, 220, 220);
+        doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')}`, 14, 22);
 
         const tableColumn = ["Date", "Type", "Origine", "Destination", "Articles", "Opérateur"];
         const tableRows = [];
@@ -86,9 +95,24 @@ const StockMovementsView = () => {
         autoTable(doc, {
             head: [tableColumn],
             body: tableRows,
-            startY: 20,
-            styles: { fontSize: 8 },
+            startY: 35,
+            theme: 'grid',
+            styles: { fontSize: 8, cellPadding: 2 },
+            headStyles: { fillColor: [41, 128, 185] },
+            alternateRowStyles: { fillColor: [248, 249, 250] }
         });
+
+        // Footer
+        const pageCount = doc.internal.getNumberOfPages();
+        for(let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            const pageSize = doc.internal.pageSize;
+            const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+            doc.text(`StockDash - Mouvements`, 14, pageHeight - 10);
+            doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+        }
 
         doc.save("mouvements_stock.pdf");
     };
@@ -98,6 +122,8 @@ const StockMovementsView = () => {
             case 'Approvisionnement': return 'success';
             case 'Transfert': return 'primary';
             case 'Vente': return 'warning';
+            case 'Annulation Vente': return 'danger';
+            case 'Modification Prix': return 'info';
             default: return 'secondary';
         }
     };
@@ -128,9 +154,11 @@ const StockMovementsView = () => {
             label: 'Articles',
             render: (articles) => (
                 <ul className="list-unstyled mb-0 small">
-                    {articles.map((art, idx) => (
-                        <li key={idx}>{art.nomArticle} <Badge pill bg="light" text="dark">x{art.quantite}</Badge></li>
-                    ))}
+                    {articles.map((art, idx) => {
+                        // Pour les modifications de prix, la quantité n'est pas pertinente.
+                        const showQuantity = art.quantite > 0;
+                        return <li key={idx}>{art.nomArticle} {showQuantity && <Badge pill bg="light" text="dark" className="ms-1">x{art.quantite}</Badge>}</li>
+                    })}
                 </ul>
             )
         },
@@ -148,27 +176,16 @@ const StockMovementsView = () => {
             key: 'actions',
             label: 'Actions',
             render: (_, item) => {
-                if (item.isCancelled || item.details?.includes('ANNULATION')) {
-                    let cancelledText = 'Opération Annulée';
-                    switch (item.type) {
-                        case 'Vente':
-                            cancelledText = 'Vente Annulée';
-                            break;
-                        case 'Transfert':
-                            cancelledText = 'Transfert Annulé';
-                            break;
-                        case 'Approvisionnement':
-                            cancelledText = 'Approvisionnement Annulé';
-                            break;
-                        default: break;
-                    }
+                // Si l'opération est déjà annulée (marquée par le backend), on affiche un badge
+                if (item.isCancelled) {
                     return (
                         <Badge bg="secondary" className="d-flex align-items-center gap-1 px-2 py-1" style={{width: 'fit-content'}}>
                             <iconify-icon icon="solar:close-circle-bold" style={{ fontSize: '16px' }}></iconify-icon>
-                            {cancelledText}
+                            Opération Annulée
                         </Badge>
                     );
                 }
+                // Seuls les transferts et approvisionnements non annulés peuvent être annulés depuis cette vue
                 if (item.type === 'Transfert' || item.type === 'Approvisionnement') {
                     return (
                         <OverlayTrigger overlay={<Tooltip>Annuler cette opération et restaurer le stock.</Tooltip>}>
@@ -178,7 +195,7 @@ const StockMovementsView = () => {
                         </OverlayTrigger>
                     );
                 }
-                return null;
+                return null; // Pas d'action pour les ventes valides ou autres types
             }
         }
     ];
@@ -193,8 +210,8 @@ const StockMovementsView = () => {
 
     return (
         <div className="p-4">
-            <div className="d-flex justify-content-between align-items-center mb-4">
-                <h3 className="fw-bold mb-0">Mouvements de Stock</h3>
+            <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+                <h3 className="fw-bold mb-0">Mouvements de Stock</h3> 
                 <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                     <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                     Exporter PDF
@@ -213,6 +230,8 @@ const StockMovementsView = () => {
                                 <option value="Approvisionnement">Approvisionnement</option>
                                 <option value="Transfert">Transfert</option>
                                 <option value="Vente">Vente</option>
+                                <option value="Annulation Vente">Annulation Vente</option>
+                                <option value="Modification Prix">Modification Prix</option>
                             </Form.Select>
                         </Col>
                         <Col md={3}>
@@ -251,7 +270,7 @@ const StockMovementsView = () => {
                         <tbody>
                             {currentMouvements.length > 0 ? (
                                 currentMouvements.map((item, index) => {
-                                    const isCancelled = item.isCancelled || item.details?.includes('ANNULATION');
+                                    const isCancelled = item.isCancelled;
                                     return (
                                         <tr key={item._id || index} className={isCancelled ? 'bg-light text-muted' : ''}>
                                             {columns.map(col => (

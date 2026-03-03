@@ -4,7 +4,7 @@
 // Affiche les informations sur les gérants et le stock
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { boutiqueAPI, articleAPI } from '../services/api';
@@ -73,6 +73,7 @@ const ShopsView = () => {
   const [transferQuantities, setTransferQuantities] = useState({}); // Nouvel état pour les quantités
   const [loadingArticles, setLoadingArticles] = useState(false);
   const [transferLoading, setTransferLoading] = useState(false);
+  const [transferSearchTerm, setTransferSearchTerm] = useState(''); // Pour la recherche dans la modale
 
   // États pour la confirmation de suppression (Modale moderne)
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -266,8 +267,7 @@ const ShopsView = () => {
       label: 'Type',
       render: (value) => (
         <Badge pill bg={value === 'Centrale' ? 'primary' : 'secondary'}>
-          {/* Affiche 'Secondaire' si le type n'est pas défini pour les anciennes boutiques */}
-          {value || 'Secondaire'}
+          {value === 'Centrale' ? 'Dépôt Principal' : (value || 'Secondaire')}
         </Badge>
       )
     },
@@ -344,6 +344,26 @@ const ShopsView = () => {
   
   const mapCenter = forcedCenter || defaultCenter;
 
+  // Logique de filtrage pour la modale de transfert
+  const filteredSourceArticles = sourceArticles.filter(article =>
+    article.nom.toLowerCase().includes(transferSearchTerm.toLowerCase()) ||
+    (article.code && article.code.toLowerCase().includes(transferSearchTerm.toLowerCase()))
+  );
+  const allFilteredAreSelected = filteredSourceArticles.length > 0 && filteredSourceArticles.every(a => selectedArticles.includes(a._id));
+
+  // Calcul de la valeur totale du stock à transférer
+  const totalTransferValue = useMemo(() => {
+    return selectedArticles.reduce((total, articleId) => {
+        const article = sourceArticles.find(a => a._id === articleId);
+        const quantity = transferQuantities[articleId] || 0;
+        if (article) {
+            // S'assurer que la quantité est un nombre
+            return total + (article.prixAchat * parseInt(quantity, 10));
+        }
+        return total;
+    }, 0);
+  }, [selectedArticles, transferQuantities, sourceArticles]);
+
   // Préparation des lignes de flux (Centrale -> Secondaires)
   const flowLines = centralShop ? boutiques.filter(b => b.type === 'Secondaire' && b.latitude && b.longitude).map(b => [[centralShop.latitude, centralShop.longitude], [b.latitude, b.longitude]]) : [];
 
@@ -351,9 +371,9 @@ const ShopsView = () => {
 
   return (
     <div className="p-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
         <h3 className="fw-bold mb-0 text-body">Gestion des Boutiques</h3>
-        <div className="d-flex gap-2">
+        <div className="d-flex flex-wrap gap-2">
             {/* Boutons de bascule Vue Liste / Vue Carte */}
             <div className="btn-group me-2" role="group">
                 <Button variant={viewMode === 'list' ? 'primary' : 'outline-primary'} onClick={() => { setViewMode('list'); setSelectedBoutiqueId(null); }}>
@@ -391,7 +411,7 @@ const ShopsView = () => {
         <Alert variant="warning" className="shadow-sm mt-3">
           <div className="d-flex align-items-center">
             <iconify-icon icon="solar:info-circle-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
-            <span><strong>Information :</strong> Le bouton "Réapprovisionner" n'apparaît que si une boutique de type "Centrale" est configurée.</span>
+          <span><strong>Information :</strong> Les fonctionnalités de réapprovisionnement ne sont disponibles que si un "Dépôt Principal" (type "Centrale") est configuré.</span>
           </div>
         </Alert>
       )}
@@ -424,9 +444,9 @@ const ShopsView = () => {
         </Card>
       ) : (
         <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
-            <Card.Header className="d-flex justify-content-between align-items-center py-3">
+            <Card.Header className="d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
                 <h5 className="fw-bold mb-0">Carte des Boutiques</h5>
-                <div className="d-flex align-items-center gap-2" style={{maxWidth: '250px'}}>
+                <div className="d-flex align-items-center gap-2">
                     <Form.Label className="mb-0 small text-nowrap">Rayon (m):</Form.Label>
                     <Form.Control 
                         type="number" 
@@ -477,7 +497,7 @@ const ShopsView = () => {
                                     <Popup>
                                         <div className="text-center">
                                             <h6 className="fw-bold mb-1">{boutique.nom}</h6>
-                                            <Badge bg={boutique.type === 'Centrale' ? 'primary' : 'secondary'} className="mb-2">{boutique.type}</Badge>                                            <p className="mb-0 small">{boutique.adresse}</p>
+                                            <Badge bg={boutique.type === 'Centrale' ? 'primary' : 'secondary'} className="mb-2">{boutique.type === 'Centrale' ? 'Dépôt Principal' : boutique.type}</Badge>                                            <p className="mb-0 small">{boutique.adresse}</p>
                                         </div>
                                     </Popup>
                                 </Marker>
@@ -527,7 +547,7 @@ const ShopsView = () => {
                 required
               >
                 <option value="Secondaire">Secondaire</option>
-                <option value="Centrale">Centrale</option>
+                <option value="Centrale">Dépôt Principal</option>
               </Form.Select>
             </Form.Group>
             
@@ -652,6 +672,9 @@ const ShopsView = () => {
                                         )}
                                     </div>
                                 ))}
+                                {filteredSourceArticles.length === 0 && sourceArticles.length > 0 && (
+                                    <p className="text-muted small mb-0">Aucun article ne correspond à votre recherche.</p>
+                                )}
                                 </>
                             ) : <p className="text-muted small mb-0">Aucun article dans cette boutique.</p>}
                         </div>
@@ -676,9 +699,15 @@ const ShopsView = () => {
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>
-            <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Fermer</Button>
+            <div className="me-auto">
+                <span className="fw-bold">Valeur du stock : </span>
+                <Badge bg="success" pill className="p-2 fs-6">
+                    {totalTransferValue.toLocaleString('fr-FR')} GNF
+                </Badge>
+            </div>
+            <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
             <Button variant="primary" type="submit" disabled={transferLoading}>
-              {transferLoading ? <Spinner as="span" animation="border" size="sm" /> : 'Transférer'}
+              {transferLoading ? <Spinner as="span" animation="border" size="sm" /> : `Transférer (${selectedArticles.length})`}
             </Button>
           </Modal.Footer>
         </Form>

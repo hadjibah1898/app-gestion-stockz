@@ -1,5 +1,6 @@
 const articleRepository = require('../repositories/articleRepository');
 const Article = require('../models/Article'); // Assurez-vous que le modèle est importé
+const mongoose = require('mongoose');
 const Mouvement = require('../models/Mouvement');
 const Notification = require('../models/Notification');
 
@@ -13,7 +14,7 @@ exports.supprimerArticle = async (id) => {
     return await articleRepository.deleteById(id);
 };
 
-exports.modifierArticle = async (id, data) => {
+exports.modifierArticle = async (id, data, user) => {
     // 1. Valider que les données ne sont pas vides
     if (Object.keys(data).length === 0) {
         throw new Error("Données de mise à jour vides.");
@@ -24,6 +25,10 @@ exports.modifierArticle = async (id, data) => {
     if (!articleExistant) {
         throw new Error("Article introuvable.");
     }
+
+    // Récupérer l'opérateur qui fait la modification
+    const operateurId = user?._id || user?.id;
+    let detailsMouvement = '';
 
     // --- LOGIQUE DE NOTIFICATION (Validation ou Refus Remise) ---
     // Si une remise en attente existait et qu'elle est traitée (remiseEnAttente devient null dans la mise à jour)
@@ -67,14 +72,36 @@ exports.modifierArticle = async (id, data) => {
         throw new Error("La quantité ne peut pas être négative.");
     }
 
+    // Suivi des modifications de prix
+    if (data.prixAchat !== undefined && Number(data.prixAchat) !== articleExistant.prixAchat) {
+        detailsMouvement += `P. Achat: ${articleExistant.prixAchat.toLocaleString('fr-FR')} -> ${Number(data.prixAchat).toLocaleString('fr-FR')} GNF. `;
+    }
+    if (data.prixVente !== undefined && Number(data.prixVente) !== articleExistant.prixVente) {
+        detailsMouvement += `P. Vente: ${articleExistant.prixVente.toLocaleString('fr-FR')} -> ${Number(data.prixVente).toLocaleString('fr-FR')} GNF.`;
+    }
+
     // 4. Appel au repository pour la mise à jour
     // La fonction findByIdAndUpdate du repo s'occupera de ne mettre à jour que les champs fournis dans `data`
     const articleModifie = await articleRepository.update(id, data);
+
+    // Créer un mouvement pour la traçabilité si un prix a changé
+    if (detailsMouvement && operateurId) {
+        await Mouvement.create({
+            type: 'Modification Prix',
+            details: detailsMouvement.trim(),
+            boutiqueSource: articleExistant.boutique,
+            articles: [{ nomArticle: articleExistant.nom, quantite: 0 }],
+            operateur: operateurId
+        });
+    }
 
     return articleModifie;
 };
 
 const performStockTransfer = async (sourceId, targetId, items, user, details = '') => {
+    // --- VALIDATIONS HORS TRANSACTION ---
+    // On effectue toutes les vérifications en amont pour renvoyer des erreurs claires.
+
     const operateurId = user.id || user._id || user; // Gestion compatibilité (objet user ou ID string)
     const userRole = user.role;
 
@@ -99,79 +126,97 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
 
     // Règle de sécurité : Seul l'Admin peut sortir du stock de la Centrale
     if (sourceBoutique.type === 'Centrale') {
-        if (userRole !== 'Admin') {
-            const err = new Error("Action non autorisée : Seul l'administrateur peut effectuer des mouvements depuis la Boutique Centrale.");
+        if (userRole !== 'Admin') { // Seul l'admin peut initier un transfert depuis le dépôt principal
+            const err = new Error("Action non autorisée : Seul l'administrateur peut effectuer des mouvements depuis le Dépôt Principal.");
             err.statusCode = 403;
             throw err;
         }
     }
 
-    let transferCount = 0;
-
     // items est attendu comme un tableau de { articleId, quantite }
     if (!items || items.length === 0) {
-        return { modifiedCount: 0 };
+        const err = new Error("La liste d'articles à transférer est vide.");
+        err.statusCode = 400;
+        throw err;
     }
 
+    // Validation du stock AVANT de démarrer la transaction.
     for (const item of items) {
         const sourceArticle = await Article.findById(item.articleId);
-        if (!sourceArticle) continue;
-
-        // Vérification d'appartenance
-        if (sourceArticle.boutique.toString() !== sourceId.toString()) continue;
+        if (!sourceArticle || sourceArticle.boutique.toString() !== sourceId.toString()) continue; // Ignore if not found in source
 
         const qtyToTransfer = parseInt(item.quantite);
         if (isNaN(qtyToTransfer) || qtyToTransfer <= 0) continue;
 
         if (sourceArticle.quantite < qtyToTransfer) {
-            throw new Error(`Stock insuffisant pour l'article "${sourceArticle.nom}". Disponible: ${sourceArticle.quantite}`);
+            // C'est l'erreur que l'utilisateur doit voir.
+            const err = new Error(`Stock insuffisant pour l'article "${sourceArticle.nom}". Disponible: ${sourceArticle.quantite}, demandé: ${qtyToTransfer}.`);
+            err.statusCode = 400; // Bad Request
+            throw err;
         }
-
-        // Chercher l'article correspondant dans la boutique de destination
-        let targetArticle = await Article.findOne({ 
-            nom: sourceArticle.nom, 
-            boutique: targetId 
-        });
-
-        if (targetArticle) {
-            // Mise à jour du stock existant
-            targetArticle.quantite += qtyToTransfer;
-            await targetArticle.save();
-        } else {
-            // Création d'un nouvel article dans la destination
-            const newArticleData = sourceArticle.toObject();
-            delete newArticleData._id;
-            delete newArticleData.createdAt;
-            delete newArticleData.updatedAt;
-            delete newArticleData.__v;
-            newArticleData.boutique = targetId;
-            newArticleData.quantite = qtyToTransfer;
-            await Article.create(newArticleData);
-        }
-
-        // Décrémenter le stock source
-        sourceArticle.quantite -= qtyToTransfer;
-        await sourceArticle.save();
-        
-        transferCount++;
     }
 
-    // Enregistrer le mouvement de stock
-    const articlesDeplaces = await Promise.all(items.map(async item => {
-        const article = await Article.findById(item.articleId).select('nom').lean();
-        return { nomArticle: article.nom, quantite: item.quantite };
-    }));
+    // --- DÉBUT DES OPÉRATIONS (SANS TRANSACTION) ---
+    // NOTE : Les transactions ont été retirées pour assurer la compatibilité avec les instances
+    // MongoDB autonomes (non-replica set) courantes en environnement de développement.
+    // Pour un environnement de production, il est fortement recommandé de réactiver les transactions
+    // et d'utiliser une base de données configurée en replica set pour garantir l'atomicité.
+    try {
+        let transferCount = 0;
 
-    await Mouvement.create({
-        type: 'Transfert',
-        boutiqueSource: sourceId,
-        boutiqueDestination: targetId,
-        articles: articlesDeplaces,
-        operateur: operateurId,
-        details: details || `Transfert de ${sourceBoutique.nom} vers ${targetBoutique.nom}`
-    });
+        for (const item of items) {
+            const qtyToTransfer = parseInt(item.quantite);
+            if (isNaN(qtyToTransfer) || qtyToTransfer <= 0) continue;
 
-    return { modifiedCount: transferCount };
+            const sourceArticle = await Article.findById(item.articleId);
+            if (!sourceArticle || sourceArticle.boutique.toString() !== sourceId.toString()) continue;
+
+            // Re-vérification du stock pour éviter les "race conditions" (conflits d'accès)
+            if (sourceArticle.quantite < qtyToTransfer) {
+                throw new Error(`Conflit de stock pour "${sourceArticle.nom}". Le stock a changé durant l'opération.`);
+            }
+
+            let targetArticle = await Article.findOne({ nom: sourceArticle.nom, boutique: targetId });
+
+            if (targetArticle) {
+                targetArticle.quantite += qtyToTransfer;
+                await targetArticle.save();
+            } else {
+                const newArticleData = sourceArticle.toObject();
+                delete newArticleData._id;
+                delete newArticleData.createdAt;
+                delete newArticleData.updatedAt;
+                delete newArticleData.__v;
+                newArticleData.boutique = targetId;
+                newArticleData.quantite = qtyToTransfer;
+                await Article.create([newArticleData]);
+            }
+
+            sourceArticle.quantite -= qtyToTransfer;
+            await sourceArticle.save();
+            
+            transferCount++;
+        }
+        const articlesDeplaces = await Promise.all(items.map(async item => {
+            const article = await Article.findById(item.articleId).select('nom').lean();
+            return { nomArticle: article.nom, quantite: item.quantite };
+        }));
+
+        await Mouvement.create({
+            type: 'Transfert',
+            boutiqueSource: sourceId,
+            boutiqueDestination: targetId,
+            articles: articlesDeplaces,
+            operateur: operateurId,
+            details: details || `Transfert de ${sourceBoutique.nom} vers ${targetBoutique.nom}`
+        });
+
+        return { modifiedCount: transferCount };
+
+    } catch (error) {
+        console.error("ERREUR CRITIQUE pendant le transfert de stock (non-transactionnel):", error);
+        throw new Error(`Une erreur est survenue pendant le transfert. L'état du stock peut être incohérent. Erreur: ${error.message}`);
+    }
 };
 
 exports.transfererStock = async (sourceId, targetId, articles, user, details) => {
@@ -182,7 +227,7 @@ exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user, 
     const Boutique = require('../models/Boutique');
     const centrale = await Boutique.findOne({ type: 'Centrale' });
     if (!centrale) {
-        const err = new Error("Aucune Boutique Centrale n'est configurée pour le réapprovisionnement.");
+        const err = new Error("Aucun Dépôt Principal n'est configuré pour le réapprovisionnement.");
         err.statusCode = 400;
         throw err;
     }

@@ -79,12 +79,12 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
     return (
         <Modal show={show} onHide={handleClose}>
             <Modal.Header closeButton>
-                <Modal.Title>Réapprovisionner une Boutique</Modal.Title>
+                <Modal.Title>Réapprovisionner une boutique</Modal.Title>
             </Modal.Header>
             <Form onSubmit={handleRestockSubmit}>
                 <Modal.Body>
                     <Alert variant="info" className="small">
-                        Transférez des articles depuis la Boutique Centrale vers une boutique secondaire.
+                        Transférez des articles depuis le Dépôt Principal vers une boutique secondaire.
                     </Alert>
                     {message.text && <Alert variant={message.type}>{message.text}</Alert>}
                     
@@ -92,7 +92,7 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
                         <Form.Label>Depuis la boutique (Source)</Form.Label>
                         <Form.Control 
                             type="text"
-                            value={centralShop?.nom || 'Boutique Centrale non trouvée'}
+                            value={centralShop?.nom || 'Dépôt Principal non trouvé'}
                             disabled
                         />
                     </Form.Group>
@@ -148,7 +148,7 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
                                             </div>
                                         ))}
                                         </>
-                                    ) : <p className="text-muted small mb-0">Aucun article dans la boutique centrale.</p>}
+                                    ) : <p className="text-muted small mb-0">Aucun article dans le dépôt principal.</p>}
                                 </div>
                             )}
                         </Form.Group>

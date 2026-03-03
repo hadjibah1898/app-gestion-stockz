@@ -7,7 +7,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col } from 'react-bootstrap';
 import TableComponent from './common/Table';
-import DemandeRemiseButton from './DemandeRemiseButton';
 import { articleAPI, boutiqueAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -169,18 +168,62 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
-    doc.text("Liste des Articles", 14, 15);
     
-    const tableColumn = ["Nom", "Boutique", "Prix Achat", "Prix Vente", "Quantité"];
+    // En-tête du rapport avec fond coloré
+    doc.setFillColor(41, 128, 185); // Bleu professionnel
+    doc.rect(0, 0, 210, 25, 'F');
+    
+    doc.setFontSize(18);
+    doc.setTextColor(255, 255, 255);
+    doc.text(title || "Rapport de Stock", 14, 16);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(220, 220, 220);
+    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 14, 22);
+
+    // Calcul des statistiques globales pour le PDF
+    const totalArticles = filteredArticles.reduce((acc, curr) => acc + curr.quantite, 0);
+    const totalValeurAchat = filteredArticles.reduce((acc, curr) => acc + (curr.prixAchat * curr.quantite), 0);
+    const totalValeurVente = filteredArticles.reduce((acc, curr) => acc + (curr.prixVente * curr.quantite), 0);
+
+    // Affichage des résumés dans un cadre
+    doc.setFillColor(245, 247, 250);
+    doc.setDrawColor(200, 200, 200);
+    doc.roundedRect(14, 30, 182, 25, 2, 2, 'FD');
+
+    doc.setFontSize(10);
+    doc.setTextColor(50);
+    
+    // Ligne 1 : Nombre d'articles
+    doc.text(`Nombre total d'articles :`, 20, 40);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${totalArticles}`, 65, 40);
+    doc.setFont("helvetica", "normal");
+
+    // Ligne 2 : Valeurs financières
+    doc.text(`Valeur Stock (Achat) :`, 20, 48);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${(totalValeurAchat.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 65, 48);
+    
+    doc.setFont("helvetica", "normal");
+    doc.text(`Valeur Potentielle (Vente) :`, 110, 48);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${(totalValeurVente.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 160, 48);
+    doc.setFont("helvetica", "normal");
+    
+    const tableColumn = ["Nom", "Code", "Boutique", "P. Achat", "P. Vente", "Qté", "Valeur Stock"];
     const tableRows = [];
 
     filteredArticles.forEach(article => {
+      const valeurStock = article.prixAchat * article.quantite;
       const articleData = [
         article.nom,
+        article.code || '-',
         article.boutique?.nom || 'Non assignée',
         (article.prixAchat.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
         (article.prixVente.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
-        article.quantite
+        article.quantite,
+        (valeurStock.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')
       ];
       tableRows.push(articleData);
     });
@@ -188,9 +231,47 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 20,
+      startY: 60,
+      theme: 'grid',
+      styles: { 
+        fontSize: 9, 
+        cellPadding: 3,
+        valign: 'middle',
+        lineColor: [220, 220, 220],
+        lineWidth: 0.1
+      },
+      headStyles: { 
+        fillColor: [41, 128, 185], 
+        textColor: 255, 
+        fontStyle: 'bold',
+        halign: 'center'
+      },
+      columnStyles: {
+        0: { cellWidth: 'auto' }, // Nom
+        1: { cellWidth: 25 }, // Code
+        2: { cellWidth: 30 }, // Boutique
+        3: { halign: 'right', cellWidth: 28 }, // P. Achat
+        4: { halign: 'right', cellWidth: 28 }, // P. Vente
+        5: { halign: 'center', cellWidth: 15 }, // Qté
+        6: { halign: 'right', fontStyle: 'bold', cellWidth: 30 } // Valeur Stock
+      },
+      alternateRowStyles: { fillColor: [248, 249, 250] }
     });
-    doc.save("articles.pdf");
+    
+    // Pied de page avec numérotation
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+        const pageSize = doc.internal.pageSize;
+        const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+        doc.text(`StockDash - Gestion de Stock`, 14, pageHeight - 10);
+        doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+    }
+
+    const fileName = title ? `${title.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf` : "articles.pdf";
+    doc.save(fileName);
   };
 
   const columns = [
@@ -215,7 +296,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         }
         return (
           <span>
-            {boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill className="ms-2">Centrale</Badge>}
+            {boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill className="ms-2">Principal</Badge>}
           </span>
         );
       }
@@ -254,9 +335,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       label: 'Actions',
       render: (_, article) => (
         <div className="d-flex gap-2">
-          {userRole === 'Gérant' && (
-             <DemandeRemiseButton articleId={article._id} onSuccess={fetchData} />
-          )}
           {userRole === 'Admin' && (
             <>
               <OverlayTrigger overlay={<Tooltip>Modifier</Tooltip>}>
@@ -290,9 +368,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
   return (
     <div className="p-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
         <h3 className="fw-bold mb-0 text-body">{title || 'Gestion des Articles'}</h3>
-        <div className="d-flex gap-2">
+        <div className="d-flex flex-wrap gap-2">
             <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                 Exporter PDF
@@ -302,7 +380,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       </div>
 
       {/* Filtres */}
-      <Row className="mb-4 align-items-center">
+      <Row className="mb-4 align-items-center g-3">
         <Col md={4}>
           <Form.Control
             type="text"
@@ -449,6 +527,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 name="quantite"
                 value={currentArticle.quantite}
                 onChange={handleChange}
+                disabled={editMode}
                 min="0"
                 required
               />
