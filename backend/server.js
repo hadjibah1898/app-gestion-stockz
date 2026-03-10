@@ -16,7 +16,8 @@ initReminderService();
 
 // 2. Middlewares de base
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Augmenter la limite pour les images en base64
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(morgan('dev')); // Pour voir tes requêtes passer dans le terminal
 
 // 3. Routes
@@ -28,6 +29,7 @@ app.use('/api/fournisseurs', require('./routes/fournisseursRoute'));
 app.use('/api/mouvements', require('./routes/mouvementsRoute'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/clients', require('./routes/clientRoutes'));
+app.use('/api/caisse', require('./routes/caisseRoutes'));
 
 // Route de test santé
 app.get('/health', (req, res) => res.status(200).json({ status: "ok", message: "Serveur actif" }));
@@ -39,4 +41,3 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`✅ Serveur démarré en mode ${process.env.NODE_ENV} sur : http://localhost:${PORT}`);
 });
-

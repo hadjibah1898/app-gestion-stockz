@@ -137,8 +137,14 @@ exports.updateManager = async (req, res) => {
  */
 exports.createManager = async (req, res) => {
     try {
-        const { nom, email, password, boutique } = req.body;
+        const { nom, email, boutique } = req.body;
+        let { password } = req.body;
 
+        // Si aucun mot de passe n'est fourni par le front-end, en générer un automatiquement
+        if (!password) {
+            password = Math.random().toString(36).slice(-8);
+        }
+ 
         // 1. Optionnel : Valider que la boutique existe si elle est fournie
         if (boutique) {
             const boutiqueExists = await Boutique.findById(boutique);

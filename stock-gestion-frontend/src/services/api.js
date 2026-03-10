@@ -77,6 +77,7 @@ export const articleAPI = {
   transferStock: (data) => api.post('articles/transfer', data),
   restock: (data) => api.post('articles/restock', data),
   demanderRemise: (id, data) => api.post(`articles/${id}/demander-remise`, data),
+  applyAutoPromo: (data) => api.post('articles/auto-promo', data),
 };
 
 export const fournisseurAPI = {
@@ -100,6 +101,8 @@ export const venteAPI = {
   getPendingSales: () => api.get('ventes/pending'),
   validateRemise: (id) => api.post(`ventes/${id}/validate-remise`),
   rejectRemise: (id) => api.post(`ventes/${id}/reject-remise`),
+  genererTicket: (id) => axios.get(`/api/ventes/${id}/ticket`),
+  telechargerTicket: (filename) => axios.get(`/api/ventes/ticket/download/${filename}`, { responseType: 'blob' }),
 };
 
 export const dashboardAPI = {
@@ -111,7 +114,25 @@ export const clientAPI = {
   create: (data) => api.post('clients', data),
   update: (id, data) => api.put(`clients/${id}`, data),
   delete: (id) => api.delete(`clients/${id}`),
+  payDette: (id, data) => api.post(`clients/${id}/pay-dette`, data),
+  getDebtHistory: () => api.get('clients/debt-history'),
 };
 
+export const caisseAPI = {
+  getStatut: () => api.get('caisse/statut'),
+  ouvrir: (data) => api.post('caisse/ouvrir', data),
+  fermer: (data) => api.post('caisse/fermer', data),
+  creerDepense: (data) => api.post('caisse/depenses', data),
+  getMesDepenses: () => api.get('caisse/depenses/me'),
+  getMesRapports: () => api.get('caisse/rapports/me'),
+  // Admin routes
+  listerRapports: (params) => api.get('caisse/rapports', { params }),
+  validerRapport: (id, data) => api.put(`caisse/rapports/${id}/valider`, data),
+  rejeterRapport: (id, data) => api.put(`caisse/rapports/${id}/rejeter`, data),
+  getReportDetails: (id) => api.get(`caisse/rapports/${id}/details`),
+  getCaisseAdmin: () => api.get('caisse/admin'),
+  // Nouvelle route pour obtenir les statistiques de la session en cours
+  getStatistiquesSession: () => api.get('caisse/statistiques-session'),
+};
 
 export default api;

@@ -626,14 +626,22 @@ const ShopsView = () => {
                     <Form.Label>Sélectionner les articles à transférer</Form.Label>
                     {loadingArticles ? <div className="text-center"><Spinner size="sm" /></div> : (
                         <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', padding: '10px', borderRadius: '4px' }}>
-                            {sourceArticles.length > 0 ? (
+                            {sourceArticles.length > 0 || transferSearchTerm ? (
                                 <>
+                                <Form.Control
+                                    type="text"
+                                    placeholder="Rechercher un article..."
+                                    value={transferSearchTerm}
+                                    onChange={(e) => setTransferSearchTerm(e.target.value)}
+                                    className="mb-2"
+                                    size="sm"
+                                />
                                 <Form.Check 
                                     type="checkbox"
-                                    label="Tout sélectionner"
-                                    checked={selectedArticles.length === sourceArticles.length && sourceArticles.length > 0}
+                                    label={`Tout sélectionner (${filteredSourceArticles.length})`}
+                                    checked={allFilteredAreSelected}
                                     onChange={(e) => {
-                                        if (e.target.checked) setSelectedArticles(sourceArticles.map(a => a._id));
+                                        if (e.target.checked) setSelectedArticles(filteredSourceArticles.map(a => a._id));
                                         else {
                                             setSelectedArticles([]);
                                             setTransferQuantities({});
@@ -641,7 +649,7 @@ const ShopsView = () => {
                                     }}
                                     className="mb-2 fw-bold text-primary"
                                 />
-                                {sourceArticles.map(article => (
+                                {filteredSourceArticles.map(article => (
                                     <div key={article._id} className="d-flex align-items-center justify-content-between mb-2 border-bottom pb-1">
                                         <Form.Check 
                                             type="checkbox"

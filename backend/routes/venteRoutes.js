@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const venteController = require('../controllers/venteController');
 const { protect, authorize } = require('../middleware/authMiddleware');
+const { checkCaisseOuverte } = require('../middleware/caisseMiddleware');
 
 // Vérification de sécurité pour le debug
 if (!venteController.getPendingSales) {
@@ -9,7 +10,7 @@ if (!venteController.getPendingSales) {
 }
 
 // Routes
-router.post('/', protect, venteController.effectuerVente);
+router.post('/', protect, authorize('Gérant'), checkCaisseOuverte, venteController.effectuerVente); // Seul un gérant avec une caisse ouverte peut vendre
 router.get('/historique', protect, venteController.getHistorique);
 router.get('/pending', protect, venteController.getPendingSales); // <-- L'erreur venait souvent d'ici
 router.get('/logs', protect, authorize('Admin'), venteController.getLogs);

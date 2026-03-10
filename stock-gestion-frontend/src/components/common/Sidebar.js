@@ -44,28 +44,35 @@ const Sidebar = ({ userRole }) => {
                         </li>
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/articles">
-                                 <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
+                                <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Articles</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/etat-stock">
-                                 <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
+                                <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">État des stocks</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/fournisseurs">
-                                 <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
+                                <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Fournisseurs</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/centrale">
-                                 <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
+                                <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Dépôt Principal</span>
                             </NavLink>
                         </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/caisse">
+                                <iconify-icon icon="solar:wallet-money-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Finances & Caisse</span>
+                            </NavLink>
+                        </li>
+
 
                         <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
                         <li className="sidebar-item">
@@ -74,12 +81,13 @@ const Sidebar = ({ userRole }) => {
                                 <span className="hide-menu">Mouvements Stock</span>
                             </NavLink>
                         </li>
-                         <li className="sidebar-item">
+                        <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/ventes">
                                 <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Historique Ventes</span>
                             </NavLink>
                         </li>
+                       
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/clients">
                                 <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
@@ -127,12 +135,23 @@ const Sidebar = ({ userRole }) => {
                                 <span className="hide-menu">Clients & Ouvriers</span>
                             </NavLink>
                         </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant/caisse">
+                                <iconify-icon icon="solar:cash-out-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Ma Caisse</span>
+                            </NavLink>
+                        </li>
+
                     </ul>
                 )}
             </nav>
         </aside>
     );
 };
+
+
+
+
 
 
 export default Sidebar;

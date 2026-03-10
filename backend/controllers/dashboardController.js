@@ -2,6 +2,7 @@ const Vente = require('../models/Vente');
 const User = require('../models/User');
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
+const Client = require('../models/Client');
 const mongoose = require('mongoose');
 
 exports.getDashboardStats = async (req, res) => {
@@ -139,11 +140,22 @@ exports.getDashboardStats = async (req, res) => {
                 }
             },
             { $unwind: '$gerantDetails' },
+            // Ajouter un lookup pour obtenir les détails de la boutique du gérant
+            {
+                $lookup: {
+                    from: 'boutiques', // Nom de la collection des boutiques
+                    localField: 'gerantDetails.boutique',
+                    foreignField: '_id',
+                    as: 'boutiqueDetails'
+                }
+            },
+            { $unwind: { path: '$boutiqueDetails', preserveNullAndEmptyArrays: true } }, // Utiliser preserveNullAndEmptyArrays au cas où un gérant n'aurait pas de boutique
             { $sort: { totalVendu: -1 } },
             {
                 $project: {
                     _id: 0,
                     nom: '$gerantDetails.nom',
+                    boutiqueNom: '$boutiqueDetails.nom', // Inclure le nom de la boutique
                     chiffreAffaires: '$totalVendu'
                 }
             }
@@ -194,7 +206,7 @@ exports.getDashboardStats = async (req, res) => {
                     as: 'boutiqueDetails'
                 }
             },
-            { $unwind: '$boutiqueDetails' },
+            { $unwind: { path: '$boutiqueDetails', preserveNullAndEmptyArrays: true } },
             { $sort: { totalStock: -1 } },
             {
                 $project: {

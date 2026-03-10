@@ -6,7 +6,8 @@ const Notification = require('../models/Notification');
 
 // Doit maintenant accepter un filtre et utiliser populate
 exports.listerArticles = async (filter = {}) => {
-    return await Article.find(filter).populate('boutique').populate('remiseEnAttente.gerant', 'nom');
+    // Afficher le fournisseur pour toutes les boutiques sans exception
+    return await Article.find(filter).populate('boutique').populate('fournisseur').populate('remiseEnAttente.gerant', 'nom');
 };
 
 exports.supprimerArticle = async (id) => {
@@ -239,7 +240,24 @@ exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user, 
         throw err;
     }
 
-    return await performStockTransfer(centrale._id, targetBoutiqueId, articles, user, "Réapprovisionnement");
+    // Transformation des articles : On a reçu les IDs des articles de la boutique CIBLE (Secondaire)
+    // On doit trouver les articles correspondants dans la boutique SOURCE (Centrale) pour effectuer le transfert
+    const itemsToTransfer = [];
+    
+    for (const item of articles) {
+        // 1. Trouver l'article cible pour avoir son nom
+        const targetArticle = await Article.findById(item.articleId);
+        if (!targetArticle) continue;
+
+        // 2. Trouver l'article source correspondant (même nom, boutique Centrale)
+        const sourceArticle = await Article.findOne({ nom: targetArticle.nom, boutique: centrale._id });
+        
+        if (sourceArticle) {
+            itemsToTransfer.push({ articleId: sourceArticle._id, quantite: item.quantite });
+        }
+    }
+
+    return await performStockTransfer(centrale._id, targetBoutiqueId, itemsToTransfer, user, "Réapprovisionnement");
 };
 
 exports.annulerTransfert = async (mouvementId, operateurId) => {
@@ -284,7 +302,8 @@ exports.annulerTransfert = async (mouvementId, operateurId) => {
                 prixAchat: articleInDest.prixAchat,
                 prixVente: articleInDest.prixVente,
                 quantite: item.quantite,
-                boutique: targetId
+                boutique: targetId,
+                fournisseur: articleInDest.fournisseur // Conserver le fournisseur d'origine
             });
         }
     }
@@ -342,4 +361,31 @@ exports.annulerApprovisionnement = async (mouvementId, operateurId) => {
     });
 
     return { message: "Approvisionnement annulé avec succès. Le stock a été déduit." };
+};
+
+exports.appliquerPromoPeremption = async (jours, pourcentage, user) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + parseInt(jours));
+    
+    // Trouver les articles qui expirent entre aujourd'hui et la date cible
+    // et qui n'ont pas déjà une promo active supérieure ou égale
+    const articles = await Article.find({
+        datePeremption: { $gte: today, $lte: targetDate },
+        quantite: { $gt: 0 }
+    });
+
+    let count = 0;
+    for (const article of articles) {
+        article.promo = parseInt(pourcentage);
+        article.promoActive = true;
+        article.dateDebutPromo = new Date();
+        article.dateFinPromo = article.datePeremption; // La promo dure jusqu'à la péremption
+        await article.save();
+        count++;
+    }
+    
+    return { modifiedCount: count };
 };

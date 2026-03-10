@@ -7,16 +7,24 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col } from 'react-bootstrap';
 import TableComponent from './common/Table';
-import { articleAPI, boutiqueAPI } from '../services/api';
+import { articleAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
+import IntelligentSupplyModal from './common/IntelligentSupplyModal'; // Importer la nouvelle modale
+import { useLocation, useSearchParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [articles, setArticles] = useState([]);
   const [boutiques, setBoutiques] = useState([]);
+  const [fournisseurs, setFournisseurs] = useState([]);
+  const [centralShopId, setCentralShopId] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation(); // Pour récupérer les données de redirection
   const [filterBoutique, setFilterBoutique] = useState(boutiqueId || '');
   const [searchTerm, setSearchTerm] = useState(''); // État pour la barre de recherche
+  const [filterFournisseur, setFilterFournisseur] = useState(''); // Nouvel état pour le filtre fournisseur
   const [showPromoOnly, setShowPromoOnly] = useState(false); // État pour le filtre promo
+  const [sortBy, setSortBy] = useState(''); // État pour le tri
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -35,23 +43,41 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     promoActive: false,
     dateDebutPromo: '',
     dateFinPromo: '',
-    remise: 0
+    remise: 0,
+    datePeremption: ''
   });
 
   // États pour la confirmation de suppression
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [articleToDelete, setArticleToDelete] = useState(null);
 
+  // États pour la sélection multiple et l'approvisionnement
+  const [selectedArticles, setSelectedArticles] = useState([]);
+  const [showIntelligentSupplyModal, setShowIntelligentSupplyModal] = useState(false);
+  const [preSelectedSupplier, setPreSelectedSupplier] = useState('');
+
+  // États pour la promo automatique péremption
+  const [showAutoPromoModal, setShowAutoPromoModal] = useState(false);
+  const [autoPromoConfig, setAutoPromoConfig] = useState({ jours: 7, pourcentage: 20 });
+  const [autoPromoLoading, setAutoPromoLoading] = useState(false);
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       try {
-        const [articlesRes, boutiquesRes] = await Promise.all([
+        const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
           articleAPI.getAll(),
-          userRole === 'Admin' ? boutiqueAPI.getAll() : Promise.resolve({ data: [] })
+          userRole === 'Admin' ? boutiqueAPI.getAll() : Promise.resolve({ data: [] }),
+          userRole === 'Admin' ? fournisseurAPI.getAll() : Promise.resolve({ data: [] })
         ]);
         setArticles(articlesRes.data);
         setBoutiques(boutiquesRes.data);
+        // Identifier la boutique centrale pour la logique de filtrage
+        const centrale = boutiquesRes.data.find(b => b.type === 'Centrale');
+        if (centrale) {
+            setCentralShopId(centrale._id);
+        }
+        setFournisseurs(fournisseursRes.data);
       } catch (err) {
         setError(err.response?.data?.message || 'Erreur de chargement');
       } finally {
@@ -65,6 +91,61 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Effet pour gérer l'ouverture automatique de la modale d'approvisionnement depuis le Dashboard
+  useEffect(() => {
+    if (location.state?.openSupplyModal && !loading && articles.length > 0) {
+        const { articleId, supplierId } = location.state;
+        
+        if (articleId) {
+             const targetArticle = articles.find(a => a._id === articleId);
+             if (targetArticle) {
+                 setSelectedArticles([articleId]);
+                 if (supplierId) {
+                     setFilterFournisseur(supplierId);
+                 }
+                 setShowIntelligentSupplyModal(true);
+                 // Nettoyer l'état pour éviter la réouverture intempestive
+                 window.history.replaceState({}, document.title);
+             }
+        }
+    }
+  }, [loading, articles, location.state]);
+
+  // Effet pour gérer l'ouverture via les paramètres d'URL (Notifications)
+  useEffect(() => {
+    if (!loading && articles.length > 0) {
+        const openEditId = searchParams.get('openEdit');
+        const openSupplyId = searchParams.get('openSupply');
+
+        if (openEditId) {
+            const article = articles.find(a => a._id === openEditId);
+            if (article) {
+                handleShowModal(article);
+                // Nettoyer l'URL
+                setSearchParams(params => {
+                    params.delete('openEdit');
+                    return params;
+                });
+            }
+        }
+        
+        if (openSupplyId) {
+             const article = articles.find(a => a._id === openSupplyId);
+             if (article) {
+                 setSelectedArticles([article._id]);
+                 if (article.fournisseur) {
+                     setFilterFournisseur(article.fournisseur._id || article.fournisseur);
+                 }
+                 setShowIntelligentSupplyModal(true);
+                 setSearchParams(params => {
+                    params.delete('openSupply');
+                    return params;
+                });
+             }
+        }
+    }
+  }, [loading, articles, searchParams, setSearchParams]);
 
   const handleShowModal = (article = null) => {
     if (article) {
@@ -83,7 +164,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         promoActive: false,
         dateDebutPromo: '',
         dateFinPromo: '',
-        remise: 0
+        remise: 0,
+        datePeremption: ''
       });
       setEditMode(false);
     }
@@ -124,7 +206,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     // Correction : S'assurer que l'ID de la boutique est envoyé, pas l'objet complet
     const payload = {
         ...currentArticle,
-        boutique: currentArticle.boutique?._id || currentArticle.boutique
+        boutique: currentArticle.boutique?._id || currentArticle.boutique,
+        fournisseur: currentArticle.fournisseur?._id || currentArticle.fournisseur
     };
 
     try {
@@ -274,7 +357,77 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     doc.save(fileName);
   };
 
+  const handleAutoPromoSubmit = async (e) => {
+    e.preventDefault();
+    setAutoPromoLoading(true);
+    setError('');
+    try {
+        const res = await articleAPI.applyAutoPromo(autoPromoConfig);
+        setSuccessMessage(res.data.message);
+        setShowAutoPromoModal(false);
+        fetchData();
+        setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+        setError(err.response?.data?.message || "Erreur lors de l'application des promotions.");
+    } finally {
+        setAutoPromoLoading(false);
+    }
+  };
+
+  // Logique de filtrage (déplacée avant columns pour être utilisée dans handleSelectAll)
+  let filteredArticles = articles.filter(article => {
+    const matchBoutique = !filterBoutique || (article.boutique?._id || article.boutique) === filterBoutique;
+    const matchFournisseur = !filterFournisseur || (article.fournisseur?._id || article.fournisseur) === filterFournisseur;
+    const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        (article.code && article.code.toLowerCase().includes(searchTerm.toLowerCase()));
+    const matchPromo = !showPromoOnly || (article.promoActive && article.promo > 0);
+
+    return matchBoutique && matchFournisseur && matchSearch && matchPromo;
+  });
+
+  // Logique de tri
+  if (sortBy === 'datePeremptionAsc') {
+    filteredArticles.sort((a, b) => {
+      if (!a.datePeremption) return 1;
+      if (!b.datePeremption) return -1;
+      return new Date(a.datePeremption) - new Date(b.datePeremption);
+    });
+  } else if (sortBy === 'datePeremptionDesc') {
+    filteredArticles.sort((a, b) => {
+      if (!a.datePeremption) return 1;
+      if (!b.datePeremption) return -1;
+      return new Date(b.datePeremption) - new Date(a.datePeremption);
+    });
+  }
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+        setSelectedArticles(filteredArticles.map(a => a._id));
+    } else {
+        setSelectedArticles([]);
+    }
+  };
+
+  const handleSelectOne = (id) => {
+    if (selectedArticles.includes(id)) {
+        setSelectedArticles(selectedArticles.filter(item => item !== id));
+    } else {
+        setSelectedArticles([...selectedArticles, id]);
+    }
+  };
+
   const columns = [
+    ...(filterFournisseur ? [{
+      key: 'select',
+      label: (
+        <Form.Check 
+            type="checkbox" 
+            onChange={handleSelectAll} 
+            checked={filteredArticles.length > 0 && selectedArticles.length === filteredArticles.length}
+        />
+      ),
+      render: (_, article) => <Form.Check type="checkbox" checked={selectedArticles.includes(article._id)} onChange={() => handleSelectOne(article._id)} />
+    }] : []),
     {
       key: 'image',
       label: 'Image',
@@ -302,6 +455,20 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       }
     },
     {
+      key: 'fournisseur',
+      label: 'Fournisseur',
+      render: (fournisseur) => {
+        if (!fournisseur) {
+          return <Badge bg="secondary">Non spécifié</Badge>;
+        }
+        return (
+          <span>
+            {fournisseur.nom}
+          </span>
+        );
+      }
+    },
+    {
       key: 'promo',
       label: 'Promo/Remise',
       render: (_, article) => {
@@ -319,6 +486,23 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           return new Date(date).toLocaleDateString('fr-FR');
         }
         return '-';
+      }
+    },
+    { 
+      key: 'datePeremption',
+      label: 'Péremption',
+      render: (date) => {
+        if (!date) return '-';
+        const d = new Date(date);
+        const now = new Date();
+        const diffTime = d - now;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        let badgeBg = 'success';
+        if (diffDays < 0) badgeBg = 'danger'; // Périmé
+        else if (diffDays <= 30) badgeBg = 'warning'; // Bientôt périmé
+
+        return <Badge bg={badgeBg}>{d.toLocaleDateString('fr-FR')}</Badge>;
       }
     },
     { 
@@ -354,15 +538,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     }
   ];
 
-  // Filtrer les articles en fonction de la boutique sélectionnée et du terme de recherche
-  const filteredArticles = articles.filter(article => {
-    const matchBoutique = !filterBoutique || (article.boutique?._id || article.boutique) === filterBoutique;
-    const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                        (article.code && article.code.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchPromo = !showPromoOnly || (article.promoActive && article.promo > 0);
-
-    return matchBoutique && matchSearch && matchPromo;
-  });
+  const handleSupplySuccess = () => {
+    setSuccessMessage("Approvisionnement enregistré avec succès !");
+    setShowIntelligentSupplyModal(false);
+    setSelectedArticles([]);
+    fetchData();
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
 
   if (loading) return <Spinner animation="border" />;
 
@@ -371,6 +553,29 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
         <h3 className="fw-bold mb-0 text-body">{title || 'Gestion des Articles'}</h3>
         <div className="d-flex flex-wrap gap-2">
+            {selectedArticles.length > 0 && userRole === 'Admin' && (
+              <>
+                  <Button variant="success" onClick={() => {
+                      let supplierToPreselect = filterFournisseur;
+                      if (!supplierToPreselect) {
+                          const articlesForSupply = articles.filter(a => selectedArticles.includes(a._id));
+                          const uniqueSuppliers = [...new Set(articlesForSupply.map(a => a.fournisseur?._id).filter(Boolean))];
+                          if (uniqueSuppliers.length === 1) supplierToPreselect = uniqueSuppliers[0];
+                      }
+                      setPreSelectedSupplier(supplierToPreselect);
+                      setShowIntelligentSupplyModal(true);
+                  }} className="rounded-pill px-4 shadow-sm">
+                      <iconify-icon icon="solar:box-up-bold" className="me-2 align-middle"></iconify-icon>
+                      Approvisionner ({selectedArticles.length})
+                  </Button>
+              </>
+            )}
+            {userRole === 'Admin' && (
+                <Button variant="warning" onClick={() => setShowAutoPromoModal(true)} className="rounded-pill px-4 shadow-sm text-white">
+                    <iconify-icon icon="solar:tag-price-bold-duotone" className="me-2 align-middle"></iconify-icon>
+                    Promo Péremption
+                </Button>
+            )}
             <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                 Exporter PDF
@@ -381,7 +586,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       {/* Filtres */}
       <Row className="mb-4 align-items-center g-3">
-        <Col md={4}>
+        <Col md={3}>
           <Form.Control
             type="text"
             placeholder="Rechercher par nom ou code..."
@@ -390,10 +595,16 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           />
         </Col>
         {userRole === 'Admin' && !boutiqueId && (
-          <Col md={4}>
+          <Col md={filterBoutique === centralShopId ? 2 : 3}>
             <Form.Select 
               value={filterBoutique} 
-              onChange={(e) => setFilterBoutique(e.target.value)}
+              onChange={(e) => {
+                setFilterBoutique(e.target.value);
+                // Si on sélectionne une boutique autre que la centrale, on réinitialise le filtre fournisseur.
+                if (e.target.value !== centralShopId) {
+                    setFilterFournisseur('');
+                }
+              }}
             >
               <option value="">Toutes les boutiques</option>
               {boutiques.map(boutique => (
@@ -402,7 +613,34 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             </Form.Select>
           </Col>
         )}
-        <Col>
+        {/* Le filtre par fournisseur est visible si on est admin ET soit sur la page centrale, soit on a sélectionné la centrale */}
+        {userRole === 'Admin' && (boutiqueId === centralShopId || filterBoutique === centralShopId) && (
+          <Col md={3}>
+            <Form.Select 
+              value={filterFournisseur} 
+              onChange={(e) => {
+                setFilterFournisseur(e.target.value);
+                setSelectedArticles([]);
+              }}
+            >
+              <option value="">Tous les fournisseurs</option>
+              {fournisseurs.map(fournisseur => (
+                <option key={fournisseur._id} value={fournisseur._id}>{fournisseur.nom}</option>
+              ))}
+            </Form.Select>
+          </Col>
+        )}
+        <Col md={filterBoutique === centralShopId ? 2 : 3}>
+            <Form.Select 
+              value={sortBy} 
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="">Tri par défaut</option>
+              <option value="datePeremptionAsc">Péremption (Plus proche)</option>
+              <option value="datePeremptionDesc">Péremption (Plus lointaine)</option>
+            </Form.Select>
+        </Col>
+        <Col md="auto">
           <Form.Check 
             type="switch"
             id="promo-filter-switch"
@@ -497,6 +735,22 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
               </Form.Select>
             </Form.Group>
             <Form.Group className="mb-3">
+              <Form.Label>Fournisseur</Form.Label>
+              <Form.Select
+                name="fournisseur"
+                value={currentArticle.fournisseur?._id || currentArticle.fournisseur || ''}
+                onChange={handleChange}
+                disabled={userRole !== 'Admin'}
+              >
+                <option value="">Sélectionner un fournisseur</option>
+                {fournisseurs.map(fournisseur => (
+                  <option key={fournisseur._id} value={fournisseur._id}>
+                    {fournisseur.nom}
+                  </option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+            <Form.Group className="mb-3">
               <Form.Label>Prix d'achat (GNF)</Form.Label>
               <Form.Control
                 type="number"
@@ -530,6 +784,15 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 disabled={editMode}
                 min="0"
                 required
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Date de péremption (Optionnel)</Form.Label>
+              <Form.Control
+                type="date"
+                name="datePeremption"
+                value={currentArticle.datePeremption ? currentArticle.datePeremption.split('T')[0] : ''}
+                onChange={handleChange}
               />
             </Form.Group>
 
@@ -647,6 +910,55 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
           <Button variant="danger" onClick={executeDelete}>Supprimer définitivement</Button>
         </Modal.Footer>
+      </Modal>
+
+      {/* Modale d'Approvisionnement Intelligent */}
+      <IntelligentSupplyModal 
+        show={showIntelligentSupplyModal}
+        onHide={() => setShowIntelligentSupplyModal(false)}
+        onSuccess={handleSupplySuccess}
+        articlesToSupply={articles.filter(a => selectedArticles.includes(a._id))}
+        preSelectedFournisseurId={preSelectedSupplier}
+      />
+
+      {/* Modale Promo Automatique Péremption */}
+      <Modal show={showAutoPromoModal} onHide={() => setShowAutoPromoModal(false)} centered>
+        <Modal.Header closeButton>
+            <Modal.Title>Promotions Automatiques (Anti-Gaspillage)</Modal.Title>
+        </Modal.Header>
+        <Form onSubmit={handleAutoPromoSubmit}>
+            <Modal.Body>
+                <Alert variant="info" className="small">
+                    Cette action appliquera automatiquement une promotion sur tous les articles dont la date de péremption est proche.
+                </Alert>
+                <Form.Group className="mb-3">
+                    <Form.Label>Articles expirant dans les prochains (jours) :</Form.Label>
+                    <Form.Control 
+                        type="number" 
+                        min="1" 
+                        value={autoPromoConfig.jours} 
+                        onChange={e => setAutoPromoConfig({...autoPromoConfig, jours: e.target.value})} 
+                        required 
+                    />
+                </Form.Group>
+                <Form.Group className="mb-3">
+                    <Form.Label>Appliquer une réduction de (%) :</Form.Label>
+                    <Form.Control 
+                        type="number" 
+                        min="1" max="100" 
+                        value={autoPromoConfig.pourcentage} 
+                        onChange={e => setAutoPromoConfig({...autoPromoConfig, pourcentage: e.target.value})} 
+                        required 
+                    />
+                </Form.Group>
+            </Modal.Body>
+            <Modal.Footer>
+                <Button variant="secondary" onClick={() => setShowAutoPromoModal(false)}>Annuler</Button>
+                <Button variant="primary" type="submit" disabled={autoPromoLoading}>
+                    {autoPromoLoading ? <Spinner size="sm" /> : 'Appliquer les promotions'}
+                </Button>
+            </Modal.Footer>
+        </Form>
       </Modal>
     </div>
   );

@@ -125,7 +125,10 @@ const Auth = ({ onLogin }) => {
                         <button
                           type="button"
                           className="small text-decoration-none text-primary fw-bold bg-transparent border-0 p-0"
-                          onClick={() => setShowForgotModal(true)}
+                          onClick={() => {
+                            setForgotEmail(formData.email); // Pré-remplir l'email depuis le formulaire de connexion
+                            setShowForgotModal(true);
+                          }}
                         >
                           Mot de passe oublié ?
                         </button>

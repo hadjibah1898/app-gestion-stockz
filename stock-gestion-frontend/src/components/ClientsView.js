@@ -5,11 +5,14 @@
 // Contient les fonctionnalités de recherche et de filtres
 
 import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, Card, Row, Col, Tab, Tabs, InputGroup } from 'react-bootstrap';
+import { useSearchParams } from 'react-router-dom';
+import { Button, Form, Modal, Alert, Spinner, Badge, Card, Tab, Tabs, InputGroup } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { clientAPI } from '../services/api';
+import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
 
 const ClientsView = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   // Récupérer le rôle depuis le localStorage (ou autre méthode d'auth)
   const userRole = localStorage.getItem('userRole');
   const [clients, setClients] = useState([]);
@@ -18,13 +21,11 @@ const ClientsView = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   
+  const [debtHistory, setDebtHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   // États pour Modale Création/Édition
   const [showModal, setShowModal] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [currentClient, setCurrentClient] = useState({
-    nom: '', email: '', telephone: '', type: 'Client', adresse: '', photo: '', dette: 0, commission: 0, totalAchats: 0, tauxCommission: 0
-  });
-  const [modalError, setModalError] = useState('');
+  const [currentClient, setCurrentClient] = useState(null);
 
   // États pour Modale Paiement (Dette ou Commission)
   const [showPayModal, setShowPayModal] = useState(false);
@@ -38,6 +39,7 @@ const ClientsView = () => {
 
   useEffect(() => {
     fetchClients();
+    fetchDebtHistory();
   }, []);
 
   const fetchClients = async () => {
@@ -58,55 +60,53 @@ const ClientsView = () => {
     }
   };
 
+  const fetchDebtHistory = async () => {
+    try {
+        setHistoryLoading(true);
+        const res = await clientAPI.getDebtHistory();
+        setDebtHistory(res.data);
+    } catch (err) {
+        setError("Erreur lors du chargement de l'historique des dettes.");
+    } finally {
+        setHistoryLoading(false);
+    }
+  };
+
+  // Effet pour gérer l'ouverture via notification
+  useEffect(() => {
+    if (!loading && clients.length > 0) {
+        const openClientId = searchParams.get('openClient');
+        if (openClientId) {
+            const client = clients.find(c => c._id === openClientId);
+            if (client) {
+                handleShowModal(client);
+                setSearchParams(params => {
+                    params.delete('openClient');
+                    return params;
+                });
+            }
+        }
+    }
+  }, [loading, clients, searchParams, setSearchParams]);
+
   // --- Gestion Création / Édition ---
   const handleShowModal = (client = null) => {
-    setModalError(''); // Réinitialiser l'erreur de la modale à chaque ouverture
     if (client) {
       setCurrentClient(client);
-      setEditMode(true);
     } else {
-      setCurrentClient({ nom: '', email: '', telephone: '', type: 'Client', adresse: '', photo: '', dette: 0, commission: 0, totalAchats: 0, tauxCommission: 0 });
-      setEditMode(false);
+      setCurrentClient(null);
     }
     setShowModal(true);
   };
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) { // Limite 2Mo
-        setError("L'image est trop volumineuse (max 2Mo)");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setCurrentClient({ ...currentClient, photo: reader.result });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setModalError('');
-    // Vérification frontend : si dette > 0, échéance obligatoire
-    if (parseFloat(currentClient.dette) > 0 && !currentClient.echeanceDette) {
-      setModalError("L'échéance de la dette est obligatoire si une dette est saisie.");
-      return;
-    }
+  const handleSaveClientSuccess = (savedClient, isEdit) => {
+    setSuccessMessage(isEdit ? 'Client mis à jour avec succès !' : 'Client créé avec succès !');
     try {
-      if (editMode) {
-        await clientAPI.update(currentClient._id, currentClient);
-        setSuccessMessage('Client mis à jour avec succès !');
-      } else {
-        await clientAPI.create(currentClient);
-        setSuccessMessage('Client créé avec succès !');
-      }
       fetchClients();
       setShowModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setModalError(err.response?.data?.message || "Erreur d'enregistrement");
+      setError(err.response?.data?.message || "Erreur d'enregistrement");
     }
   };
 
@@ -122,31 +122,21 @@ const ClientsView = () => {
     e.preventDefault();
     if (!paymentAmount || paymentAmount <= 0) return;
 
+    // On ne gère que la dette ici pour l'instant
+    if (payType !== 'dette') {
+        setError("La fonctionnalité de paiement de commission sera implémentée séparément.");
+        return;
+    }
+
     try {
-      const amount = parseFloat(paymentAmount);
-      const updatedClient = { ...clientToPay };
-
-      if (payType === 'dette') {
-        if (amount > updatedClient.dette) {
-            setError("Le montant du remboursement ne peut pas dépasser la dette.");
-            return;
-        }
-        updatedClient.dette -= amount;
-      } else {
-        if (amount > updatedClient.commission) {
-            setError("Le montant versé ne peut pas dépasser la commission due.");
-            return;
-        }
-        updatedClient.commission -= amount;
-      }
-
-      await clientAPI.update(clientToPay._id, updatedClient);
-      setSuccessMessage(payType === 'dette' ? 'Dette remboursée !' : 'Commission versée !');
+      await clientAPI.payDette(clientToPay._id, { montant: parseFloat(paymentAmount) });
+      setSuccessMessage('Remboursement de la dette enregistré avec succès !');
       fetchClients();
+      fetchDebtHistory(); // Rafraîchir l'historique
       setShowPayModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError("Erreur lors du paiement.");
+      setError(err.response?.data?.message || "Erreur lors du paiement.");
     }
   };
 
@@ -184,11 +174,6 @@ const ClientsView = () => {
   const workers = filteredClients.filter(c => c.type === 'Ouvrier');
 
     const columns = [
-    { 
-        key: 'photo', 
-        label: 'Photo',
-        render: (img, row) => img ? <img src={img} alt={row.nom} className="rounded-circle shadow-sm" style={{width: '40px', height: '40px', objectFit: 'cover'}} /> : <div className="bg-light rounded-circle d-flex align-items-center justify-content-center text-muted fw-bold shadow-sm" style={{width: '40px', height: '40px'}}>{row.nom.charAt(0).toUpperCase()}</div>
-    },
     { key: 'nom', label: 'Nom' },
     { key: 'email', label: 'Email' },
     { key: 'telephone', label: 'Téléphone' },
@@ -261,6 +246,40 @@ const ClientsView = () => {
     }
   ];
 
+  const debtHistoryColumns = [
+    { 
+        key: 'createdAt', 
+        label: 'Date',
+        render: (date) => new Date(date).toLocaleString('fr-FR')
+    },
+    { 
+        key: 'client', 
+        label: 'Client',
+        render: (client) => client?.nom || 'N/A'
+    },
+    { 
+        key: 'type', 
+        label: 'Type',
+        render: (type) => <Badge bg={type === 'CREATION' ? 'danger' : 'success'}>{type}</Badge>
+    },
+    { 
+        key: 'montant', 
+        label: 'Montant',
+        render: (val) => <span className="fw-bold">{(val || 0).toLocaleString()} GNF</span>
+    },
+    { 
+        key: 'soldeAnterieur', 
+        label: 'Solde Précédent',
+        render: (val) => <span className="text-muted">{(val || 0).toLocaleString()} GNF</span>
+    },
+    { 
+        key: 'nouveauSolde', 
+        label: 'Nouveau Solde',
+        render: (val) => <span className="fw-bold text-primary">{(val || 0).toLocaleString()} GNF</span>
+    },
+    { key: 'operateur', label: 'Opérateur', render: (op) => op?.nom || 'N/A' },
+  ];
+
   if (loading) return <Spinner animation="border" />;
 
   return (
@@ -308,92 +327,20 @@ const ClientsView = () => {
                 <Tab eventKey="workers" title={<span className="text-warning"><iconify-icon icon="solar:users-group-two-rounded-bold" className="me-1"></iconify-icon>Ouvriers / Apporteurs</span>}>
                     <TableComponent columns={columns} data={workers} emptyMessage="Aucun ouvrier enregistré." />
                 </Tab>
+                <Tab eventKey="debt-history" title={<span className="text-info"><iconify-icon icon="solar:history-bold" className="me-1"></iconify-icon>Historique Dettes</span>}>
+                    <TableComponent columns={debtHistoryColumns} data={debtHistory} loading={historyLoading} emptyMessage="Aucun mouvement de dette enregistré." />
+                </Tab>
             </Tabs>
         </Card.Body>
       </Card>
 
       {/* Modale Création / Édition */}
-      <Modal show={showModal} onHide={() => setShowModal(false)}>
-        <Modal.Header closeButton>
-          <Modal.Title>{editMode ? 'Modifier Client' : 'Nouveau Client / Ouvrier'}</Modal.Title>
-        </Modal.Header>
-        <Form onSubmit={handleSubmit}>
-          <Modal.Body>
-            {modalError && <Alert variant="danger">{modalError}</Alert>}
-            <div className="d-flex justify-content-center mb-4">
-                <div className="position-relative">
-                    {currentClient.photo ? (
-                        <img src={currentClient.photo} alt="Aperçu" className="rounded-circle shadow-sm object-fit-cover" style={{width: '100px', height: '100px'}} />
-                    ) : (
-                        <div className="bg-light rounded-circle d-flex align-items-center justify-content-center text-muted shadow-sm" style={{width: '100px', height: '100px'}}><iconify-icon icon="solar:camera-add-bold" style={{fontSize: '32px'}}></iconify-icon></div>
-                    )}
-                    <Form.Control type="file" accept="image/*" onChange={handleImageChange} className="position-absolute top-0 start-0 w-100 h-100 opacity-0" style={{cursor: 'pointer'}} />
-                </div>
-            </div>
-
-            <Row>
-                <Col md={6}>
-                    <Form.Group className="mb-3">
-                        <Form.Label>Nom complet</Form.Label>
-                        <Form.Control type="text" value={currentClient.nom} onChange={e => setCurrentClient({...currentClient, nom: e.target.value})} required />
-                    </Form.Group>
-                </Col>
-                <Col md={6}>
-                    <Form.Group className="mb-3">
-                        <Form.Label>Téléphone</Form.Label>
-                        <Form.Control type="text" value={currentClient.telephone} onChange={e => setCurrentClient({...currentClient, telephone: e.target.value})} />
-                    </Form.Group>
-                </Col>
-                <Col md={12}>
-                    <Form.Group className="mb-3">
-                        <Form.Label>Email</Form.Label>
-                        <Form.Control type="email" value={currentClient.email} onChange={e => setCurrentClient({...currentClient, email: e.target.value})} placeholder="client@exemple.com" />
-                    </Form.Group>
-                </Col>
-            </Row>
-            <Form.Group className="mb-3">
-                <Form.Label>Type</Form.Label>
-                <Form.Select value={currentClient.type} onChange={e => setCurrentClient({...currentClient, type: e.target.value})}>
-                    <option value="Client">Client Standard</option>
-                    <option value="Ouvrier">Ouvrier / Apporteur d'affaires</option>
-                </Form.Select>
-                <Form.Text className="text-muted">
-                    Les ouvriers peuvent accumuler des commissions sur les ventes qu'ils apportent.
-                </Form.Text>
-            </Form.Group>
-            <Form.Group className="mb-3">
-                <Form.Label>Adresse</Form.Label>
-                <Form.Control type="text" value={currentClient.adresse} onChange={e => setCurrentClient({...currentClient, adresse: e.target.value})} />
-            </Form.Group>
-            
-            {/* Champs Dettes et Commissions éditables manuellement si besoin */}
-            <Row>
-                {currentClient.type === 'Ouvrier' && (
-                    <>
-                        <Col md={editMode ? 6 : 12}>
-                            <Form.Group className="mb-3">
-                                <Form.Label>Taux Commission (%)</Form.Label>
-                                <Form.Control type="number" min="0" max="100" value={currentClient.tauxCommission} onChange={e => setCurrentClient({...currentClient, tauxCommission: parseFloat(e.target.value) || 0})} placeholder="Ex: 5" />
-                            </Form.Group>
-                        </Col>
-                        {editMode && (
-                            <Col md={6}>
-                                <Form.Group className="mb-3">
-                                    <Form.Label>Commission Due (GNF)</Form.Label>
-                                    <Form.Control type="number" value={currentClient.commission} onChange={e => setCurrentClient({...currentClient, commission: parseFloat(e.target.value) || 0})} />
-                                </Form.Group>
-                            </Col>
-                        )}
-                    </>
-                )}
-            </Row>
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={() => setShowModal(false)}>Annuler</Button>
-            <Button variant="primary" type="submit">Enregistrer</Button>
-          </Modal.Footer>
-        </Form>
-      </Modal>
+      <ClientModal
+        show={showModal}
+        onHide={() => setShowModal(false)}
+        clientToEdit={currentClient}
+        onSuccess={handleSaveClientSuccess}
+      />
 
       {/* Modale Paiement */}
       <Modal show={showPayModal} onHide={() => setShowPayModal(false)} size="sm" centered>

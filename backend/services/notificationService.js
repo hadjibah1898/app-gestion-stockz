@@ -32,6 +32,7 @@ exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) =
 const nodemailer = require('nodemailer');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const RapportCaisse = require('../models/RapportCaisse');
 
 // Configuration du transporteur (réutilisation des variables d'environnement existantes)
 const transporter = nodemailer.createTransport({
@@ -82,7 +83,7 @@ exports.sendLowStockAlert = async (article) => {
                 recipient: admin._id,
                 message: message,
                 type: 'warning',
-                link: '/admin/etat-stock' // Lien vers la vue d'état des stocks
+                link: link
             })
         );
         await Promise.all(notificationPromises);
@@ -185,5 +186,108 @@ exports.sendDiscountGrantedAlert = async (gerant, remises, totalVente, clientNom
 
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi de l'alerte de remise:", error);
+    }
+};
+
+/**
+ * Alerte les admins lorsqu'un rapport de caisse est généré.
+ * @param {Object} rapport - Le rapport de caisse généré.
+ */
+exports.sendNewReportAlert = async (rapport) => {
+    try {
+        const admins = await User.find({ role: 'Admin' });
+        if (admins.length === 0) return;
+
+        // On s'assure d'avoir les infos peuplées pour le message
+        const rapportFull = await RapportCaisse.findById(rapport._id).populate('gerant', 'nom').populate('boutique', 'nom');
+        if (!rapportFull) return;
+
+        const adminEmails = admins.map(u => u.email);
+        const message = `Nouveau rapport de caisse généré par ${rapportFull.gerant.nom} pour la boutique ${rapportFull.boutique.nom}.`;
+
+        // 1. Email notification
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: adminEmails,
+            subject: `📊 Nouveau Rapport de Caisse : ${rapportFull.boutique.nom}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                    <h2 style="color: #0d6efd; margin-top: 0;">Nouveau Rapport de Caisse</h2>
+                    <p>Le gérant <strong>${rapportFull.gerant.nom}</strong> a clôturé sa caisse.</p>
+                    <ul style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; list-style: none;">
+                        <li style="margin-bottom: 10px;"><strong>🏪 Boutique :</strong> ${rapportFull.boutique.nom}</li>
+                        <li style="margin-bottom: 10px;"><strong>💰 Montant Clôture :</strong> ${rapportFull.montantCloture.toLocaleString('fr-FR')} GNF</li>
+                        <li style="margin-bottom: 10px;"><strong>📉 Solde Théorique :</strong> ${rapportFull.soldeTheorique.toLocaleString('fr-FR')} GNF</li>
+                        <li><strong>⚠️ Écart :</strong> ${rapportFull.ecart.toLocaleString('fr-FR')} GNF</li>
+                    </ul>
+                    <p>Vous pouvez consulter et valider ce rapport dans la section "Finances & Caisse".</p>
+                </div>
+            `
+        });
+        console.log(`📧 Alerte rapport envoyée aux admins.`);
+
+        // 2. In-app notification
+        const notificationPromises = admins.map(admin => 
+            Notification.create({
+                recipient: admin._id,
+                message: message,
+                type: 'info',
+                link: '/admin/caisse' // Lien vers la vue caisse admin
+            })
+        );
+        await Promise.all(notificationPromises);
+        console.log(`📲 Notification in-app de rapport envoyée à ${admins.length} admin(s).`);
+
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'alerte de rapport:", error);
+    }
+};
+
+/**
+ * Alerte le gérant que son rapport de caisse a été rejeté.
+ * @param {Object} rapport - Le rapport de caisse rejeté.
+ * @param {Object} admin - L'admin qui a rejeté.
+ * @param {String} commentaire - Le motif du rejet.
+ */
+exports.sendReportRejectedAlert = async (rapport, admin, commentaire) => {
+    try {
+        const gerant = await User.findById(rapport.gerant);
+        if (!gerant) return;
+
+        const message = `Votre rapport de caisse du ${new Date(rapport.createdAt).toLocaleDateString()} a été rejeté par ${admin.nom}. Motif : ${commentaire}`;
+
+        // 1. Email notification
+        if (gerant.email) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: gerant.email,
+                subject: `❌ Rapport de Caisse Rejeté`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                        <h2 style="color: #dc3545; margin-top: 0;">Rapport de Caisse Rejeté</h2>
+                        <p>Bonjour <strong>${gerant.nom}</strong>,</p>
+                        <p>Votre rapport de caisse pour la boutique <strong>${rapport.boutique.nom}</strong> a été rejeté par l'administrateur <strong>${admin.nom}</strong>.</p>
+                        <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                            <p style="margin: 0 0 10px; color: #721c24;"><strong>Motif du rejet :</strong></p>
+                            <p style="margin: 0; color: #721c24;">${commentaire}</p>
+                        </div>
+                        <p>Veuillez prendre les mesures nécessaires et contacter l'administration si besoin. Vous pouvez maintenant ouvrir une nouvelle caisse.</p>
+                    </div>
+                `
+            });
+            console.log(`📧 Alerte de rejet de rapport envoyée à ${gerant.nom}.`);
+        }
+
+        // 2. In-app notification
+        await Notification.create({
+            recipient: gerant._id,
+            message: message,
+            type: 'error',
+            link: '/gerant/caisse' // Lien vers la vue caisse gérant
+        });
+        console.log(`📲 Notification in-app de rejet de rapport envoyée à ${gerant.nom}.`);
+
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'alerte de rejet de rapport:", error);
     }
 };

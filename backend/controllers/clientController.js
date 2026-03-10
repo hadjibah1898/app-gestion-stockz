@@ -1,4 +1,5 @@
 const Client = require('../models/Client');
+const DebtMovement = require('../models/DebtMovement');
 
 /**
  * @desc    Créer un client
@@ -90,5 +91,69 @@ exports.deleteClient = async (req, res) => {
         res.status(200).json({ message: "Client supprimé avec succès." });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la suppression.", error: error.message });
+    }
+};
+
+/**
+ * @desc    Rembourser une partie ou la totalité d'une dette
+ * @route   POST /api/clients/:id/pay-dette
+ * @access  Private
+ */
+exports.payDette = async (req, res) => {
+    try {
+        const { montant } = req.body;
+        const clientId = req.params.id;
+        const operateurId = req.user.id;
+
+        if (!montant || parseFloat(montant) <= 0) {
+            return res.status(400).json({ message: "Le montant du remboursement doit être positif." });
+        }
+
+        const client = await Client.findById(clientId);
+        if (!client) {
+            return res.status(404).json({ message: "Client introuvable." });
+        }
+
+        const montantRembourse = parseFloat(montant);
+        if (montantRembourse > client.dette) {
+            return res.status(400).json({ message: `Le montant du remboursement (${montantRembourse.toLocaleString()} GNF) ne peut pas dépasser la dette actuelle (${client.dette.toLocaleString()} GNF).` });
+        }
+
+        const soldeAnterieur = client.dette;
+        client.dette -= montantRembourse;
+        const nouveauSolde = client.dette;
+
+        await client.save();
+
+        await DebtMovement.create({
+            client: clientId,
+            type: 'REMBOURSEMENT',
+            montant: montantRembourse,
+            soldeAnterieur,
+            nouveauSolde,
+            operateur: operateurId
+        });
+
+        res.status(200).json({ message: "Remboursement enregistré avec succès.", client });
+
+    } catch (error) {
+        res.status(500).json({ message: "Erreur lors de l'enregistrement du remboursement.", error: error.message });
+    }
+};
+
+/**
+ * @desc    Lister l'historique des mouvements de dettes
+ * @route   GET /api/clients/debt-history
+ * @access  Private
+ */
+exports.getDebtHistory = async (req, res) => {
+    try {
+        const history = await DebtMovement.find({})
+            .populate('client', 'nom')
+            .populate('operateur', 'nom')
+            .sort({ createdAt: -1 });
+        res.status(200).json(history);
+    } catch (error) {
+        res.status(500).json({ message: "Erreur lors de la récupération de l'historique des dettes.", error: error.message });
     }
 };

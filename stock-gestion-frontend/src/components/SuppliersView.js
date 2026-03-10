@@ -5,7 +5,7 @@
 // Contient les fonctionnalités de recherche et de filtres
 
 import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip, InputGroup, Badge } from 'react-bootstrap';
+import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { fournisseurAPI } from '../services/api';
 import TableComponent from './common/Table';
 
@@ -20,8 +20,6 @@ const SuppliersView = () => {
   const [showModal, setShowModal] = useState(false);
   const [currentFournisseur, setCurrentFournisseur] = useState({ nom: '', telephone: '', email: '', produitsProposes: '' });
   const [editMode, setEditMode] = useState(false);
-
-  const [newProduct, setNewProduct] = useState('');
 
   // États pour la confirmation de suppression
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -52,18 +50,15 @@ const SuppliersView = () => {
       setCurrentFournisseur({ nom: '', telephone: '', email: '', produitsProposes: '' });
       setEditMode(false);
     }
-    setNewProduct(''); // Réinitialiser le champ d'ajout de produit
     setShowModal(true);
   };
 
   const handleSubmitFournisseur = async (e) => {
     e.preventDefault();
     try {
-      const payload = {
-        ...currentFournisseur,
-        produitsProposes: currentFournisseur.produitsProposes.split(',').map(p => p.trim()).filter(p => p)
-      };
-
+      // On retire le champ 'produitsProposes' avant l'envoi
+      const { produitsProposes, ...payload } = currentFournisseur;
+      
       if (editMode) {
         await fournisseurAPI.update(currentFournisseur._id, payload);
         setSuccessMessage("Fournisseur mis à jour");
@@ -101,29 +96,6 @@ const SuppliersView = () => {
   const filteredFournisseurs = fournisseurs.filter(f =>
     f.nom.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
-  const productsArray = currentFournisseur.produitsProposes.split(',').map(p => p.trim()).filter(p => p);
-
-  const handleAddProduct = () => {
-      if (newProduct.trim() === '' || productsArray.includes(newProduct.trim())) {
-          setNewProduct('');
-          return;
-      };
-      const updatedProducts = [...productsArray, newProduct.trim()];
-      setCurrentFournisseur({
-          ...currentFournisseur,
-          produitsProposes: updatedProducts.join(', ')
-      });
-      setNewProduct('');
-  };
-
-  const handleRemoveProduct = (productToRemove) => {
-      const updatedProducts = productsArray.filter(p => p !== productToRemove);
-      setCurrentFournisseur({
-          ...currentFournisseur,
-          produitsProposes: updatedProducts.join(', ')
-      });
-  };
 
   const columns = [
     { key: 'nom', label: 'Nom' },
@@ -197,33 +169,6 @@ const SuppliersView = () => {
             <Form.Group className="mb-3">
               <Form.Label>Email</Form.Label>
               <Form.Control type="email" value={currentFournisseur.email} onChange={e => setCurrentFournisseur({...currentFournisseur, email: e.target.value})} placeholder="exemple@email.com" />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Produits proposés</Form.Label>
-              <div className="border p-2 rounded" style={{ minHeight: '100px' }}>
-                  {productsArray.map((product, index) => (
-                      <Badge key={index} pill bg="primary" className="me-2 mb-2 p-2 fs-6 d-inline-flex align-items-center">
-                          {product}
-                          <Button variant="close" bsPrefix="btn-close-white" size="sm" className="ms-1" onClick={() => handleRemoveProduct(product)}></Button>
-                      </Badge>
-                  ))}
-                  <InputGroup className="mt-2">
-                      <Form.Control
-                          type="text"
-                          value={newProduct}
-                          onChange={e => setNewProduct(e.target.value)}
-                          onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ',') {
-                                  e.preventDefault();
-                                  handleAddProduct();
-                              }
-                          }}
-                          placeholder="Ajouter un produit..."
-                      />
-                      <Button variant="outline-secondary" onClick={handleAddProduct}>Ajouter</Button>
-                  </InputGroup>
-              </div>
-              <Form.Text className="text-muted">Ajoutez des produits en appuyant sur Entrée ou en cliquant sur "Ajouter".</Form.Text>
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>

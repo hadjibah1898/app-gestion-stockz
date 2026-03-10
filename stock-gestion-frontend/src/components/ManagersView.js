@@ -6,7 +6,7 @@
 
 // src/components/ManagersView.js
 import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, InputGroup, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { Button, Form, Modal, Alert, Spinner, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { Card } from 'react-bootstrap'; // Import Card
 import TableComponent from './common/Table';
 import { authAPI, boutiqueAPI, venteAPI } from '../services/api';
@@ -20,7 +20,6 @@ const ManagersView = () => {
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentManagerId, setCurrentManagerId] = useState(null);
-  const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     nom: '',
     email: '',
@@ -240,22 +239,6 @@ const ManagersView = () => {
                 onChange={handleChange}
                 required
               />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Mot de passe</Form.Label>
-              <InputGroup>
-                <Form.Control
-                  type={showPassword ? "text" : "password"}
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  placeholder={editMode ? "Laisser vide pour ne pas changer" : ""}
-                  required={!editMode} // Requis seulement en mode création
-                />
-                <Button variant="outline-secondary" onClick={() => setShowPassword(!showPassword)}>
-                  <iconify-icon icon={showPassword ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
-                </Button>
-              </InputGroup>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Boutique</Form.Label>

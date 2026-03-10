@@ -9,6 +9,7 @@ const logFilePath = path.join(__dirname, '../logs/ventes.log');
 exports.effectuerVente = async (req, res) => {
     try {
         const { panier, clientId, montantPaye, echeanceDette, hasRemise } = req.body;
+        const ouvertureCaisseId = req.ouvertureCaisse._id; // Fourni par le middleware checkCaisseOuverte
         const resultats = await venteService.traiterPanier(
             panier,
             req.user.id,
@@ -16,7 +17,8 @@ exports.effectuerVente = async (req, res) => {
             hasRemise,
             clientId,
             montantPaye,
-            echeanceDette
+            echeanceDette,
+            ouvertureCaisseId
         );
         res.status(201).json(resultats);
     } catch (error) {

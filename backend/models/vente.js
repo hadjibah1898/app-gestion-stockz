@@ -6,6 +6,7 @@ const venteSchema = new mongoose.Schema({
     prixTotal: { type: Number, required: true },
     gerant: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     boutique: { type: mongoose.Schema.Types.ObjectId, ref: 'Boutique' },
+    ouvertureCaisse: { type: mongoose.Schema.Types.ObjectId, ref: 'OuvertureCaisse' }, // Lien vers la session de caisse
     client: { type: mongoose.Schema.Types.ObjectId, ref: 'Client' },
     statut: { 
         type: String, 

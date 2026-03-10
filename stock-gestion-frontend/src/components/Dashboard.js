@@ -3,14 +3,15 @@
 // Affiche les statistiques clés, les graphiques et les raccourcis vers les fonctionnalités principales
 // Permet de visualiser rapidement l'état du stock et les performances
 
-import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Row, Col, Card, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer, Modal, Form, Spinner } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
-import { Link, useOutletContext } from 'react-router-dom';
+import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { dashboardAPI, articleAPI, venteAPI } from '../services/api'; // Import the new API
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './Dashboard.css';
+import { boutiqueAPI } from '../services/api'; // Import boutiqueAPI
 
 // Helper to format currency
 const formatCurrency = (value) => {
@@ -80,28 +81,44 @@ const DashboardSkeleton = () => (
 
 const Dashboard = () => {
   const { theme } = useOutletContext(); // Récupération du thème (light/dark)
+  const [searchParams, setSearchParams] = useSearchParams();
   const [stats, setStats] = useState(null);
   const [lowStockArticles, setLowStockArticles] = useState([]);
+  const [allArticles, setAllArticles] = useState([]); // Nouvel état pour stocker tous les articles
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', variant: 'light' });
   const [timeRange, setTimeRange] = useState('monthly'); // 1. Ajouter l'état pour le filtre
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // Nombre d'articles par page
+  
+  // États pour le transfert rapide
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferData, setTransferData] = useState({ sourceId: '', targetId: '', articleId: '', articleName: '', maxQuantity: 0, availableStock: 0 });
+  const [transferQuantity, setTransferQuantity] = useState(1);
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [centralShopId, setCentralShopId] = useState(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // Pour rafraîchir les données après action
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
         setLoading(true);
         // On récupère aussi l'historique des ventes pour corriger les calculs côté client (exclusion des annulés)
-        const [statsRes, articlesRes, ventesRes] = await Promise.all([
+        const [statsRes, articlesRes, ventesRes, boutiquesRes] = await Promise.all([
           dashboardAPI.getStats({ range: timeRange }),
           articleAPI.getAll(),
-          venteAPI.getHistorique()
+          venteAPI.getHistorique(),
+          boutiqueAPI.getAll()
         ]);
         
         let statsData = statsRes.data || {};
-        const allArticles = articlesRes.data || [];
+        const fetchedArticles = articlesRes.data || [];
         const allVentes = ventesRes.data || [];
+        const allBoutiques = boutiquesRes.data || [];
+        
+        // Identifier la boutique centrale
+        const centrale = allBoutiques.find(b => b.type === 'Centrale');
+        if (centrale) setCentralShopId(centrale._id);
 
         // --- CORRECTIF : Recalcul des stats en excluant les ventes annulées ---
         if (allVentes.length > 0) {
@@ -120,9 +137,10 @@ const Dashboard = () => {
         }
         
         setStats(statsData);
+        setAllArticles(fetchedArticles); // Sauvegarder tous les articles pour la recherche ultérieure
         
         // Calcul du stock faible (seuil arbitraire à 10 unités)
-        const lowStockItems = allArticles.filter(a => a.quantite <= 10);
+        const lowStockItems = fetchedArticles.filter(a => a.quantite <= 10);
         setLowStockArticles(lowStockItems);
         
       } catch (err) {
@@ -142,7 +160,7 @@ const Dashboard = () => {
     };
 
     fetchStats();
-  }, [timeRange]); // 3. Redéclencher à chaque changement de filtre
+  }, [timeRange, refreshTrigger]); // Redéclencher si le filtre change OU si une action est effectuée
 
   // Couleurs dynamiques selon le thème
   const textColor = theme === 'dark' ? '#cdd9e5' : '#373d3f';
@@ -274,6 +292,74 @@ const Dashboard = () => {
     doc.save("dashboard_admin.pdf");
   };
 
+  const handleLowStockAction = useCallback((article) => {
+    // Si c'est une boutique secondaire, on propose un transfert depuis la centrale
+    if (article.boutique && article.boutique.type !== 'Centrale' && centralShopId) {
+        // Trouver l'article correspondant dans la centrale pour connaître son stock
+        const centralArticle = allArticles.find(a => 
+            (a.boutique?._id === centralShopId) && 
+            a.nom === article.nom
+        );
+        const availableStock = centralArticle ? centralArticle.quantite : 0;
+
+        setTransferData({
+            sourceId: centralShopId,
+            targetId: article.boutique._id,
+            articleId: article._id, // Note: L'ID de l'article dans la boutique secondaire
+            articleName: article.nom,
+            // On ne connaît pas la quantité dispo en centrale ici sans refaire une requête, 
+            // mais le backend validera. On met une valeur indicative ou on laisse l'utilisateur saisir.
+            availableStock: availableStock
+        });
+        setTransferQuantity(10); // Valeur par défaut pour le réapprovisionnement
+        setShowTransferModal(true);
+    } else {
+        // Sinon (Centrale ou indéfini), on redirige vers l'approvisionnement fournisseur
+        // Redirection gérée par le Link dans le JSX
+    }
+  }, [allArticles, centralShopId]);
+
+  // Effet pour gérer l'ouverture automatique de la modale de transfert via notification
+  useEffect(() => {
+    const openTransferId = searchParams.get('openTransfer');
+    if (openTransferId && !loading && allArticles.length > 0) {
+        const article = allArticles.find(a => a._id === openTransferId);
+        if (article) {
+            handleLowStockAction(article);
+            // Nettoyer l'URL pour éviter la réouverture au rafraîchissement
+            setSearchParams(params => {
+                params.delete('openTransfer');
+                return params;
+            });
+        }
+    }
+  }, [loading, allArticles, searchParams, setSearchParams, handleLowStockAction]);
+
+  const confirmTransfer = async (e) => {
+    e.preventDefault();
+    const qty = parseInt(transferQuantity);
+    if (isNaN(qty) || qty <= 0) {
+        setToast({ show: true, message: "Veuillez saisir une quantité valide (supérieure à 0).", variant: 'warning' });
+        return;
+    }
+
+    setTransferLoading(true);
+    try {
+        // On utilise la route de réapprovisionnement (restock) qui gère le transfert Centrale -> Secondaire
+        const res = await articleAPI.restock({
+            targetId: transferData.targetId,
+            articles: [{ articleId: transferData.articleId, quantite: qty }]
+        });
+        setToast({ show: true, message: res.data.message, variant: 'success' });
+        setShowTransferModal(false);
+        setRefreshTrigger(prev => prev + 1); // Rafraîchir le dashboard
+    } catch (err) {
+        setToast({ show: true, message: err.response?.data?.message || "Erreur lors du transfert.", variant: 'danger' });
+    } finally {
+        setTransferLoading(false);
+    }
+  };
+
   if (loading) {
     return <DashboardSkeleton />;
   }
@@ -381,104 +467,10 @@ const Dashboard = () => {
         </Col>
       </Row>
 
-      {/* F. Performances par Boutique et Gérant */}
-      <Row className="mt-4 g-4">
-        <Col md={6}>
-          <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Header className="bg-body py-3">
-              <h5 className="fw-bold mb-0">Performance par Boutique</h5>
-            </Card.Header>
-            <Card.Body className="p-0">
-              <Table responsive hover className="align-middle mb-0">
-                <thead className="bg-body-tertiary">
-                  <tr>
-                    <th className="ps-4 border-0 text-muted small text-uppercase">Boutique</th>
-                    <th className="text-end pe-4 border-0 text-muted small text-uppercase">CA</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats?.performanceBoutiques?.map((boutique, idx) => (
-                    <tr key={idx}>
-                      <td className="ps-4 fw-bold">{boutique.nom}</td>
-                      <td className="text-end pe-4 text-success fw-bold">{formatCurrency(boutique.chiffreAffaires)}</td>
-                    </tr>
-                  ))}
-                  {(!stats?.performanceBoutiques || stats.performanceBoutiques.length === 0) && (
-                    <tr><td colSpan="2" className="text-center py-3 text-muted">Aucune vente enregistrée</td></tr>
-                  )}
-                </tbody>
-              </Table>
-            </Card.Body>
-          </Card>
-        </Col>
-
-        <Col md={6}>
-          <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Header className="bg-body py-3">
-              <h5 className="fw-bold mb-0">Performance par Gérant</h5>
-            </Card.Header>
-            <Card.Body className="p-0">
-              <Table responsive hover className="align-middle mb-0">
-                <thead className="bg-body-tertiary">
-                  <tr>
-                    <th className="ps-4 border-0 text-muted small text-uppercase">Gérant</th>
-                    <th className="text-end pe-4 border-0 text-muted small text-uppercase">CA</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats?.performanceGerants?.map((gerant, idx) => (
-                    <tr key={idx}>
-                      <td className="ps-4 fw-bold">{gerant.nom}</td>
-                      <td className="text-end pe-4 text-success fw-bold">{formatCurrency(gerant.chiffreAffaires)}</td>
-                    </tr>
-                  ))}
-                  {(!stats?.performanceGerants || stats.performanceGerants.length === 0) && (
-                    <tr><td colSpan="2" className="text-center py-3 text-muted">Aucune vente enregistrée</td></tr>
-                  )}
-                </tbody>
-              </Table>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
       {/* G. État du Stock par Boutique (Nouveau) */}
-      <Row className="mt-4">
-        <Col>
-          <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Header className="bg-body py-3">
-              <h5 className="fw-bold mb-0">État du Stock par Boutique</h5>
-            </Card.Header>
-            <Card.Body className="p-0">
-              <Table responsive hover className="align-middle mb-0">
-                <thead className="bg-body-tertiary">
-                  <tr>
-                    <th className="ps-4 border-0 text-muted small text-uppercase">Boutique</th>
-                    <th className="text-center border-0 text-muted small text-uppercase">Quantité Totale</th>
-                    <th className="text-end pe-4 border-0 text-muted small text-uppercase">Valeur du Stock (Achat)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats?.stockBoutiques?.map((boutique, idx) => (
-                    <tr key={idx}>
-                      <td className="ps-4 fw-bold">{boutique.nom}</td>
-                      <td className="text-center"><Badge bg="info" pill>{boutique.totalStock} articles</Badge></td>
-                      <td className="text-end pe-4 fw-bold">{formatCurrency(boutique.valeurStock)}</td>
-                    </tr>
-                  ))}
-                  {(!stats?.stockBoutiques || stats.stockBoutiques.length === 0) && (
-                    <tr><td colSpan="3" className="text-center py-3 text-muted">Aucun stock trouvé</td></tr>
-                  )}
-                </tbody>
-              </Table>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* E. Liste des articles en stock faible */}
-      <Row className="mt-4">
-        <Col>
+      <Row className="mt-4 g-4">
+        <Col lg={12}>
+          {/* E. Liste des articles en stock faible */}
           <Card className="border-0 shadow-sm h-100 rounded-4">
             <Card.Header className="bg-body py-3 d-flex justify-content-between align-items-center">
               <h5 className="fw-bold mb-0">Articles en Stock Faible (≤ 10 unités)</h5>
@@ -503,7 +495,29 @@ const Dashboard = () => {
                         <td>{article.boutique?.nom || <Badge bg="secondary">Non assignée</Badge>}</td>
                         <td className="text-center"><Badge bg="danger" pill>{article.quantite}</Badge></td>
                         <td className="text-end pe-4">
-                          <Button as={Link} to="/admin/articles" variant="outline-primary" size="sm">Gérer le stock</Button>
+                          {article.boutique && article.boutique.type !== 'Centrale' && centralShopId ? (
+                              <Button 
+                                variant="outline-success" 
+                                size="sm"
+                                onClick={() => handleLowStockAction(article)}
+                              >
+                                Transférer
+                              </Button>
+                          ) : (
+                              <Button 
+                                as={Link} 
+                                to="/admin/articles" 
+                                state={{ 
+                                    openSupplyModal: true, 
+                                    articleId: article._id, 
+                                    supplierId: article.fournisseur?._id 
+                                }}
+                                variant="outline-primary" 
+                                size="sm"
+                              >
+                                Approvisionner
+                              </Button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -530,6 +544,78 @@ const Dashboard = () => {
           </Card>
         </Col>
       </Row>
+
+      {/* F. Performances par Boutique et Gérant */}
+      <Row className="mt-4">
+        <Col lg={12}>
+          <Card className="border-0 shadow-sm h-100 rounded-4">
+            <Card.Header className="bg-body py-3">
+              <h5 className="fw-bold mb-0">Performance par Gérant et Boutique</h5>
+            </Card.Header>
+            <Card.Body className="p-0">
+              <Table responsive hover className="align-middle mb-0">
+                <thead className="bg-body-tertiary">
+                  <tr>
+                    <th className="ps-4 border-0 text-muted small text-uppercase">Gérant</th>
+                    <th className="border-0 text-muted small text-uppercase">Boutique</th>
+                    <th className="text-end pe-4 border-0 text-muted small text-uppercase">CA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats?.performanceGerants?.map((gerant, idx) => (
+                    <tr key={idx}>
+                      <td className="ps-4 fw-bold">{gerant.nom}</td>
+                      <td>{gerant.boutiqueNom || 'Non assignée'}</td>
+                      <td className="text-end pe-4 text-success fw-bold">{formatCurrency(gerant.chiffreAffaires)}</td>
+                    </tr>
+                  ))}
+                  {(!stats?.performanceGerants || stats.performanceGerants.length === 0) && (
+                    <tr><td colSpan="2" className="text-center py-3 text-muted">Aucune vente enregistrée</td></tr>
+                  )}
+                </tbody>
+              </Table>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Modale de Transfert Rapide (Réapprovisionnement d'urgence) */}
+      <Modal show={showTransferModal} onHide={() => setShowTransferModal(false)} centered>
+        <Modal.Header closeButton>
+            <Modal.Title>Réapprovisionner {transferData.articleName}</Modal.Title>
+        </Modal.Header>
+        <Form onSubmit={confirmTransfer}>
+            <Modal.Body>
+                <Alert variant="info" className="small">
+                    Transfert depuis le <strong>Dépôt Principal</strong> vers la boutique concernée.
+                    <div className="mt-2 fw-bold">
+                        Stock disponible en centrale : <Badge bg={transferData.availableStock > 0 ? "success" : "danger"}>{transferData.availableStock}</Badge>
+                    </div>
+                </Alert>
+                <Form.Group>
+                    <Form.Label>Quantité à transférer</Form.Label>
+                    <Form.Control 
+                        type="number" 
+                        min="1" 
+                        value={transferQuantity} 
+                        max={transferData.availableStock}
+                        onChange={(e) => setTransferQuantity(e.target.value)} 
+                        required 
+                        isInvalid={parseInt(transferQuantity) > transferData.availableStock}
+                    />
+                    <Form.Control.Feedback type="invalid">
+                        La quantité ne peut pas dépasser le stock disponible ({transferData.availableStock}).
+                    </Form.Control.Feedback>
+                </Form.Group>
+            </Modal.Body>
+            <Modal.Footer>
+                <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
+                <Button variant="success" type="submit" disabled={transferLoading || parseInt(transferQuantity) > transferData.availableStock || transferData.availableStock <= 0}>
+                    {transferLoading ? <Spinner size="sm" /> : 'Valider le transfert'}
+                </Button>
+            </Modal.Footer>
+        </Form>
+      </Modal>
     </div>
   );
 };

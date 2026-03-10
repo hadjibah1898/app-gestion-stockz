@@ -4,10 +4,11 @@ const User = require('../models/User');
 const Mouvement = require('../models/Mouvement');
 const Client = require('../models/Client');
 const notificationService = require('./notificationService');
+const DebtMovement = require('../models/DebtMovement'); // Importer le nouveau modèle
 const Notification = require('../models/Notification');
 
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
-exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null) => {
+exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null) => {
     try {
         const resultats = [];
         const articlesVendusPourMouvement = [];
@@ -39,9 +40,13 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                     prixUnitaire = prixUnitaire * (1 - article.promo / 100);
                 }
             } 
-            // Priorité 2 : Remise temporaire du panier
+            // Priorité 2 : Remise temporaire du panier (en GNF)
             else if (remiseTemp && remiseTemp > 0) {
-                prixUnitaire = prixUnitaire * (1 - remiseTemp / 100);
+                // Validation backend: la remise ne peut pas être supérieure au prix
+                if (remiseTemp > prixUnitaire) {
+                    throw new Error(`La remise (${remiseTemp}) pour l'article "${article.nom}" ne peut pas être supérieure à son prix (${prixUnitaire}).`);
+                }
+                prixUnitaire = prixUnitaire - remiseTemp;
             }
             // Priorité 3 : Remise permanente sur l'article
             else if (article.remise > 0) { 
@@ -57,6 +62,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                 boutique: boutiqueId,
                 statut: 'finalisee',
                 remiseAppliquee: remiseTemp || 0,
+                ouvertureCaisse: ouvertureCaisseId, // Association de la vente à la session de caisse
                 client: clientId // Ajout de l'ID client à chaque vente
             });
             
@@ -98,13 +104,27 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
 
                 // Vérifier s'il y a une dette
                 if (montantPaye !== null && montantPaye < totalVentePanier) {
+                    const soldeAnterieur = client.dette;
                     const detteAAjouter = totalVentePanier - montantPaye;
                     client.dette += detteAAjouter;
+                    const nouveauSolde = client.dette;
                     
                     // Mettre à jour l'échéance de la dette
                     if (echeanceDette) {
                         client.echeanceDette = echeanceDette;
                     }
+
+                    // Enregistrer le mouvement de dette
+                    await DebtMovement.create({
+                        client: clientId,
+                        type: 'CREATION',
+                        montant: detteAAjouter,
+                        soldeAnterieur: soldeAnterieur,
+                        nouveauSolde: nouveauSolde,
+                        operateur: userId,
+                        // On pourrait lier la première vente du panier pour référence
+                        venteAssociee: resultats.length > 0 ? resultats[0]._id : null 
+                    });
 
                     // Alerter les admins qu'une dette a été accordée
                     const gerant = await User.findById(userId);
@@ -124,7 +144,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
             if (hasRemise) {
                 const remises = items
                     .filter(item => item.remiseTemp > 0)
-                    .map(item => `${item.remiseTemp}%`);
+                    .map(item => `${item.remiseTemp.toLocaleString('fr-FR')} GNF`);
                 
                 details += ` Remise(s) appliquée(s): ${[...new Set(remises)].join(', ')}.`;
 

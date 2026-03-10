@@ -61,6 +61,14 @@ const articleSchema = new mongoose.Schema({
         clientNom: String,
         gerant: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         dateDemande: Date
+    },
+    fournisseur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Fournisseur'
+    },
+    datePeremption: {
+        type: Date,
+        required: false
     }
 }, {
     timestamps: true

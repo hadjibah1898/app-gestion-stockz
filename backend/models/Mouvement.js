@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const mouvementSchema = new mongoose.Schema({
     type: {
         type: String,
-        enum: ['Approvisionnement', 'Transfert', 'Vente'],
+        enum: ['Approvisionnement', 'Transfert', 'Vente', 'Annulation Vente', 'Modification Prix'],
         required: true
     },
     details: { type: String }, // Ex: "Réapprovisionnement", "Retour marchandise", "Vente #123"

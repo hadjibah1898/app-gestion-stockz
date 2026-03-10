@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, Spinner } from 'react-bootstrap';
 import { fournisseurAPI, articleAPI } from '../services/api';
+import NewProductForSupplyModal from './common/NewProductForSupplyModal'; // Import the new modal
 
 const SupplyModal = ({ show, onHide, onSuccess }) => {
     const [fournisseurs, setFournisseurs] = useState([]);
@@ -15,6 +16,8 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
     const [addProductLoading, setAddProductLoading] = useState(false);
     const [addProductMessage, setAddProductMessage] = useState({type: '', text: ''});
 
+    // États pour l'ajout d'un nouveau produit complet (non catalogué)
+    const [showNewProductModal, setShowNewProductModal] = useState(false);
 
     useEffect(() => {
         if (show) {
@@ -119,6 +122,15 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
         }
     };
 
+    // Handler for the new product modal
+    const handleAddNewProductToSupply = (productData) => {
+        // Add the new product directly to the supply list
+        setSupplyData(prev => ({
+            ...prev,
+            items: [...prev.items, productData]
+        }));
+    };
+
     const submitSupply = async () => {
         if (!supplyData.fournisseurId) {
             setError("Veuillez sélectionner un fournisseur.");
@@ -141,7 +153,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
 
     return (
         <>
-            <Modal show={show} onHide={onHide} size="lg">
+            <Modal show={show} onHide={onHide} size="xl">
             <Modal.Header closeButton>
                 <Modal.Title>Approvisionner le <span className="text-primary">Dépôt Principal</span></Modal.Title>
             </Modal.Header>
@@ -190,10 +202,17 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                                                 <option key={i} value={p}>{p}</option>
                                             ))}
                                         </Form.Select>
-                                        <Button variant="primary" onClick={() => setShowAddProductModal(true)} title="Ajouter un nouveau produit à ce fournisseur">
+                                        <Button variant="outline-secondary" onClick={() => setShowAddProductModal(true)} title="Ajouter un produit à la liste de ce fournisseur">
                                             <iconify-icon icon="solar:add-circle-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
                                         </Button>
                                     </InputGroup>
+                                </Col>
+                                <Col md={8}>
+                                    <Form.Label className="text-light d-block">.</Form.Label> {/* Spacer */}
+                                    <Button variant="success" onClick={() => setShowNewProductModal(true)} className="w-100">
+                                        <iconify-icon icon="solar:box-up-bold-duotone" className="me-2"></iconify-icon>
+                                        Créer un nouveau produit non catalogué
+                                    </Button>
                                 </Col>
                               
                             </Row>
@@ -202,7 +221,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                                 <Col md={3}><Form.Label>P. Achat</Form.Label><Form.Control type="number" min="0" value={newItem.prixAchat} onChange={e => setNewItem({...newItem, prixAchat: parseInt(e.target.value)})} /></Col>
                                 <Col md={3}><Form.Label>P. Vente</Form.Label><Form.Control type="number" min="0" value={newItem.prixVente} onChange={e => setNewItem({...newItem, prixVente: parseInt(e.target.value)})} /></Col>
                                 <Col md={3}>
-                                    <Button variant="primary" className="w-100" onClick={addItemToSupply}>Ajouter</Button>
+                                    <Button variant="primary" className="w-100" onClick={addItemToSupply}>Ajouter au lot</Button>
                                 </Col>
                             </Row>
                             
@@ -224,17 +243,24 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                                     <th>Qté</th>
                                     <th>P. Achat</th>
                                     <th>P. Vente</th>
+                                    <th>Total Achat</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {supplyData.items.map((item, idx) => (
                                     <tr key={idx}>
-                                        <td>{item.nom}</td><td>{item.code || '-'}</td><td>{item.type || '-'}</td><td>{item.quantite}</td><td>{item.prixAchat.toLocaleString()}</td><td>{item.prixVente ? item.prixVente.toLocaleString() : '-'}</td>
+                                        <td>{item.nom}</td>
+                                        <td>{item.code || '-'}</td>
+                                        <td>{item.type || '-'}</td>
+                                        <td>{item.quantite}</td>
+                                        <td>{item.prixAchat.toLocaleString()}</td>
+                                        <td>{item.prixVente ? item.prixVente.toLocaleString() : '-'}</td>
+                                        <td className="fw-bold">{(item.quantite * item.prixAchat).toLocaleString()} GNF</td>
                                         <td><Button variant="link" className="text-danger p-0" onClick={() => removeItemFromSupply(idx)}><iconify-icon icon="solar:trash-bin-trash-linear"></iconify-icon></Button></td>
                                     </tr>
                                 ))}
-                                {supplyData.items.length === 0 && <tr><td colSpan="7" className="text-center text-muted">Aucun article ajouté</td></tr>}
+                                {supplyData.items.length === 0 && <tr><td colSpan="8" className="text-center text-muted">Aucun article ajouté</td></tr>}
                             </tbody>
                         </Table>
                     </>
@@ -242,14 +268,14 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
             </Modal.Body>
             <Modal.Footer>
                 <Button variant="secondary" onClick={onHide}>Annuler</Button>
-                <Button variant="success" onClick={submitSupply} disabled={supplyData.items.length === 0}>Valider</Button>
+                <Button variant="success" onClick={submitSupply} disabled={supplyData.items.length === 0}>Valider l'Approvisionnement</Button>
             </Modal.Footer>
             </Modal>
 
             {/* Modale pour ajouter un nouveau produit au fournisseur */}
             <Modal show={showAddProductModal} onHide={() => setShowAddProductModal(false)} centered size="md">
                 <Modal.Header closeButton>
-                    <Modal.Title>Nouveau Produit</Modal.Title>
+                    <Modal.Title>Ajouter un produit à la liste du fournisseur</Modal.Title>
                 </Modal.Header>
                 <Form onSubmit={handleAddProductToSupplier}>
                     <Modal.Body>
@@ -265,39 +291,22 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                                 placeholder="Ex: Savon de Marseille"
                             />
                         </Form.Group>
-                        <Row>
-                            <Col md={6}>
-                                <Form.Group className="mb-3">
-                                    <Form.Label>Code-barres</Form.Label>
-                                    <Form.Control 
-                                        type="text"
-                                        value={newItem.code}
-                                        onChange={(e) => setNewItem({...newItem, code: e.target.value})}
-                                        placeholder="Optionnel"
-                                    />
-                                </Form.Group>
-                            </Col>
-                            <Col md={6}>
-                                <Form.Group className="mb-3">
-                                    <Form.Label>Type de produit</Form.Label>
-                                    <Form.Control 
-                                        type="text"
-                                        value={newItem.type}
-                                        onChange={(e) => setNewItem({...newItem, type: e.target.value})}
-                                        placeholder="Ex: Boisson, Ciment..."
-                                    />
-                                </Form.Group>
-                            </Col>
-                        </Row>
                     </Modal.Body>
                     <Modal.Footer>
                         <Button variant="secondary" onClick={() => setShowAddProductModal(false)}>Annuler</Button>
                         <Button variant="primary" type="submit" disabled={addProductLoading}>
-                            {addProductLoading ? <Spinner size="sm" /> : 'Ajouter'}
+                            {addProductLoading ? <Spinner size="sm" /> : 'Ajouter à la liste'}
                         </Button>
                     </Modal.Footer>
                 </Form>
             </Modal>
+
+            {/* Modale pour créer un nouveau produit complet */}
+            <NewProductForSupplyModal 
+                show={showNewProductModal}
+                onHide={() => setShowNewProductModal(false)}
+                onAddProduct={handleAddNewProductToSupply}
+            />
         </>
     );
 };

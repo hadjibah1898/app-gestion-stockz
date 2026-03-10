@@ -25,6 +25,8 @@ import StockStatusView from './components/StockStatusView';
 import ClientsView from './components/ClientsView';
 import NotificationsHistoryView from './components/NotificationsHistoryView';
 import ProtectedRoute from './components/common/ProtectedRoute';
+import CaisseView from './components/CaisseView';
+import AdminCaisseView from './components/AdminCaisseView';
 import './App.css';
 import setupAxiosInterceptors from './utils/axiosConfig';
 
@@ -152,53 +154,48 @@ function App() {
           <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
 
           {/* Routes Protégées pour l'Admin */}
-          <Route 
-            element={
-              <ProtectedRoute userRole={userRole} requiredRole="Admin" >
-                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
-              </ProtectedRoute>
-            }
-            
-          >
-            <Route path="/admin" element={<Dashboard />} />
-            <Route path="/admin/managers" element={<ManagersView />} />
-            <Route path="/admin/shops" element={<ShopsView />} />
-            <Route path="/admin/articles" element={<ArticlesView userRole="Admin" />} />
-            <Route path="/admin/etat-stock" element={<StockStatusView />} />
-            <Route path="/admin/centrale" element={<CentraleStockView />} />
-            <Route path="/admin/ventes" element={<VentesView userRole="Admin" />} />
-            <Route path="/admin/fournisseurs" element={<SuppliersView />} />
-            <Route path="/admin/mouvements" element={<StockMovementsView />} />
-            <Route path="/admin/clients" element={<ClientsView />} />
-            <Route path="/admin/notifications" element={<NotificationsHistoryView />} />
+          <Route path="/admin" element={
+            <ProtectedRoute userRole={userRole} requiredRole="Admin">
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+            </ProtectedRoute>
+          }>
+            <Route index element={<Dashboard />} />
+            <Route path="managers" element={<ManagersView />} />
+            <Route path="shops" element={<ShopsView />} />
+            <Route path="articles" element={<ArticlesView userRole="Admin" />} />
+            <Route path="etat-stock" element={<StockStatusView />} />
+            <Route path="centrale" element={<CentraleStockView />} />
+            <Route path="ventes" element={<VentesView userRole="Admin" />} />
+            <Route path="fournisseurs" element={<SuppliersView />} />
+            <Route path="mouvements" element={<StockMovementsView />} />
+            <Route path="clients" element={<ClientsView />} />
+            <Route path="notifications" element={<NotificationsHistoryView />} />
+            <Route path="caisse" element={<AdminCaisseView />} />
           </Route>
           
 
           {/* Routes Protégées pour le Gérant */}
-          <Route 
-            element={
-              <ProtectedRoute userRole={userRole} requiredRole="Gérant" >
-                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/gerant" element={<GerantDashboard />} />
-            <Route path="/gerant/articles" element={<ArticlesView userRole="Gérant" />} />
-            <Route path="/gerant/ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
-            <Route path="/gerant/historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
-            <Route path="/gerant/clients" element={<ClientsView userRole="Gérant" />} />
-            <Route path="/gerant/notifications" element={<NotificationsHistoryView />} />
+          <Route path="/gerant" element={
+            <ProtectedRoute userRole={userRole} requiredRole="Gérant">
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+            </ProtectedRoute>
+          }>
+            <Route index element={<GerantDashboard />} />
+            <Route path="articles" element={<ArticlesView userRole="Gérant" />} />
+            <Route path="ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
+            <Route path="historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
+            <Route path="clients" element={<ClientsView userRole="Gérant" />} />
+            <Route path="notifications" element={<NotificationsHistoryView />} />
+            <Route path="caisse" element={<CaisseView />} />
           </Route>
 
           {/* Routes Partagées (Profil) */}
-          <Route 
-            element={
-              <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant']} >
-                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/profile" element={<ProfileView />} />
+          <Route path="/profile" element={
+            <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant']}>
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+            </ProtectedRoute>
+          }>
+            <Route index element={<ProfileView />} />
           </Route>
 
           <Route path="/" element={<Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />

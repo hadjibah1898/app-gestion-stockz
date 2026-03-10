@@ -2,10 +2,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Form, Table, Alert, Spinner, Badge, Card, Row, Col, Modal, InputGroup, Tabs, Tab, Pagination } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
+import { useReactToPrint } from 'react-to-print';
 import { articleAPI, venteAPI, clientAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Html5QrcodeScanner } from "html5-qrcode";
+import ThermalTicket from './ThermalTicket'; // Importer le nouveau composant de ticket
+import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
 
 const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [searchParams] = useSearchParams();
@@ -34,12 +37,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
   // États pour la création rapide de client
   const [showClientModal, setShowClientModal] = useState(false);
-  const [newClient, setNewClient] = useState({ nom: '', telephone: '', email: '', adresse: '', type: 'Client', photo: '' });
-  const [clientLoading, setClientLoading] = useState(false);
-  const [clientModalError, setClientModalError] = useState('');
 
   // Référence pour le champ de scan (pour garder le focus)
   const barcodeInputRef = useRef(null);
+  const ticketRef = useRef(); // Référence pour le composant de ticket à imprimer
 
   // États pour la modale d'aperçu d'image
   const [showImageModal, setShowImageModal] = useState(false);
@@ -105,9 +106,9 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
             return price * (1 - article.promo / 100);
         }
     }
-    // 2. Remise temporaire (panier)
+    // 2. Remise temporaire (panier) - maintenant en GNF
     if (remiseTemp !== null && !isNaN(remiseTemp) && remiseTemp > 0) {
-      return price * (1 - remiseTemp / 100);
+      return Math.max(0, price - remiseTemp);
     }
     // 3. Remise article (définitive)
     if (article.remise > 0) {
@@ -121,8 +122,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setError("La quantité doit être supérieure à 0");
       return;
     }
-    if (remisePanier !== '' && (isNaN(remisePanier) || remisePanier < 0 || remisePanier > 50)) {
-      setError("La remise doit être comprise entre 0 et 50%");
+    if (remisePanier !== '' && (isNaN(parseFloat(remisePanier)) || parseFloat(remisePanier) < 0)) {
+      setError("La remise doit être un montant positif (supérieur ou égal à 0 GNF)");
       return;
     }
     setError('');
@@ -131,6 +132,12 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     if (!article) return;
 
     const remiseValue = remisePanier !== '' ? parseFloat(remisePanier) : null;
+
+    if (remiseValue && remiseValue > article.prixVente) {
+        setError(`La remise (${remiseValue.toLocaleString()} GNF) ne peut pas être supérieure au prix de l'article (${article.prixVente.toLocaleString()} GNF).`);
+        return;
+    }
+
     const prixUnitaire = getEffectivePrice(article, remiseValue);
 
     const existeDeja = panier.find(item => item.article._id === selectedArticle);
@@ -142,7 +149,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
               ...item, 
               quantite: item.quantite + parseInt(quantite),
               remiseTemp: remiseValue,
-              prixTotal: getEffectivePrice(article, remiseValue) * (item.quantite + parseInt(quantite))
+          prixUnitaire: prixUnitaire,
+          prixTotal: prixUnitaire * (item.quantite + parseInt(quantite))
             }
           : item
       ));
@@ -152,7 +160,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         {
           article,
           quantite: parseInt(quantite),
-          remiseTemp: remiseValue,
+          remiseTemp: remiseValue, // en GNF
+          prixUnitaire: prixUnitaire,
           prixTotal: prixUnitaire * parseInt(quantite)
         }
       ]);
@@ -224,16 +233,22 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     try {
       await venteAPI.create(venteData);
 
+      const subTotal = panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0);
+      const totalRemise = subTotal - totalVente;
+
       // Préparer les données pour le reçu (Vente finalisée immédiatement)
         const clientObj = clients.find(c => c._id === selectedClientId);
         const receiptData = {
-            items: [...panier],
-            total: totalVente,
-            montantPaye: montantPayeFinal,
-            client: clientObj ? clientObj.nom : 'Client de passage',
+            transactionId: `VTE-${Date.now()}`,
+            cashierName: localStorage.getItem('userName') || userRole,
+            clientName: clientObj ? clientObj.nom : 'Client de passage',
             date: new Date(),
-            vendeur: localStorage.getItem('userName') || userRole,
-            hasRemise: hasRemise
+            items: panier,
+            subTotal: subTotal,
+            discount: totalRemise,
+            totalNet: totalVente,
+            amountPaid: montantPayeFinal,
+            change: montantPayeFinal - totalVente,
         };
         setLastSaleData(receiptData);
         setShowReceiptModal(true); // Ouvrir la modale de reçu
@@ -250,59 +265,11 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     }
   };
 
-  const handlePrintReceipt = () => {
-    if (!lastSaleData) return;
-    
-    const doc = new jsPDF();
-    
-    // En-tête
-    doc.setFontSize(16);
-    doc.text("REÇU DE VENTE", 105, 20, null, null, "center");
-    doc.setFontSize(10);
-    doc.text(`Date: ${lastSaleData.date.toLocaleString('fr-FR')}`, 14, 35);
-    doc.text(`Vendeur: ${lastSaleData.vendeur}`, 14, 40);
-    doc.text(`Client: ${lastSaleData.client}`, 14, 45);
-
-    // Tableau des articles
-    const tableColumn = ["Article", "Qté", "P.U.", "Total"];
-    const tableRows = [];
-
-    lastSaleData.items.forEach(item => {
-      let nomArticle = item.article.nom;
-      // Afficher la remise si elle existe
-      if (item.remiseTemp && item.remiseTemp > 0) {
-        nomArticle += ` (Remise -${item.remiseTemp}%)`;
-      }
-
-      const row = [
-        nomArticle,
-        item.quantite,
-        (getEffectivePrice(item.article, item.remiseTemp).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
-        (item.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')
-      ];
-      tableRows.push(row);
-    });
-
-    // Totaux
-    tableRows.push(["", "", "TOTAL", (lastSaleData.total.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')]);
-    if (lastSaleData.montantPaye < lastSaleData.total) {
-         tableRows.push(["", "", "Payé", (lastSaleData.montantPaye.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')]);
-         tableRows.push(["", "", "Reste à payer", ((lastSaleData.total - lastSaleData.montantPaye).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')]);
-    }
-
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: 55,
-      theme: 'grid',
-      headStyles: { fillColor: [41, 128, 185] },
-      columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } }
-    });
-    
-    doc.text("Merci de votre confiance !", 105, doc.lastAutoTable.finalY + 10, null, null, "center");
-    doc.save(`recu_${lastSaleData.date.getTime()}.pdf`);
-    handleCloseReceiptModal();
-  };
+  const handlePrintReceipt = useReactToPrint({
+    content: () => ticketRef.current,
+    documentTitle: `recu-${lastSaleData?.transactionId || Date.now()}`,
+    onAfterPrint: () => handleCloseReceiptModal()
+  });
 
   const handleCloseReceiptModal = () => {
       setShowReceiptModal(false);
@@ -310,42 +277,17 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setTimeout(() => barcodeInputRef.current?.focus(), 100);
   };
 
-  const handleClientImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) { // Limite 2Mo
-        setError("L'image est trop volumineuse (max 2Mo)");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewClient({ ...newClient, photo: reader.result });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
+  const handleClientCreationSuccess = (createdClient, isEdit) => {
+    if (isEdit) return; // Ne devrait pas arriver depuis cette vue
 
-  const handleCreateClient = async (e) => {
-    e.preventDefault();
-    setClientLoading(true);
-    setClientModalError('');
-    try {
-        const res = await clientAPI.create(newClient);
-        const createdClient = res.data;
-        
-        // Mettre à jour la liste et sélectionner le nouveau client
-        setClients([...clients, createdClient]);
-        setSelectedClientId(createdClient._id);
-        
-        setSuccessMessage(`Client ${createdClient.nom} créé avec succès !`);
-        setShowClientModal(false);
-        setNewClient({ nom: '', telephone: '', email: '', adresse: '', type: 'Client', photo: '' }); // Reset form
-        setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-        setClientModalError(err.response?.data?.message || "Erreur lors de la création du client.");
-    } finally {
-        setClientLoading(false);
-    }
+    // Mettre à jour la liste et sélectionner le nouveau client
+    setClients(prevClients => [...prevClients, createdClient]);
+    setSelectedClientId(createdClient._id);
+    
+    setSuccessMessage(`Client ${createdClient.nom} créé avec succès !`);
+    setShowClientModal(false);
+    
+    setTimeout(() => setSuccessMessage(''), 3000);
   };
 
    const isCancellationAllowed = (vente) => {
@@ -616,97 +558,123 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           <Card className="border-0 shadow-sm rounded-4">
             <Card.Header>Historique complet des transactions</Card.Header>
             <Card.Body>
-              <Table hover responsive className="align-middle mb-0">
-                <thead className="bg-light">
-                  <tr>
-                    <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Date</th>
-                    <th className="py-3 border-0 text-secondary small text-uppercase">Article</th>
-                    <th className="py-3 border-0 text-secondary small text-uppercase text-center">Qté</th>
-                    <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                    <th className="py-3 border-0 text-secondary small text-uppercase">Vendeur</th>
-                    <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
-                    <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Statut / Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historique.map(vente => (
-                    <tr key={vente._id} className={
-                      vente.statut === 'refusee' || vente.isCancelled ? "bg-light text-muted" :
-                      vente.statut === 'en_attente_remise' ? "bg-warning-subtle" :
-                      ""
-                    }>
-                      <td className="ps-4">
-                        <div className="fw-bold">{new Date(vente.createdAt).toLocaleDateString()}</div>
-                        <div className="small text-muted">{new Date(vente.createdAt).toLocaleTimeString()}</div>
-                      </td>
-                      <td>
-                        <div className="d-flex align-items-center">
-                          {vente.article?.image ? (
-                            <img src={vente.article?.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer', filter: vente.isCancelled ? 'grayscale(100%)' : 'none'}} onClick={() => handleImageClick(vente.article?.image)} />
-                          ) : (
-                            <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                          )}
-                          <div>
-                            <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
-                            {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee}%</Badge>
-                            )}
-                            {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="text-center"><Badge bg="light" text="dark" className="border">{vente.quantite}</Badge></td>
-                      <td className="text-end fw-bold text-primary">
-                        {vente.isCancelled ? <span className="text-decoration-line-through text-muted">{vente.prixTotal.toLocaleString()} GNF</span> : `${vente.prixTotal.toLocaleString()} GNF`}
-                      </td>
-                      <td>{vente.gerant?.nom || 'Inconnu'}</td>
-                      <td>{vente.client?.nom || 'Passage'}</td>
-                      <td className="pe-4 text-end">
-                        {(() => {
-                          if (vente.statut === 'refusee') {
-                            return (
-                              <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                REMISE REFUSÉE
-                              </Badge>
-                            );
-                          }
-                          if (vente.isCancelled) {
-                            return (
-                              <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                VENTE ANNULÉE
-                              </Badge>
-                            );
-                          }
-                          if (vente.statut === 'en_attente_remise') {
-                            return (
-                              <Badge bg="warning-subtle" text="warning" className="px-3 py-2 rounded-pill">
-                                <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                EN ATTENTE
-                              </Badge>
-                            );
-                          }
-                          return (
-                            <Button 
-                              variant="outline-danger" 
-                              size="sm" 
-                              className="rounded-pill px-3"
-                              onClick={() => { setSaleToCancel(vente); setShowCancelModal(true); }}
-                              disabled={!isCancellationAllowed(vente)}
-                              title={!isCancellationAllowed(vente) ? "Délai d'annulation dépassé (24h)" : "Annuler cette vente"}
-                            >
-                              <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
-                              Annuler
-                            </Button>
-                          );
-                        })()}
-                      </td>
-                    </tr>
-                  ))}
-                  {historique.length === 0 && <tr><td colSpan="7" className="text-center py-5 text-muted"><iconify-icon icon="solar:bill-list-linear" style={{fontSize: '48px'}} className="mb-2 opacity-50"></iconify-icon><p className="mb-0">Aucune vente enregistrée</p></td></tr>}
-                </tbody>
-              </Table>
+                        <Table hover responsive className="align-middle mb-0">
+                            <thead className="bg-light">
+                              <tr>
+                                <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Date</th>
+                                <th className="py-3 border-0 text-secondary small text-uppercase">Article</th>
+                                <th className="py-3 border-0 text-secondary small text-uppercase text-center">Qté</th>
+                                <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
+                                <th className="py-3 border-0 text-secondary small text-uppercase">Vendeur</th>
+                                <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
+                                <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Statut / Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {historique.map(vente => (
+                                <tr key={vente._id} className={
+                                  vente.statut === 'refusee' || vente.isCancelled ? "bg-light text-muted" :
+                                  vente.statut === 'en_attente_remise' ? "bg-warning-subtle" :
+                                  ""
+                                }>
+                                  <td className="ps-4">
+                                    <div className="fw-bold">{new Date(vente.createdAt).toLocaleDateString()}</div>
+                                    <div className="small text-muted">{new Date(vente.createdAt).toLocaleTimeString()}</div>
+                                  </td>
+                                  <td>
+                                    <div className="d-flex align-items-center">
+                                      {vente.article?.image ? (
+                                        <img src={vente.article?.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer', filter: vente.isCancelled ? 'grayscale(100%)' : 'none'}} onClick={() => handleImageClick(vente.article?.image)} />
+                                      ) : (
+                                        <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
+                                      )}
+                                      <div>
+                                        <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
+                                        {vente.remiseAppliquee > 0 && !vente.isCancelled && (
+                                            <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
+                                        )}
+                                        {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="text-center"><Badge bg="light" text="dark" className="border">{vente.quantite}</Badge></td>
+                                  <td className="text-end fw-bold text-primary">
+                                    {vente.isCancelled ? <span className="text-decoration-line-through text-muted">{vente.prixTotal.toLocaleString()} GNF</span> : `${vente.prixTotal.toLocaleString()} GNF`}
+                                  </td>
+                                  <td>{vente.gerant?.nom || 'Inconnu'}</td>
+                                  <td>{vente.client?.nom || 'Passage'}</td>
+                                  <td className="pe-4 text-end">
+                                    {(() => {
+                                      if (vente.statut === 'refusee') {
+                                        return (
+                                          <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
+                                            <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
+                                            REMISE REFUSÉE
+                                          </Badge>
+                                        );
+                                      }
+                                      if (vente.isCancelled) {
+                                        return (
+                                          <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
+                                            <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
+                                            VENTE ANNULÉE
+                                          </Badge>
+                                        );
+                                      }
+                                      if (vente.statut === 'en_attente_remise') {
+                                        return (
+                                          <Badge bg="warning-subtle" text="warning" className="px-3 py-2 rounded-pill">
+                                            <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
+                                            EN ATTENTE
+                                          </Badge>
+                                        );
+                                      }
+                                      return (
+                                        <div className="d-flex gap-2 justify-content-end">
+                                          <Button 
+                                            variant="outline-primary" 
+                                            size="sm" 
+                                            className="rounded-pill px-3"
+                                            onClick={async () => {
+                                              try {
+                                                const res = await venteAPI.genererTicket(vente._id);
+                                                const downloadUrl = res.data.downloadUrl;
+                                                // Télécharger automatiquement le PDF
+                                                const link = document.createElement('a');
+                                                link.href = downloadUrl;
+                                                link.download = `ticket_${vente._id}.pdf`;
+                                                document.body.appendChild(link);
+                                                link.click();
+                                                document.body.removeChild(link);
+                                              } catch (err) {
+                                                setError(err.response?.data?.message || "Erreur lors de la génération du ticket.");
+                                              }
+                                            }}
+                                            title="Générer et télécharger le ticket PDF"
+                                          >
+                                            <iconify-icon icon="solar:printer-bold" className="me-1 align-middle"></iconify-icon>
+                                            Ticket
+                                          </Button>
+                                          <Button 
+                                            variant="outline-danger" 
+                                            size="sm" 
+                                            className="rounded-pill px-3"
+                                            onClick={() => { setSaleToCancel(vente); setShowCancelModal(true); }}
+                                            disabled={!isCancellationAllowed(vente)}
+                                            title={!isCancellationAllowed(vente) ? "Délai d'annulation dépassé (24h)" : "Annuler cette vente"}
+                                          >
+                                            <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
+                                            Annuler
+                                          </Button>
+                                        </div>
+                                      );
+                                    })()}
+                                  </td>
+                                </tr>
+                              ))}
+                              {historique.length === 0 && <tr><td colSpan="7" className="text-center py-5 text-muted"><iconify-icon icon="solar:bill-list-linear" style={{fontSize: '48px'}} className="mb-2 opacity-50"></iconify-icon><p className="mb-0">Aucune vente enregistrée</p></td></tr>}
+                            </tbody>
+                          </Table>
             </Card.Body>
             {totalPages > 1 && (
               <Card.Footer className="d-flex justify-content-center border-0 pt-0">
@@ -829,11 +797,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                           </Col>
                           <Col md={2}>
                             <Form.Group>
-                            <Form.Label className="fw-bold">Remise (%)</Form.Label>
+                            <Form.Label className="fw-bold">Remise (GNF)</Form.Label>
                             <Form.Control
                               type="number"
                               min="0"
-                              max="50"
                               value={remisePanier}
                               onChange={(e) => setRemisePanier(e.target.value)}
                               name="remisePanier"
@@ -890,7 +857,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                                         <>
                                           <span className="text-decoration-line-through text-muted me-2">{item.article.prixVente.toLocaleString()}</span>
                                           <span className="text-danger fw-bold">{getEffectivePrice(item.article, item.remiseTemp).toLocaleString()} GNF</span>
-                                          {item.remiseTemp && <span className="badge bg-warning ms-2">Remise {item.remiseTemp}%</span>}
+                                          {item.remiseTemp && <span className="badge bg-warning ms-2">Remise {item.remiseTemp.toLocaleString()} GNF</span>}
                                         </>
                                       ) : (
                                         `${item.article.prixVente.toLocaleString()} GNF`
@@ -977,8 +944,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                                     <div className="d-flex justify-content-between">
                                         <div>
                                             <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
-                                            {vente.remiseAppliquee > 0 && (
-                                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee}%</Badge>
+                                            {vente.remiseAppliquee > 0 && !vente.isCancelled && (
+                                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
                                             )}
                                         </div>
                                         <Badge bg="success" text="white">{vente.prixTotal.toLocaleString()} GNF</Badge>
@@ -1045,7 +1012,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                                                 <div>
                                                     <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
                                                     {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                                        <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee}%</Badge>
+                                                        <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
                                                     )}
                                                     {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
                                                 </div>
@@ -1142,103 +1109,38 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       </Modal>
 
       {/* Modale Impression Reçu (Après Vente) */}
-      <Modal show={showReceiptModal} onHide={handleCloseReceiptModal} centered backdrop="static" keyboard={false}>
-        <Modal.Header>
+      <Modal show={showReceiptModal} onHide={handleCloseReceiptModal} centered>
+        <Modal.Header closeButton>
             <Modal.Title className="text-success">
                 <iconify-icon icon="solar:check-circle-bold" className="me-2 align-middle"></iconify-icon>
-                Vente Validée !
+                Aperçu du Reçu
             </Modal.Title>
         </Modal.Header>
-        <Modal.Body className="text-center">
-            <p className="mb-4 fs-5">La vente a été enregistrée avec succès.</p>
-            <h6 className="mb-3 text-muted">Voulez-vous imprimer le reçu pour le client ?</h6>
-            <div className="d-flex justify-content-center gap-3 mt-4">
-                <Button variant="secondary" size="lg" onClick={handleCloseReceiptModal} className="px-4">
-                    Ignorer
+        <Modal.Body>
+            <div className="d-flex justify-content-center bg-light p-3 border rounded">
+                <ThermalTicket ref={ticketRef} ticketData={lastSaleData} />
+            </div>
+        </Modal.Body>
+        <Modal.Footer>
+            <div className="d-flex justify-content-end w-100 gap-2">
+                <Button variant="secondary" onClick={handleCloseReceiptModal}>
+                    Fermer
                 </Button>
-                <Button variant="primary" size="lg" onClick={handlePrintReceipt} className="px-4">
+                <Button variant="primary" onClick={handlePrintReceipt}>
                     <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                     Imprimer
                 </Button>
             </div>
-        </Modal.Body>
+        </Modal.Footer>
       </Modal>
 
       {/* Modale Création Rapide Client */}
-      <Modal show={showClientModal} onHide={() => { setShowClientModal(false); setClientModalError(''); }} centered>
-        <Modal.Header closeButton>
-            <Modal.Title>Nouveau Client</Modal.Title>
-        </Modal.Header>
-        <Form onSubmit={handleCreateClient}>
-            <Modal.Body>
-                {clientModalError && <Alert variant="danger">{clientModalError}</Alert>}
-                <div className="d-flex justify-content-center mb-4">
-                    <div className="position-relative">
-                        {newClient.photo ? (
-                            <img src={newClient.photo} alt="Aperçu" className="rounded-circle shadow-sm object-fit-cover" style={{width: '100px', height: '100px'}} />
-                        ) : (
-                            <div className="bg-light rounded-circle d-flex align-items-center justify-content-center text-muted shadow-sm" style={{width: '100px', height: '100px'}}><iconify-icon icon="solar:camera-add-bold" style={{fontSize: '32px'}}></iconify-icon></div>
-                        )}
-                        <Form.Control type="file" accept="image/*" onChange={handleClientImageChange} className="position-absolute top-0 start-0 w-100 h-100 opacity-0" style={{cursor: 'pointer'}} />
-                    </div>
-                </div>
-                <Form.Group className="mb-3">
-                    <Form.Label>Nom complet</Form.Label>
-                    <Form.Control 
-                        type="text" 
-                        required 
-                        value={newClient.nom} 
-                        onChange={(e) => setNewClient({...newClient, nom: e.target.value})} 
-                        placeholder="Ex: Mamadou Bah"
-                        autoFocus
-                    />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                    <Form.Label>Téléphone</Form.Label>
-                    <Form.Control 
-                        type="text" 
-                        value={newClient.telephone} 
-                        onChange={(e) => setNewClient({...newClient, telephone: e.target.value})} 
-                        placeholder="Ex: 620..."
-                    />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                    <Form.Label>Email</Form.Label>
-                    <Form.Control 
-                        type="email" 
-                        value={newClient.email} 
-                        onChange={(e) => setNewClient({...newClient, email: e.target.value})} 
-                        placeholder="Ex: client@example.com"
-                    />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                    <Form.Label>Adresse</Form.Label>
-                    <Form.Control 
-                        type="text" 
-                        value={newClient.adresse} 
-                        onChange={(e) => setNewClient({...newClient, adresse: e.target.value})} 
-                        placeholder="Ex: Conakry, Kaloum"
-                    />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                    <Form.Label>Type</Form.Label>
-                    <Form.Select 
-                        value={newClient.type} 
-                        onChange={(e) => setNewClient({...newClient, type: e.target.value})}
-                    >
-                        <option value="Client">Client Standard</option>
-                        <option value="Ouvrier">Ouvrier / Apporteur</option>
-                    </Form.Select>
-                </Form.Group>
-            </Modal.Body>
-            <Modal.Footer>
-                <Button variant="secondary" onClick={() => setShowClientModal(false)}>Annuler</Button>
-                <Button variant="primary" type="submit" disabled={clientLoading}>
-                    {clientLoading ? <Spinner size="sm" /> : 'Créer'}
-                </Button>
-            </Modal.Footer>
-        </Form>
-      </Modal>
+      <ClientModal
+        show={showClientModal}
+        onHide={() => setShowClientModal(false)}
+        clientToEdit={null} // Toujours en mode création
+        onSuccess={handleClientCreationSuccess}
+      />
     </div>
   );
 }

@@ -34,7 +34,15 @@ exports.updateFournisseur = async (req, res) => {
 
 exports.deleteFournisseur = async (req, res) => {
     try {
-        await Fournisseur.findByIdAndDelete(req.params.id);
+        const fournisseurId = req.params.id;
+
+        // Vérifier si des articles sont liés à ce fournisseur
+        const articleCount = await Article.countDocuments({ fournisseur: fournisseurId });
+        if (articleCount > 0) {
+            return res.status(400).json({ message: `Impossible de supprimer ce fournisseur, il est lié à ${articleCount} article(s). Veuillez d'abord réassigner ces articles à un autre fournisseur.` });
+        }
+
+        await Fournisseur.findByIdAndDelete(fournisseurId);
         res.status(200).json({ message: "Fournisseur supprimé" });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -89,8 +97,11 @@ exports.approvisionnerCentrale = async (req, res) => {
                 article.prixAchat = item.prixAchat;
                 // On met à jour le prix de vente seulement s'il est fourni et différent
                 if (item.prixVente) article.prixVente = item.prixVente;
+                if (item.image) article.image = item.image; // Sauvegarder l'image si elle est fournie
                 if (item.code) article.code = item.code;
                 if (item.type) article.type = item.type;
+                if (item.datePeremption) article.datePeremption = item.datePeremption;
+                article.fournisseur = fournisseurId; // Lier le fournisseur à l'article existant
                 
                 await article.save();
                 articlesMisAJour++;
@@ -100,14 +111,33 @@ exports.approvisionnerCentrale = async (req, res) => {
                     nom: item.nom,
                     code: item.code,
                     type: item.type,
+                    image: item.image, // Sauvegarder l'image
                     prixAchat: item.prixAchat,
                     prixVente: item.prixVente || (item.prixAchat * 1.2), // Marge par défaut si non fourni
                     quantite: quantiteAjout,
-                    boutique: depotPrincipal._id
+                    boutique: depotPrincipal._id,
+                    fournisseur: fournisseurId, // Lier le fournisseur au nouvel article
+                    datePeremption: item.datePeremption
                 });
                 articlesCrees++;
+
+                // Ajouter le nouveau produit à la liste des produits proposés par le fournisseur s'il n'y est pas déjà (INSENSIBLE A LA CASSE)
+                const productNameLower = item.nom.toLowerCase().trim();
+                const produitExisteDeja = fournisseur.produitsProposes.some(produitPropose => {
+                    if (typeof produitPropose === 'string') {
+                        return produitPropose.toLowerCase() === productNameLower;
+                    }
+                    return false;
+                });
+
+                if (!produitExisteDeja) {
+                    fournisseur.produitsProposes.push(item.nom.trim());
+                }
             }
         }
+
+        // Sauvegarder le fournisseur si sa liste de produits a été modifiée
+        await fournisseur.save();
 
         // Enregistrer le mouvement de stock
         await Mouvement.create({
