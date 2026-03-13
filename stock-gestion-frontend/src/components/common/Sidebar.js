@@ -72,6 +72,12 @@ const Sidebar = ({ userRole }) => {
                                 <span className="hide-menu">Finances & Caisse</span>
                             </NavLink>
                         </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/creances">
+                                <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Créances</span>
+                            </NavLink>
+                        </li>
 
 
                         <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
@@ -87,7 +93,7 @@ const Sidebar = ({ userRole }) => {
                                 <span className="hide-menu">Historique Ventes</span>
                             </NavLink>
                         </li>
-                       
+                        
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/clients">
                                 <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
@@ -98,6 +104,14 @@ const Sidebar = ({ userRole }) => {
                             <NavLink className="sidebar-link" to="/admin/notifications">
                                 <iconify-icon icon="solar:bell-bing-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Notifications</span>
+                            </NavLink>
+                        </li>
+
+                        <li className="nav-small-cap"><span className="hide-menu">Administration</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/audit">
+                                <iconify-icon icon="solar:shield-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Journal d'Audit</span>
                             </NavLink>
                         </li>
                     </ul>
@@ -139,6 +153,12 @@ const Sidebar = ({ userRole }) => {
                             <NavLink className="sidebar-link" to="/gerant/caisse">
                                 <iconify-icon icon="solar:cash-out-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Ma Caisse</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant/creances">
+                                <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Créances</span>
                             </NavLink>
                         </li>
 

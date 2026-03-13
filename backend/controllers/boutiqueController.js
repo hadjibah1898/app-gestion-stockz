@@ -1,5 +1,6 @@
 const Boutique = require('../models/Boutique');
 const Article = require('../models/Article');
+const { logAction } = require('../services/auditLogService');
 
 /**
  * @desc    Créer une boutique
@@ -16,9 +17,25 @@ exports.createBoutique = async (req, res) => {
             }
         }
 
-        const boutique = await Boutique.create(req.body);
+        const boutiqueData = {
+            ...req.body,
+            createur: req.user.id // Ajout de l'ID de l'admin créateur
+        };
+        const boutique = await Boutique.create(boutiqueData);
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'CREATE_BOUTIQUE',
+            entity: 'Boutique',
+            entityId: boutique._id,
+            details: { data: boutique.toObject() },
+            status: 'SUCCESS'
+        });
+
         res.status(201).json(boutique);
     } catch (error) {
+        // Pas de log d'audit pour les erreurs de validation simples
         res.status(400).json({ message: "Erreur lors de la création de la boutique", error: error.message });
     }
 };
@@ -66,8 +83,8 @@ exports.getAllBoutiques = async (req, res) => {
 exports.updateBoutique = async (req, res) => {
     try {
         // Logique de validation avancée pour le changement de type
+        const boutiqueToUpdate = await Boutique.findById(req.params.id).lean();
         if (req.body.type) {
-            const boutiqueToUpdate = await Boutique.findById(req.params.id);
             if (!boutiqueToUpdate) {
                 return res.status(404).json({ message: "Boutique introuvable." });
             }
@@ -86,8 +103,27 @@ exports.updateBoutique = async (req, res) => {
             }
         }
 
-        const boutique = await Boutique.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+        const updateData = {
+            ...req.body,
+            dernierModificateur: req.user.id // Ajout de l'ID de l'admin modificateur
+        };
+
+        const boutique = await Boutique.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true }).lean();
         if (!boutique) return res.status(404).json({ message: "Boutique introuvable." });
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'UPDATE_BOUTIQUE',
+            entity: 'Boutique',
+            entityId: boutique._id,
+            details: {
+                before: boutiqueToUpdate,
+                after: boutique
+            },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json(boutique);
     } catch (error) {
         res.status(400).json({ message: "Erreur lors de la mise à jour", error: error.message });
@@ -101,7 +137,7 @@ exports.updateBoutique = async (req, res) => {
  */
 exports.deleteBoutique = async (req, res) => {
     try {
-        const boutiqueToDelete = await Boutique.findById(req.params.id);
+        const boutiqueToDelete = await Boutique.findById(req.params.id).lean();
         if (!boutiqueToDelete) {
             return res.status(404).json({ message: "Boutique introuvable." });
         }
@@ -121,6 +157,17 @@ exports.deleteBoutique = async (req, res) => {
         }
 
         await Boutique.findByIdAndDelete(req.params.id);
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'DELETE_BOUTIQUE',
+            entity: 'Boutique',
+            entityId: boutiqueToDelete._id,
+            details: { deletedBoutique: boutiqueToDelete },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: "Boutique supprimée avec succès" });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la suppression", error: error.message });

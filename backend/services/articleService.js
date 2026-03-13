@@ -2,6 +2,7 @@ const articleRepository = require('../repositories/articleRepository');
 const Article = require('../models/Article'); // Assurez-vous que le modèle est importé
 const mongoose = require('mongoose');
 const Mouvement = require('../models/Mouvement');
+const { logAction } = require('./auditLogService');
 const Notification = require('../models/Notification');
 
 // Doit maintenant accepter un filtre et utiliser populate
@@ -15,7 +16,7 @@ exports.supprimerArticle = async (id) => {
     return await articleRepository.deleteById(id);
 };
 
-exports.modifierArticle = async (id, data, user) => {
+exports.modifierArticle = async (id, data, user, req) => {
     // 1. Valider que les données ne sont pas vides
     if (Object.keys(data).length === 0) {
         throw new Error("Données de mise à jour vides.");
@@ -84,6 +85,19 @@ exports.modifierArticle = async (id, data, user) => {
     // 4. Appel au repository pour la mise à jour
     // La fonction findByIdAndUpdate du repo s'occupera de ne mettre à jour que les champs fournis dans `data`
     const articleModifie = await articleRepository.update(id, data);
+
+    // Log the update action
+    if (req) { // Only log if req is provided
+        await logAction({
+            req,
+            user: user,
+            action: 'UPDATE_ARTICLE',
+            entity: 'Article',
+            entityId: articleModifie._id,
+            details: { before: articleExistant, after: articleModifie.toObject() },
+            status: 'SUCCESS'
+        });
+    }
 
     // Créer un mouvement pour la traçabilité si un prix a changé
     if (detailsMouvement && operateurId) {

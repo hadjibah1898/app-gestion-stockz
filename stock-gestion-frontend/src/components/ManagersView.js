@@ -148,6 +148,16 @@ const ManagersView = () => {
       render: (value) => <Badge bg={value ? 'success' : 'danger'}>{value ? 'Actif' : 'Inactif'}</Badge>
     },
     {
+      key: 'createdAt',
+      label: 'Date Création',
+      render: (date) => date ? new Date(date).toLocaleDateString('fr-FR') : 'N/A'
+    },
+    {
+      key: 'lastLogin',
+      label: 'Dernière Connexion',
+      render: (date) => date ? new Date(date).toLocaleString('fr-FR') : <span className="text-muted">Jamais</span>
+    },
+    {
       key: 'actions',
       label: 'Actions',
       render: (_, manager) => (

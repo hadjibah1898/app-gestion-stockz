@@ -1,4 +1,5 @@
 const notificationService = require('../services/notificationService');
+const { logAction } = require('../services/auditLogService');
 // Demande de remise par le gérant (stocke la demande et notifie les admins)
 exports.demanderRemise = async (req, res) => {
     try {
@@ -64,8 +65,20 @@ exports.addArticle = async (req, res) => {
 //  Ajoute l'export pour la suppression (Point 5.4 [cite: 43])
 exports.deleteArticle = async (req, res) => {
     try {
+        const article = await articleService.listerArticles({ _id: req.params.id });
         await articleService.supprimerArticle(req.params.id);
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'DELETE_ARTICLE',
+            entity: 'Article',
+            entityId: req.params.id,
+            details: { deletedArticle: article[0] },
+            status: 'SUCCESS'
+        });
         res.status(200).json({ message: "Article supprimé avec succès" });
+
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -76,7 +89,7 @@ exports.updateArticle = async (req, res) => {
         const articleId = req.params.id;
         const articleData = req.body;
 
-        const articleModifie = await articleService.modifierArticle(articleId, articleData);
+        const articleModifie = await articleService.modifierArticle(articleId, articleData, req.user, req);
 
         res.status(200).json(articleModifie);
     } catch (error) {
@@ -98,6 +111,16 @@ exports.transferArticles = async (req, res) => {
             return res.status(400).json({ message: "Les boutiques source et destination sont requises." });
         }
         const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details);
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'TRANSFER_STOCK',
+            entity: 'Article',
+            details: { sourceId, targetId, articles, details },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: `${result.modifiedCount} articles transférés avec succès.` });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -113,6 +136,16 @@ exports.restockFromCentral = async (req, res) => {
     try {
         const { targetId, articles, details } = req.body;
         const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, details);
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'RESTOCK_SHOP',
+            entity: 'Article',
+            details: { targetId, articles, details },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: `${result.modifiedCount} articles réapprovisionnés avec succès.` });
     } catch (error) {
         res.status(error.statusCode || 500).json({ message: error.message });

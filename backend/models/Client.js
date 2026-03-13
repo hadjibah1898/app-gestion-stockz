@@ -55,6 +55,10 @@ const clientSchema = new mongoose.Schema({
     createur: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
+    },
+    dernierModificateur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     }
 }, {
     timestamps: true,

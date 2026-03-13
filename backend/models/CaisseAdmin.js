@@ -4,7 +4,10 @@ const historiqueCaisseAdminSchema = new mongoose.Schema({
     rapport: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'RapportCaisse',
-        required: true,
+        required: false, // Rendu optionnel pour d'autres types d'entrées
+    },
+    description: { // Description de la transaction pour plus de clarté
+        type: String,
     },
     montant: {
         type: Number,

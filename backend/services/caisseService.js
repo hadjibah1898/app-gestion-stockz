@@ -4,6 +4,8 @@ const RapportCaisse = require('../models/RapportCaisse');
 const CaisseAdmin = require('../models/CaisseAdmin');
 const Vente = require('../models/Vente');
 const User = require('../models/User');
+const Client = require('../models/Client');
+const DebtMovement = require('../models/DebtMovement');
 const notificationService = require('./notificationService');
 
 // --- GESTION OUVERTURE / FERMETURE ---
@@ -19,7 +21,7 @@ exports.ouvrirCaisse = async ({ fondInitial, gerantId, boutiqueId }) => {
     return nouvelleOuverture;
 };
 
-exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture, commentairesGérant, gerantId }) => {
+exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture, commentairesGérant, gerantId, paiementsCommissions }) => {
     const ouverture = await OuvertureCaisse.findById(ouvertureCaisseId).populate('boutique');
     if (!ouverture || ouverture.gerant.toString() !== gerantId) {
         throw new Error("Ouverture de caisse introuvable ou non autorisée.");
@@ -28,16 +30,54 @@ exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture,
         throw new Error("Cette caisse est déjà fermée.");
     }
 
+    // --- GESTION PAIEMENT COMMISSIONS ---
+    if (paiementsCommissions && Array.isArray(paiementsCommissions)) {
+        for (const paiement of paiementsCommissions) {
+            const { clientId, montant } = paiement;
+            const montantPaye = parseFloat(montant);
+
+            if (!clientId || isNaN(montantPaye) || montantPaye <= 0) {
+                continue; // Ignore invalid payment data
+            }
+
+            const ouvrier = await Client.findById(clientId);
+            if (!ouvrier || ouvrier.type !== 'Ouvrier') {
+                throw new Error(`Ouvrier avec ID ${clientId} introuvable.`);
+            }
+            if (montantPaye > ouvrier.commission) {
+                throw new Error(`Le paiement de commission pour ${ouvrier.nom} (${montantPaye}) dépasse le montant dû (${ouvrier.commission}).`);
+            }
+
+            // Mettre à jour la commission de l'ouvrier
+            ouvrier.commission -= montantPaye;
+            await ouvrier.save();
+
+            // Créer une dépense correspondante pour la traçabilité de la caisse
+            await Depense.create({
+                montant: montantPaye,
+                motif: `Paiement commission: ${ouvrier.nom}`,
+                ouvertureCaisse: ouvertureCaisseId,
+                gerant: gerantId,
+                boutique: ouverture.boutique._id
+            });
+        }
+    }
+
     // 1. Calculer le total des ventes pour cette session
     const ventes = await Vente.find({ ouvertureCaisse: ouvertureCaisseId, isCancelled: false });
     const totalVentes = ventes.reduce((acc, vente) => acc + vente.prixTotal, 0);
+
+    // 1.1 Calculer les dettes accordées durant cette session (Argent non encaissé)
+    const venteIds = ventes.map(v => v._id);
+    const dettes = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' });
+    const totalDettes = dettes.reduce((acc, d) => acc + d.montant, 0);
 
     // 2. Calculer le total des dépenses pour cette session (elles sont toutes validées à la création)
     const depenses = await Depense.find({ ouvertureCaisse: ouvertureCaisseId });
     const totalDepenses = depenses.reduce((acc, depense) => acc + depense.montant, 0);
 
     // 3. Calculer le solde théorique et l'écart
-    const soldeTheorique = (ouverture.fondInitial + totalVentes) - totalDepenses;
+    const soldeTheorique = (ouverture.fondInitial + totalVentes - totalDettes) - totalDepenses;
     const ecart = montantCloture - soldeTheorique;
 
     // 4. Vérifier si une justification est obligatoire pour l'écart
@@ -92,6 +132,10 @@ exports.getStatutCaisse = async (gerantId) => {
         const ventes = await Vente.find({ ouvertureCaisse: ouverture._id, isCancelled: false });
         const totalVentes = ventes.reduce((acc, v) => acc + v.prixTotal, 0);
 
+        const venteIds = ventes.map(v => v._id);
+        const dettes = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' });
+        const totalDettes = dettes.reduce((acc, d) => acc + d.montant, 0);
+
         const depenses = await Depense.find({ ouvertureCaisse: ouverture._id });
         const totalDepenses = depenses.reduce((acc, d) => acc + d.montant, 0);
 
@@ -102,6 +146,7 @@ exports.getStatutCaisse = async (gerantId) => {
                 nombreVentes: ventes.length,
                 totalDepenses,
                 nombreDepenses: depenses.length,
+                totalDettes, // Ajout pour le frontend
             }
         };
     } catch (error) {
@@ -123,6 +168,10 @@ exports.getStatistiquesSession = async (gerantId) => {
     const ventes = await Vente.find({ ouvertureCaisse: ouverture._id, isCancelled: false });
     const totalVentes = ventes.reduce((acc, v) => acc + v.prixTotal, 0);
 
+    const venteIds = ventes.map(v => v._id);
+    const dettes = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' });
+    const totalDettes = dettes.reduce((acc, d) => acc + d.montant, 0);
+
     const depenses = await Depense.find({ ouvertureCaisse: ouverture._id });
     const totalDepenses = depenses.reduce((acc, d) => acc + d.montant, 0);
 
@@ -133,6 +182,7 @@ exports.getStatistiquesSession = async (gerantId) => {
             nombreVentes: ventes.length,
             totalDepenses,
             nombreDepenses: depenses.length,
+            totalDettes, // Ajout pour le frontend
         }
     };
 };
@@ -219,15 +269,21 @@ exports.validerRapport = async ({ rapportId, adminId, commentairesAdmin }) => {
     caisseAdmin.soldeActuel += rapport.soldeTheorique;
     caisseAdmin.historique.push({
         rapport: rapport._id,
+        description: `Validation du rapport de caisse #${rapport._id.toString().slice(-6)}`,
         montant: rapport.soldeTheorique,
         dateValidation: rapport.dateValidation,
-        gerant: rapport.gerant.nom,
-        boutique: rapport.boutique.nom,
+        gerant: rapport.gerant?.nom || 'Gérant supprimé',
+        boutique: rapport.boutique?.nom || 'Boutique supprimée',
         admin: admin.nom,
     });
     await caisseAdmin.save();
 
-    // TODO: Notifier le gérant
+    // Notifier le gérant de la validation
+    if (admin) {
+        notificationService.sendReportValidatedAlert(rapport, admin, commentairesAdmin)
+            .catch(err => console.error("Erreur lors de la notification de validation de rapport :", err));
+    }
+
     return rapport;
 };
 

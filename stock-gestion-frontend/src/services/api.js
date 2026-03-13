@@ -116,6 +116,10 @@ export const clientAPI = {
   delete: (id) => api.delete(`clients/${id}`),
   payDette: (id, data) => api.post(`clients/${id}/pay-dette`, data),
   getDebtHistory: () => api.get('clients/debt-history'),
+  getDebts: () => api.get('clients/debts'),
+  getPendingDebtPayments: () => api.get('clients/debt-payments/pending'),
+  validateDebtPayment: (id) => api.put(`clients/debt-payments/${id}/validate`),
+  getDebtEvolution: () => api.get('clients/debt-evolution'),
 };
 
 export const caisseAPI = {
@@ -133,6 +137,10 @@ export const caisseAPI = {
   getCaisseAdmin: () => api.get('caisse/admin'),
   // Nouvelle route pour obtenir les statistiques de la session en cours
   getStatistiquesSession: () => api.get('caisse/statistiques-session'),
+};
+
+export const auditAPI = {
+  getLogs: (params) => api.get('audit', { params }),
 };
 
 export default api;

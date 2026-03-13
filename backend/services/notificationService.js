@@ -1,6 +1,12 @@
 /**
  * Service de gestion des notifications (Email & In-App)
  * Centralise l'envoi de toutes les alertes du système.
+ */
+const nodemailer = require('nodemailer');
+const Notification = require('../models/Notification');
+const User = require('../models/User');
+const RapportCaisse = require('../models/RapportCaisse');
+/**
  * Envoie une notification aux admins lorsqu'un gérant demande une remise
  * @param {Object} article - L'article concerné
  * @param {Number} remise - Pourcentage de remise demandé
@@ -8,31 +14,50 @@
  */
 exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) => {
     try {
-        const admins = await User.find({ role: 'Admin' }).select('email');
-        const adminEmails = admins.map(u => u.email);
-        if (adminEmails.length === 0) return;
+        const admins = await User.find({ role: 'Admin' });
+        if (admins.length === 0) return;
+
+        const adminEmails = admins.map(u => u.email).filter(Boolean);
+        const message = `Le gérant ${gerant.nom} demande une remise de ${remise}% sur l'article "${article.nom}"${clientNom ? ` pour le client "${clientNom}"` : ''}.`;
+        const link = `/admin/articles?openEdit=${article._id}`;
+
+        // 1. Envoi par email (si des emails sont configurés)
+        if (adminEmails.length > 0) {
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: adminEmails,
-            subject: `Demande de remise à valider`,
+                subject: `🔔 Demande de remise à valider : ${article.nom}`,
             html: `
                 <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
                     <h2 style="color: #0d6efd; margin-top: 0;">Demande de remise à valider</h2>
-                    <p>Le gérant <b>${gerant.nom}</b> demande une remise de <b>${remise}%</b> sur l'article <b>${article.nom}</b>${clientNom ? ` pour le client <b>${clientNom}</b>` : ''}.</p>
-                    <p>Merci de valider ou refuser cette demande dans l'interface d'administration.</p>
+                    <p>${message}</p>
+                    <p>Merci de valider ou refuser cette demande depuis l'interface d'administration en cliquant sur le lien ci-dessous.</p>
+                    <div style="text-align: center; margin: 20px 0;">
+                        <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}${link}" style="background-color: #0d6efd; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Voir la demande</a>
+                    </div>
                 </div>
             `
         };
         await transporter.sendMail(mailOptions);
         console.log(`📧 Demande de remise envoyée aux admins pour l'article : ${article.nom}`);
+        }
+
+        // 2. Création de la notification in-app
+        const notificationPromises = admins.map(admin =>
+            Notification.create({
+                recipient: admin._id,
+                message: message,
+                type: 'info',
+                link: link
+            })
+        );
+        await Promise.all(notificationPromises);
+        console.log(`📲 Notification in-app de demande de remise envoyée à ${admins.length} admin(s).`);
+
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi de la demande de remise:", error);
     }
 };
-const nodemailer = require('nodemailer');
-const Notification = require('../models/Notification');
-const User = require('../models/User');
-const RapportCaisse = require('../models/RapportCaisse');
 
 // Configuration du transporteur (réutilisation des variables d'environnement existantes)
 const transporter = nodemailer.createTransport({
@@ -76,6 +101,8 @@ exports.sendLowStockAlert = async (article) => {
 
         await transporter.sendMail(mailOptions);
         console.log(`📧 Alerte stock faible envoyée pour l'article : ${article.nom}`);
+
+        const link = `/admin/dashboard?openTransfer=${article._id}`;
 
         // Création des notifications in-app pour chaque admin
         const notificationPromises = admins.map(admin => 
@@ -203,7 +230,9 @@ exports.sendNewReportAlert = async (rapport) => {
         if (!rapportFull) return;
 
         const adminEmails = admins.map(u => u.email);
-        const message = `Nouveau rapport de caisse généré par ${rapportFull.gerant.nom} pour la boutique ${rapportFull.boutique.nom}.`;
+        // MODIFICATION: Message plus détaillé pour l'interaction
+        const hasEcart = rapportFull.ecart !== 0;
+        const message = `Rapport de ${rapportFull.gerant.nom} (${rapportFull.boutique.nom}). ${hasEcart ? `Écart de ${rapportFull.ecart.toLocaleString('fr-FR')} GNF. Justification: "${rapportFull.commentairesGérant}"` : 'Aucun écart signalé.'}`;
 
         // 1. Email notification
         await transporter.sendMail({
@@ -218,8 +247,14 @@ exports.sendNewReportAlert = async (rapport) => {
                         <li style="margin-bottom: 10px;"><strong>🏪 Boutique :</strong> ${rapportFull.boutique.nom}</li>
                         <li style="margin-bottom: 10px;"><strong>💰 Montant Clôture :</strong> ${rapportFull.montantCloture.toLocaleString('fr-FR')} GNF</li>
                         <li style="margin-bottom: 10px;"><strong>📉 Solde Théorique :</strong> ${rapportFull.soldeTheorique.toLocaleString('fr-FR')} GNF</li>
-                        <li><strong>⚠️ Écart :</strong> ${rapportFull.ecart.toLocaleString('fr-FR')} GNF</li>
+                        <li style="color: ${hasEcart ? '#dc3545' : '#198754'};"><strong>⚠️ Écart :</strong> ${rapportFull.ecart.toLocaleString('fr-FR')} GNF</li>
                     </ul>
+                    ${hasEcart && rapportFull.commentairesGérant ? `
+                        <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                            <p style="margin: 0 0 10px; color: #856404;"><strong>Justification du gérant :</strong></p>
+                            <p style="margin: 0; color: #856404;"><em>"${rapportFull.commentairesGérant}"</em></p>
+                        </div>
+                    ` : ''}
                     <p>Vous pouvez consulter et valider ce rapport dans la section "Finances & Caisse".</p>
                 </div>
             `
@@ -232,7 +267,7 @@ exports.sendNewReportAlert = async (rapport) => {
                 recipient: admin._id,
                 message: message,
                 type: 'info',
-                link: '/admin/caisse' // Lien vers la vue caisse admin
+                link: '/admin/caisse?tab=rapports' // Lien vers l'onglet des rapports
             })
         );
         await Promise.all(notificationPromises);
@@ -289,5 +324,113 @@ exports.sendReportRejectedAlert = async (rapport, admin, commentaire) => {
 
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi de l'alerte de rejet de rapport:", error);
+    }
+};
+
+/**
+ * Alerte le gérant que son rapport de caisse a été validé.
+ * @param {Object} rapport - Le rapport de caisse validé.
+ * @param {Object} admin - L'admin qui a validé.
+ * @param {String} commentaire - Le commentaire optionnel de l'admin.
+ */
+exports.sendReportValidatedAlert = async (rapport, admin, commentaire) => {
+    try {
+        const gerant = await User.findById(rapport.gerant);
+        if (!gerant) return;
+
+        const message = `✅ Votre rapport de caisse a été validé par ${admin.nom}. ${commentaire ? `Commentaire: "${commentaire}"` : ''}`;
+
+        // 1. Email notification
+        if (gerant.email) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: gerant.email,
+                subject: `✅ Rapport de Caisse Validé`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                        <h2 style="color: #198754; margin-top: 0;">Rapport de Caisse Validé</h2>
+                        <p>Bonjour <strong>${gerant.nom}</strong>,</p>
+                        <p>Votre rapport de caisse pour la boutique <strong>${rapport.boutique.nom}</strong> du ${new Date(rapport.createdAt).toLocaleDateString()} a été validé par l'administrateur <strong>${admin.nom}</strong>.</p>
+                        ${commentaire ? `
+                            <div style="background-color: #e2e3e5; border-left: 4px solid #6c757d; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0 0 10px;"><strong>Commentaire de l'administrateur :</strong></p>
+                                <p style="margin: 0;"><em>"${commentaire}"</em></p>
+                            </div>
+                        ` : ''}
+                        <p>Merci pour votre travail.</p>
+                    </div>
+                `
+            });
+            console.log(`📧 Alerte de validation de rapport envoyée à ${gerant.nom}.`);
+        }
+
+        // 2. In-app notification
+        await Notification.create({
+            recipient: gerant._id,
+            message: message,
+            type: 'success',
+            link: '/gerant/caisse?tab=rapports' // Lien vers l'onglet des rapports du gérant
+        });
+        console.log(`📲 Notification in-app de validation de rapport envoyée à ${gerant.nom}.`);
+
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'alerte de validation de rapport:", error);
+    }
+};
+
+/**
+ * Alerte les admins qu'un paiement de dette est en attente de validation.
+ * @param {Object} gerant - L'utilisateur gérant qui a enregistré le paiement.
+ * @param {Object} client - Le client concerné.
+ * @param {Number} montant - Le montant du paiement.
+ */
+exports.sendDebtPaymentPendingAlert = async (gerant, client, montant) => {
+    try {
+        const admins = await User.find({ role: 'Admin' });
+        if (admins.length === 0) return;
+
+        const message = `Le gérant ${gerant.nom} a enregistré un paiement de ${montant.toLocaleString('fr-FR')} GNF de la part de ${client.nom}. Ce paiement est en attente de votre validation.`;
+
+        // In-app notification
+        const notificationPromises = admins.map(admin =>
+            Notification.create({
+                recipient: admin._id,
+                message: message,
+                type: 'info',
+                link: '/admin/creances?tab=validation' // Lien vers l'onglet de validation
+            })
+        );
+        await Promise.all(notificationPromises);
+        console.log(`📲 Notification de paiement en attente envoyée à ${admins.length} admin(s).`);
+
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'alerte de paiement en attente:", error);
+    }
+};
+
+/**
+ * Notifie un gérant que son paiement de dette a été validé par un admin.
+ * @param {string} gerantId - L'ID du gérant à notifier.
+ * @param {Object} client - Le client concerné.
+ * @param {Number} montant - Le montant du paiement validé.
+ */
+exports.sendDebtPaymentValidatedAlert = async (gerantId, client, montant) => {
+    try {
+        const gerant = await User.findById(gerantId);
+        if (!gerant) return;
+
+        const message = `✅ Le paiement de ${montant.toLocaleString('fr-FR')} GNF pour le client ${client.nom} a été validé. La dette du client est à jour.`;
+
+        // In-app notification
+        await Notification.create({
+            recipient: gerant._id,
+            message: message,
+            type: 'success',
+            link: '/gerant/creances'
+        });
+        console.log(`📲 Notification de validation de paiement envoyée à ${gerant.nom}.`);
+
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de la notification de validation de paiement:", error);
     }
 };

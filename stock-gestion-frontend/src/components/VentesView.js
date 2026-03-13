@@ -1,14 +1,27 @@
 // src/components/VentesView.js
+/**
+ * @file VentesView.js
+ * @description Ce composant est le "cerveau" de la page des ventes. Il agit comme un conteneur "intelligent" :
+ * - Il gère l'état global de la page (panier, historique, articles, clients).
+ * - Il contient toute la logique métier (ajout au panier, validation de vente, annulation, etc.).
+ * - Il récupère les données depuis l'API.
+ * - Il orchestre l'affichage des sous-composants (SaleTab, HistoryTab, AdminHistoryTab) et des modales, en leur passant les données et les fonctions nécessaires via les props.
+ */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Form, Table, Alert, Spinner, Badge, Card, Row, Col, Modal, InputGroup, Tabs, Tab, Pagination } from 'react-bootstrap';
+import { Button, Form, Alert, Spinner, Tabs, Tab } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
-import { useReactToPrint } from 'react-to-print';
 import { articleAPI, venteAPI, clientAPI } from '../services/api';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { Html5QrcodeScanner } from "html5-qrcode";
-import ThermalTicket from './ThermalTicket'; // Importer le nouveau composant de ticket
 import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
+import { generateReceiptPDF, generateHistoryPDF } from '../utils/pdfUtils';
+import logo from '../assets/logo.png';
+import SaleTab from './SaleTab';
+import HistoryTab from './HistoryTab';
+import AdminHistoryTab from './AdminHistoryTab';
+import CancelSaleModal from './CancelSaleModal';
+import ReceiptModal from './ReceiptModal';
+import ImagePreviewModal from './ImagePreviewModal';
+import ScannerModal from './ScannerModal';
 
 const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [searchParams] = useSearchParams();
@@ -31,16 +44,15 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [saleToCancel, setSaleToCancel] = useState(null);
 
-  // États pour le reçu après vente
+  // États pour la modale d'impression du ticket
   const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [lastSaleData, setLastSaleData] = useState(null);
+  const [currentReceiptData, setCurrentReceiptData] = useState(null);
 
   // États pour la création rapide de client
   const [showClientModal, setShowClientModal] = useState(false);
 
   // Référence pour le champ de scan (pour garder le focus)
   const barcodeInputRef = useRef(null);
-  const ticketRef = useRef(); // Référence pour le composant de ticket à imprimer
 
   // États pour la modale d'aperçu d'image
   const [showImageModal, setShowImageModal] = useState(false);
@@ -73,25 +85,33 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       const promises = [
         articleAPI.getAll(),
         venteAPI.getHistorique(params),
-        clientAPI.getAll() // Charger les clients
       ];
 
-      const [articlesRes, historiqueRes, clientsRes] = await Promise.all(promises);
+      // Charger les clients uniquement si l'utilisateur n'est pas un admin,
+      // car seul le gérant a besoin de la liste pour créer une nouvelle vente.
+      if (userRole !== 'Admin') {
+        promises.push(clientAPI.getAll());
+      }
+
+      const results = await Promise.all(promises);
+      const articlesRes = results[0];
+      const historiqueRes = results[1];
+      const clientsRes = userRole !== 'Admin' ? results[2] : { data: [] };
 
       setArticles((articlesRes.data || []).filter(a => a.quantite > 0));
       setHistorique(historiqueRes.data.ventes || []);
       setTotalPages(historiqueRes.data.totalPages || 0);
       setClients(clientsRes.data || []);
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur de chargement');
+      setError(err.response?.data?.message || "Erreur lors du chargement des données de vente.");
     } finally {
       setLoading(false);
     }
-  }, [dateFilter, currentPage, showCancelledOnly]);
+  }, [dateFilter, currentPage, showCancelledOnly, userRole]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]); // Recharger quand les filtres ou la page changent
+  }, [fetchData]);
 
   // Fonction utilitaire pour calculer le prix effectif d'un article (avec promo/remise)
   // Ajout d'un paramètre remise temporaire (pour le panier)
@@ -236,22 +256,28 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       const subTotal = panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0);
       const totalRemise = subTotal - totalVente;
 
-      // Préparer les données pour le reçu (Vente finalisée immédiatement)
-        const clientObj = clients.find(c => c._id === selectedClientId);
-        const receiptData = {
-            transactionId: `VTE-${Date.now()}`,
-            cashierName: localStorage.getItem('userName') || userRole,
-            clientName: clientObj ? clientObj.nom : 'Client de passage',
-            date: new Date(),
-            items: panier,
-            subTotal: subTotal,
-            discount: totalRemise,
-            totalNet: totalVente,
-            amountPaid: montantPayeFinal,
-            change: montantPayeFinal - totalVente,
-        };
-        setLastSaleData(receiptData);
-        setShowReceiptModal(true); // Ouvrir la modale de reçu
+      // 4. Dynamisme : Récupération des informations de la boutique depuis le panier.
+      const boutiqueInfo = panier.length > 0 ? panier[0].article.boutique : null;
+      const clientObj = clients.find(c => c._id === selectedClientId);
+      const receiptData = {
+          shopName: boutiqueInfo?.nom,
+          address: boutiqueInfo?.adresse,
+          phone: boutiqueInfo?.telephone, // Ce champ pourrait ne pas exister sur le modèle
+          transactionId: `VTE-${Date.now()}`,
+          cashierName: localStorage.getItem('userName') || userRole,
+          clientName: clientObj ? clientObj.nom : 'Client de passage',
+          date: new Date(),
+          items: panier,
+          subTotal: subTotal,
+          discount: totalRemise,
+          totalNet: totalVente,
+          amountPaid: montantPayeFinal,
+          change: montantPayeFinal - totalVente,
+      };
+      // Stocker les données et afficher la modale de choix au lieu d'imprimer directement
+      setCurrentReceiptData(receiptData);
+      setShowReceiptModal(true);
+      
         setSuccessMessage('Vente effectuée avec succès !');
 
       setPanier([]);
@@ -263,18 +289,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur lors de la vente');
     }
-  };
-
-  const handlePrintReceipt = useReactToPrint({
-    content: () => ticketRef.current,
-    documentTitle: `recu-${lastSaleData?.transactionId || Date.now()}`,
-    onAfterPrint: () => handleCloseReceiptModal()
-  });
-
-  const handleCloseReceiptModal = () => {
-      setShowReceiptModal(false);
-      // Refocus sur le champ scanner après la fermeture de la modale
-      setTimeout(() => barcodeInputRef.current?.focus(), 100);
   };
 
   const handleClientCreationSuccess = (createdClient, isEdit) => {
@@ -314,6 +328,32 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setShowCancelModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     }
+  };
+
+  const handlePrintReceipt = () => {
+    if (currentReceiptData) {
+      generateReceiptPDF(currentReceiptData);
+    }
+    handleCloseReceiptModal();
+  };
+
+  const handleGenerateTicket = async (venteId, setError) => {
+    try {
+      const res = await venteAPI.genererTicket(venteId);
+      const downloadUrl = res.data.downloadUrl;
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `ticket_${venteId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      setError(err.response?.data?.message || "Erreur lors de la génération du ticket.");
+    }
+  };
+  const handleCloseReceiptModal = () => {
+    setShowReceiptModal(false);
+    setTimeout(() => barcodeInputRef.current?.focus(), 100);
   };
 
   const playBeep = () => {
@@ -431,80 +471,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     setShowImageModal(true);
   };
 
-  const handleExportPDF = () => {
-    const doc = new jsPDF();
-    
-    // En-tête
-    doc.setFillColor(41, 128, 185);
-    doc.rect(0, 0, 210, 25, 'F');
-    doc.setFontSize(18);
-    doc.setTextColor(255, 255, 255);
-    doc.text("Historique des Ventes", 14, 16);
-    doc.setFontSize(10);
-    doc.setTextColor(220, 220, 220);
-    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')}`, 14, 22);
-
-    const tableColumn = ["Date", "Article", "Quantité", "Prix Total", "Vendeur", "Client"];
-    const tableRows = [];
-    let totalGlobal = 0;
-
-    historique.forEach(vente => {
-      totalGlobal += vente.prixTotal;
-      const venteData = [
-        new Date(vente.createdAt).toLocaleDateString() + ' ' + new Date(vente.createdAt).toLocaleTimeString(),
-        vente.article?.nom || 'Article supprimé',
-        vente.quantite,
-        (vente.prixTotal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '),
-        vente.gerant?.nom || 'Inconnu',
-        vente.client?.nom || 'Passage'
-      ];
-      tableRows.push(venteData);
-    });
-
-    // Ajout de la ligne de Total Global
-    tableRows.push([
-      "", 
-      "", 
-      "TOTAL GLOBAL", 
-      (totalGlobal.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' '), 
-      "",
-      ""
-    ]);
-
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: 35,
-      theme: 'grid',
-      headStyles: { fillColor: [41, 128, 185] },
-      alternateRowStyles: { fillColor: [248, 249, 250] },
-      columnStyles: {
-        3: { halign: 'right' }
-      },
-      // Mettre en gras et gris clair la dernière ligne (Total)
-      didParseCell: (data) => {
-        if (data.row.index === tableRows.length - 1) {
-            data.cell.styles.fontStyle = 'bold';
-            data.cell.styles.fillColor = [240, 240, 240];
-        }
-      }
-    });
-
-    // Footer
-    const pageCount = doc.internal.getNumberOfPages();
-    for(let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        const pageSize = doc.internal.pageSize;
-        const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
-        doc.text(`StockDash - Ventes`, 14, pageHeight - 10);
-        doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
-    }
-
-    doc.save("historique_ventes.pdf");
-  };
-
   if (loading) return <Spinner animation="border" />;
 
   return (
@@ -540,7 +506,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                 className="rounded-pill shadow-sm w-auto"
                 title="Date de fin"
             />
-            <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
+            <Button variant="outline-secondary" onClick={() => generateHistoryPDF(historique, logo)} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                 Exporter PDF
             </Button>
@@ -554,142 +520,18 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
       {userRole === 'Admin' ? (
         <>
-          {/* Section Historique Complet */}
-          <Card className="border-0 shadow-sm rounded-4">
-            <Card.Header>Historique complet des transactions</Card.Header>
-            <Card.Body>
-                        <Table hover responsive className="align-middle mb-0">
-                            <thead className="bg-light">
-                              <tr>
-                                <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Date</th>
-                                <th className="py-3 border-0 text-secondary small text-uppercase">Article</th>
-                                <th className="py-3 border-0 text-secondary small text-uppercase text-center">Qté</th>
-                                <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                                <th className="py-3 border-0 text-secondary small text-uppercase">Vendeur</th>
-                                <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
-                                <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Statut / Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {historique.map(vente => (
-                                <tr key={vente._id} className={
-                                  vente.statut === 'refusee' || vente.isCancelled ? "bg-light text-muted" :
-                                  vente.statut === 'en_attente_remise' ? "bg-warning-subtle" :
-                                  ""
-                                }>
-                                  <td className="ps-4">
-                                    <div className="fw-bold">{new Date(vente.createdAt).toLocaleDateString()}</div>
-                                    <div className="small text-muted">{new Date(vente.createdAt).toLocaleTimeString()}</div>
-                                  </td>
-                                  <td>
-                                    <div className="d-flex align-items-center">
-                                      {vente.article?.image ? (
-                                        <img src={vente.article?.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer', filter: vente.isCancelled ? 'grayscale(100%)' : 'none'}} onClick={() => handleImageClick(vente.article?.image)} />
-                                      ) : (
-                                        <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                                      )}
-                                      <div>
-                                        <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
-                                        {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                            <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
-                                        )}
-                                        {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="text-center"><Badge bg="light" text="dark" className="border">{vente.quantite}</Badge></td>
-                                  <td className="text-end fw-bold text-primary">
-                                    {vente.isCancelled ? <span className="text-decoration-line-through text-muted">{vente.prixTotal.toLocaleString()} GNF</span> : `${vente.prixTotal.toLocaleString()} GNF`}
-                                  </td>
-                                  <td>{vente.gerant?.nom || 'Inconnu'}</td>
-                                  <td>{vente.client?.nom || 'Passage'}</td>
-                                  <td className="pe-4 text-end">
-                                    {(() => {
-                                      if (vente.statut === 'refusee') {
-                                        return (
-                                          <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                            <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                            REMISE REFUSÉE
-                                          </Badge>
-                                        );
-                                      }
-                                      if (vente.isCancelled) {
-                                        return (
-                                          <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                            <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                            VENTE ANNULÉE
-                                          </Badge>
-                                        );
-                                      }
-                                      if (vente.statut === 'en_attente_remise') {
-                                        return (
-                                          <Badge bg="warning-subtle" text="warning" className="px-3 py-2 rounded-pill">
-                                            <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                            EN ATTENTE
-                                          </Badge>
-                                        );
-                                      }
-                                      return (
-                                        <div className="d-flex gap-2 justify-content-end">
-                                          <Button 
-                                            variant="outline-primary" 
-                                            size="sm" 
-                                            className="rounded-pill px-3"
-                                            onClick={async () => {
-                                              try {
-                                                const res = await venteAPI.genererTicket(vente._id);
-                                                const downloadUrl = res.data.downloadUrl;
-                                                // Télécharger automatiquement le PDF
-                                                const link = document.createElement('a');
-                                                link.href = downloadUrl;
-                                                link.download = `ticket_${vente._id}.pdf`;
-                                                document.body.appendChild(link);
-                                                link.click();
-                                                document.body.removeChild(link);
-                                              } catch (err) {
-                                                setError(err.response?.data?.message || "Erreur lors de la génération du ticket.");
-                                              }
-                                            }}
-                                            title="Générer et télécharger le ticket PDF"
-                                          >
-                                            <iconify-icon icon="solar:printer-bold" className="me-1 align-middle"></iconify-icon>
-                                            Ticket
-                                          </Button>
-                                          <Button 
-                                            variant="outline-danger" 
-                                            size="sm" 
-                                            className="rounded-pill px-3"
-                                            onClick={() => { setSaleToCancel(vente); setShowCancelModal(true); }}
-                                            disabled={!isCancellationAllowed(vente)}
-                                            title={!isCancellationAllowed(vente) ? "Délai d'annulation dépassé (24h)" : "Annuler cette vente"}
-                                          >
-                                            <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
-                                            Annuler
-                                          </Button>
-                                        </div>
-                                      );
-                                    })()}
-                                  </td>
-                                </tr>
-                              ))}
-                              {historique.length === 0 && <tr><td colSpan="7" className="text-center py-5 text-muted"><iconify-icon icon="solar:bill-list-linear" style={{fontSize: '48px'}} className="mb-2 opacity-50"></iconify-icon><p className="mb-0">Aucune vente enregistrée</p></td></tr>}
-                            </tbody>
-                          </Table>
-            </Card.Body>
-            {totalPages > 1 && (
-              <Card.Footer className="d-flex justify-content-center border-0 pt-0">
-                <Pagination>
-                  <Pagination.Prev onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} />
-                  {[...Array(totalPages)].map((_, idx) => (
-                    <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
-                      {idx + 1}
-                    </Pagination.Item>
-                  ))}
-                  <Pagination.Next onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} />
-                </Pagination>
-              </Card.Footer>
-            )}
-          </Card>
+          <AdminHistoryTab
+            historique={historique}
+            totalPages={totalPages}
+            currentPage={currentPage}
+            setCurrentPage={setCurrentPage}
+            isCancellationAllowed={isCancellationAllowed}
+            handleImageClick={handleImageClick}
+            setSaleToCancel={setSaleToCancel}
+            setShowCancelModal={setShowCancelModal}
+            handleGenerateTicket={handleGenerateTicket}
+            setError={setError}
+          />
         </>
       ) : (
         <Tabs 
@@ -698,441 +540,78 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
             className="mb-3 nav-tabs-custom"
         >
             <Tab eventKey="sale" title={<span className="d-flex align-items-center"><iconify-icon icon="solar:cart-plus-bold" className="me-2"></iconify-icon>Effectuer une Vente</span>}>
-                <Row>
-                    <Col md={8}>
-                    <Card className="mb-4 border-0 shadow-sm rounded-4">
-                        <Card.Header className="bg-white py-3">
-                            <div className="d-flex justify-content-between align-items-center">
-                                <h5 className="mb-0 fw-bold">Panier de vente</h5>
-                                <div className="d-flex gap-2">
-                                    <Button variant="outline-primary" size="sm" onClick={() => setShowClientModal(true)} title="Nouveau Client">
-                                        <iconify-icon icon="solar:user-plus-bold" className="me-1"></iconify-icon>
-                                        Nouveau Client
-                                    </Button>
-                                    
-                                </div>
-                            </div>
-                        </Card.Header>
-                        <Card.Body>
-                        {/* Sélection du Client */}
-                        <Form.Group className="mb-4">
-                            <Form.Label className="fw-bold">Client (Optionnel)</Form.Label>
-                            <InputGroup>
-                                <InputGroup.Text><iconify-icon icon="solar:user-circle-bold"></iconify-icon></InputGroup.Text>
-                                <Form.Select 
-                                    value={selectedClientId} 
-                                    onChange={(e) => setSelectedClientId(e.target.value)}
-                                    className="rounded-pill"
-                                >
-                                    <option value="">Client de passage (Anonyme)</option>
-                                    {clients.map(client => (
-                                        <option key={client._id} value={client._id}>{client.nom} {client.type === 'Ouvrier' ? '(Ouvrier)' : ''}</option>
-                                    ))}
-                                </Form.Select>
-                            </InputGroup>
-                        </Form.Group>
-
-                        <Form onSubmit={handleBarcodeScan} className="mb-4">
-                            <Form.Group>
-                                <Form.Label className="fw-bold">Scanner un code-barres</Form.Label>
-                                <InputGroup>
-                                    <InputGroup.Text><iconify-icon icon="solar:barcode-scanner-bold-duotone"></iconify-icon></InputGroup.Text>
-                                    <Form.Control
-                                        ref={barcodeInputRef}
-                                        type="text"
-                                        name="barcode"
-                                        id="barcode"
-                                        placeholder="Scannez ou saisissez un code..."
-                                        value={barcode}
-                                        onChange={(e) => setBarcode(e.target.value)}
-                                        autoFocus
-                                        className="rounded-pill"
-                                    />
-                                    <Button type="submit" variant="primary" className="rounded-pill px-4">
-                                        <iconify-icon icon="solar:add-circle-bold" className="me-2"></iconify-icon>
-                                        Ajouter
-                                    </Button>
-                                </InputGroup>
-                            </Form.Group>
-                        </Form>
-                        <div className="text-center text-muted my-3 small fw-bold">OU</div>
-                        <Form className="mb-4" onSubmit={(e) => { e.preventDefault(); ajouterAuPanier(); }}>
-                          <Row className="g-3">
-                          <Col md={5}>
-                            <Form.Group>
-                            <Form.Label className="fw-bold">Article</Form.Label>
-                            <Form.Select 
-                              value={selectedArticle} 
-                              onChange={(e) => setSelectedArticle(e.target.value)}
-                              name="selectedArticle"
-                              id="selectedArticle"
-                              className="rounded-pill"
-                            >
-                              <option value="">Sélectionner un article</option>
-                              {articles.map(article => (
-                              <option key={article._id} value={article._id}>
-                                {article.code ? `[${article.code}] ` : ''}{article.nom} - {getEffectivePrice(article).toLocaleString()} GNF 
-                                {getEffectivePrice(article) < article.prixVente && (
-                                  ` (Promo)`
-                                )}
-                                (Stock: {article.quantite})
-                              </option>
-                              ))}
-                            </Form.Select>
-                            </Form.Group>
-                          </Col>
-                          <Col md={2}>
-                            <Form.Group>
-                            <Form.Label className="fw-bold">Quantité</Form.Label>
-                            <Form.Control
-                              type="number"
-                              min="1"
-                              value={quantite}
-                              onChange={(e) => setQuantite(e.target.value)}
-                              name="quantite"
-                              id="quantite"
-                              className="rounded-pill"
-                            />
-                            </Form.Group>
-                          </Col>
-                          <Col md={2}>
-                            <Form.Group>
-                            <Form.Label className="fw-bold">Remise (GNF)</Form.Label>
-                            <Form.Control
-                              type="number"
-                              min="0"
-                              value={remisePanier}
-                              onChange={(e) => setRemisePanier(e.target.value)}
-                              name="remisePanier"
-                              id="remisePanier"
-                              placeholder="0"
-                              className="rounded-pill"
-                            />
-                            </Form.Group>
-                          </Col>
-                          <Col md={3} className="d-flex align-items-end">
-                            <Button
-                            variant="primary" 
-                            onClick={ajouterAuPanier}
-                            disabled={!selectedArticle}
-                            className="w-100 rounded-pill py-2"
-                            >
-                            <iconify-icon icon="solar:cart-plus-bold" className="me-2"></iconify-icon>
-                            Ajouter au panier
-                            </Button>
-                          </Col>
-                          </Row>
-                        </Form>
-
-                        {panier.length > 0 ? (
-                            <>
-                            <Table hover responsive className="align-middle mb-0">
-                                <thead className="bg-light">
-                                    <tr>
-                                        <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Article</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase">Prix unitaire</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase text-center">Quantité</th>
-                                        <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                                        <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                {panier.map(item => (
-                                  <tr key={item.article._id}>
-                                    <td className="ps-4">
-                                      <div className="d-flex align-items-center">
-                                        {item.article.image ? (
-                                          <img src={item.article.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer'}} onClick={() => handleImageClick(item.article.image)} />
-                                        ) : (
-                                          <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                                        )}
-                                        <div>
-                                          <div className="fw-bold">{item.article.nom}</div>
-                                          {item.article.code && <div className="small text-muted">{item.article.code}</div>}
-                                        </div>
-                                      </div>
-                                    </td>
-                                    <td>
-                                      {getEffectivePrice(item.article, item.remiseTemp) < item.article.prixVente ? (
-                                        <>
-                                          <span className="text-decoration-line-through text-muted me-2">{item.article.prixVente.toLocaleString()}</span>
-                                          <span className="text-danger fw-bold">{getEffectivePrice(item.article, item.remiseTemp).toLocaleString()} GNF</span>
-                                          {item.remiseTemp && <span className="badge bg-warning ms-2">Remise {item.remiseTemp.toLocaleString()} GNF</span>}
-                                        </>
-                                      ) : (
-                                        `${item.article.prixVente.toLocaleString()} GNF`
-                                      )}
-                                    </td>
-                                    <td className="text-center"><Badge bg="light" text="dark" className="border">{item.quantite}</Badge></td>
-                                    <td className="text-end fw-bold text-primary">{item.prixTotal.toLocaleString()} GNF</td>
-                                    <td className="pe-4 text-end">
-                                      <Button 
-                                      variant="outline-danger" 
-                                      size="sm"
-                                      onClick={() => retirerDuPanier(item.article._id)}
-                                      >
-                                      <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
-                                      Retirer
-                                      </Button>
-                                    </td>
-                                  </tr>
-                                ))}
-                                </tbody>
-                            </Table>
-                            {selectedClientId && (
-                                <Row className="justify-content-end mt-3">
-                                    <Col md={5}>
-                                        <Form.Group className="mb-3">
-                                            <Form.Label className="fw-bold">Montant Payé (Optionnel)</Form.Label>
-                                            <InputGroup>
-                                                <Form.Control
-                                                    type="number"
-                                                    placeholder={`Total : ${calculerTotal().toLocaleString()} GNF`}
-                                                    value={montantPaye}
-                                                    onChange={(e) => setMontantPaye(e.target.value)}
-                                                    min="0"
-                                                    className="rounded-pill"
-                                                />
-                                                <InputGroup.Text>GNF</InputGroup.Text>
-                                            </InputGroup>
-                                            <Form.Text className="text-muted">
-                                                Si le montant est inférieur au total, la différence sera ajoutée à la dette du client.
-                                            </Form.Text>
-                                        </Form.Group>
-                                    </Col>
-                                    {/* Champ pour l'échéance, visible seulement si une dette est créée */}
-                                    {montantPaye !== '' && parseFloat(montantPaye) < calculerTotal() && (
-                                        <Col md={5}>
-                                            <Form.Group className="mb-3">
-                                                <Form.Label className="fw-bold text-danger">Échéance de la dette</Form.Label>
-                                                <Form.Control
-                                                    type="date"
-                                                    value={echeanceDette}
-                                                    onChange={(e) => setEcheanceDette(e.target.value)}
-                                                    required
-                                                    className="rounded-pill"
-                                                />
-                                            </Form.Group>
-                                        </Col>
-                                    )}
-                                </Row>
-                            )}
-                            <div className="d-flex justify-content-between align-items-center mt-3">
-                                <h2 className="fw-bold text-primary">Total: {calculerTotal().toLocaleString()} GNF</h2>
-                                <Button variant="success" size="lg" onClick={effectuerVente}>
-                                Valider la vente
-                                </Button>
-                            </div>
-                            </>
-                        ) : (
-                            <Alert variant="info">
-                            Le panier est vide. Ajoutez des articles pour effectuer une vente.
-                            </Alert>
-                        )}
-                        </Card.Body>
-                    </Card>
-                    </Col>
-
-                    <Col md={4}>
-                    <Card className="border-0 shadow-sm rounded-4">
-                        <Card.Header>Historique récent</Card.Header>
-                        <Card.Body>
-                        {historique.filter(v => !v.isCancelled).slice(0, 5).map(vente => ( // Affiche les 5 ventes valides les plus récentes
-                            <div key={vente._id} className="d-flex gap-3 mb-3 pb-3 border-bottom">
-                                {vente.article?.image && <img src={vente.article?.image} alt="" className="rounded" style={{width: '45px', height: '45px', objectFit: 'cover', cursor: 'pointer'}} onClick={() => handleImageClick(vente.article?.image)} />}
-                                <div className="flex-grow-1">
-                                    <div className="d-flex justify-content-between">
-                                        <div>
-                                            <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
-                                            {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
-                                            )}
-                                        </div>
-                                        <Badge bg="success" text="white">{vente.prixTotal.toLocaleString()} GNF</Badge>
-                                    </div>
-                                    <div className="text-muted small mt-1">
-                                        Quantité: {vente.quantite} | Date: {new Date(vente.createdAt).toLocaleDateString()}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                        {historique.length === 0 && (
-                            <Alert variant="info">Aucune vente enregistrée</Alert>
-                        )}
-                        </Card.Body>
-                    </Card>
-                    </Col>
-                </Row>
+                <SaleTab
+                    panier={panier}
+                    clients={clients}
+                    articles={articles}
+                    selectedClientId={selectedClientId}
+                    setSelectedClientId={setSelectedClientId}
+                    setShowClientModal={setShowClientModal}
+                    barcodeInputRef={barcodeInputRef}
+                    barcode={barcode}
+                    setBarcode={setBarcode}
+                    handleBarcodeScan={handleBarcodeScan}
+                    selectedArticle={selectedArticle}
+                    setSelectedArticle={setSelectedArticle}
+                    quantite={quantite}
+                    setQuantite={setQuantite}
+                    remisePanier={remisePanier}
+                    setRemisePanier={setRemisePanier}
+                    ajouterAuPanier={ajouterAuPanier}
+                    getEffectivePrice={getEffectivePrice}
+                    handleImageClick={handleImageClick}
+                    retirerDuPanier={retirerDuPanier}
+                    montantPaye={montantPaye}
+                    setMontantPaye={setMontantPaye}
+                    echeanceDette={echeanceDette}
+                    setEcheanceDette={setEcheanceDette}
+                    calculerTotal={calculerTotal}
+                    effectuerVente={effectuerVente}
+                    historique={historique}
+                />
             </Tab>
             <Tab eventKey="history" title={<span className="d-flex align-items-center"><iconify-icon icon="solar:bill-list-bold" className="me-2"></iconify-icon>Historique Complet</span>}>
-                <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
-                    <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center">
-                        <h5 className="mb-0 fw-bold">Historique des Transactions</h5>
-                        <Form.Check 
-                            type="switch"
-                            id="cancelled-sales-switch"
-                            label="Afficher uniquement les ventes annulées"
-                            checked={showCancelledOnly}
-                            onChange={(e) => {
-                                setCurrentPage(1);
-                                setShowCancelledOnly(e.target.checked);
-                            }}
-                        />
-                    </Card.Header>
-                    <Card.Body className="p-0">
-                        <Table hover responsive className="align-middle mb-0">
-                            <thead className="bg-light">
-                                <tr>
-                                    <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Date</th>
-                                    <th className="py-3 border-0 text-secondary small text-uppercase">Article</th>
-                                    <th className="py-3 border-0 text-secondary small text-uppercase text-center">Qté</th>
-                                    <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                                    <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
-                                    <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Statut / Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {historique.map(vente => (
-                                    <tr key={vente._id} className={
-                                        vente.statut === 'refusee' || vente.isCancelled ? "bg-light text-muted" :
-                                        vente.statut === 'en_attente_remise' ? "bg-warning-subtle" :
-                                        ""
-                                    }>
-                                        <td className="ps-4">
-                                            <div className="fw-bold">{new Date(vente.createdAt).toLocaleDateString()}</div>
-                                            <div className="small text-muted">{new Date(vente.createdAt).toLocaleTimeString()}</div>
-                                        </td>
-                                        <td>
-                                            <div className="d-flex align-items-center">
-                                                {vente.article?.image ? (
-                                                    <img src={vente.article?.image} alt="" className="rounded shadow-sm me-3" style={{width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer', filter: vente.isCancelled ? 'grayscale(100%)' : 'none'}} onClick={() => handleImageClick(vente.article?.image)} />
-                                                ) : (
-                                                    <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                                                )}
-                                                <div>
-                                                    <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
-                                                    {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                                        <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
-                                                    )}
-                                                    {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="text-center"><Badge bg="light" text="dark" className="border">{vente.quantite}</Badge></td>
-                                        <td className="text-end fw-bold text-primary">
-                                            {vente.isCancelled ? <span className="text-decoration-line-through text-muted">{vente.prixTotal.toLocaleString()} GNF</span> : `${vente.prixTotal.toLocaleString()} GNF`}
-                                        </td>
-                                        <td>{vente.client ? <div className="d-flex align-items-center gap-1"><iconify-icon icon="solar:user-circle-bold" className="text-muted"></iconify-icon> {vente.client.nom}</div> : <span className="text-muted small">Passage</span>}</td>
-                                        <td className="pe-4 text-end">
-                                            {(() => {
-                                                if (vente.statut === 'refusee') {
-                                                    return (
-                                                        <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                                            <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                            REMISE REFUSÉE
-                                                        </Badge>
-                                                    );
-                                                }
-                                                if (vente.isCancelled) {
-                                                    return (
-                                                        <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                                            <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                            VENTE ANNULÉE
-                                                        </Badge>
-                                                    );
-                                                }
-                                                if (vente.statut === 'en_attente_remise') {
-                                                    return (
-                                                        <Badge bg="warning-subtle" text="warning" className="px-3 py-2 rounded-pill">
-                                                            <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                            EN ATTENTE
-                                                        </Badge>
-                                                    );
-                                                }
-                                                return (
-                                                    <Button 
-                                                        variant="outline-danger" 
-                                                        size="sm" 
-                                                        className="rounded-pill px-3"
-                                                        onClick={() => { setSaleToCancel(vente); setShowCancelModal(true); }}
-                                                        disabled={!isCancellationAllowed(vente)}
-                                                        title={!isCancellationAllowed(vente) ? "Délai d'annulation dépassé (24h)" : "Annuler cette vente"}
-                                                    >
-                                                        <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
-                                                        Annuler
-                                                    </Button>
-                                                );
-                                            })()}
-                                        </td>
-                                    </tr>
-                                ))}
-                               
-                            </tbody>
-                        </Table>
-                    </Card.Body>
-                </Card>
-                    
+                <HistoryTab
+                    historique={historique}
+                    showCancelledOnly={showCancelledOnly}
+                    setShowCancelledOnly={setShowCancelledOnly}
+                    setCurrentPage={setCurrentPage}
+                    isCancellationAllowed={isCancellationAllowed}
+                    handleImageClick={handleImageClick}
+                    setSaleToCancel={setSaleToCancel}
+                    setShowCancelModal={setShowCancelModal}
+                />
             </Tab>
         </Tabs>
       )}
 
       {/* Modale de confirmation d'annulation */}
-      <Modal show={showCancelModal} onHide={() => setShowCancelModal(false)}>
-        <Modal.Header closeButton><Modal.Title>Annuler la vente</Modal.Title></Modal.Header>
-        <Modal.Body>Êtes-vous sûr de vouloir annuler cette vente ? Le stock sera restauré.</Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowCancelModal(false)}>Non</Button>
-          <Button variant="danger" onClick={confirmCancel}>Oui, annuler</Button>
-        </Modal.Footer>
-      </Modal>
+      <CancelSaleModal
+        show={showCancelModal}
+        onHide={() => setShowCancelModal(false)}
+        onConfirm={confirmCancel}
+      />
 
       {/* Modale d'aperçu d'image */}
-      <Modal show={showImageModal} onHide={() => setShowImageModal(false)} centered size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title>Aperçu du produit</Modal.Title>
-        </Modal.Header>
-        <Modal.Body className="text-center bg-light p-4">
-          {previewImage && <img src={previewImage} alt="Aperçu grand format" className="img-fluid rounded shadow" style={{ maxHeight: '80vh' }} />}
-        </Modal.Body>
-      </Modal>
+      <ImagePreviewModal
+        show={showImageModal}
+        onHide={() => setShowImageModal(false)}
+        image={previewImage}
+      />
 
       {/* Modale Scanner Caméra */}
-      <Modal show={showScanner} onHide={() => setShowScanner(false)} centered>
-        <Modal.Header closeButton>
-          <Modal.Title>Scanner un code-barres</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-            <div id="reader" width="100%"></div>
-            <p className="text-center text-muted mt-2 small">Le scanner reste ouvert pour ajouter plusieurs articles.</p>
-            {error && <Alert variant="danger" className="mt-2 py-2 small text-center">{error}</Alert>}
-        </Modal.Body>
-      </Modal>
+      <ScannerModal
+        show={showScanner}
+        onHide={() => setShowScanner(false)}
+        error={error}
+      />
 
-      {/* Modale Impression Reçu (Après Vente) */}
-      <Modal show={showReceiptModal} onHide={handleCloseReceiptModal} centered>
-        <Modal.Header closeButton>
-            <Modal.Title className="text-success">
-                <iconify-icon icon="solar:check-circle-bold" className="me-2 align-middle"></iconify-icon>
-                Aperçu du Reçu
-            </Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-            <div className="d-flex justify-content-center bg-light p-3 border rounded">
-                <ThermalTicket ref={ticketRef} ticketData={lastSaleData} />
-            </div>
-        </Modal.Body>
-        <Modal.Footer>
-            <div className="d-flex justify-content-end w-100 gap-2">
-                <Button variant="secondary" onClick={handleCloseReceiptModal}>
-                    Fermer
-                </Button>
-                <Button variant="primary" onClick={handlePrintReceipt}>
-                    <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
-                    Imprimer
-                </Button>
-            </div>
-        </Modal.Footer>
-      </Modal>
+      {/* Modale Impression Ticket (Imprimer ou Ignorer) */}
+      <ReceiptModal
+        show={showReceiptModal}
+        onHide={handleCloseReceiptModal}
+        onPrint={handlePrintReceipt}
+      />
 
       {/* Modale Création Rapide Client */}
       <ClientModal

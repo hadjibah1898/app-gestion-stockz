@@ -4,15 +4,15 @@
 // Affiche les informations sur le message, la date et le statut
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Spinner, Badge, Form, Button, Table } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
-import { useNotifications } from '../NotificationContext';
+import { useNotifications } from '../NotificationContext'; // Assurez-vous que ce chemin est correct
 
 const NotificationsHistoryView = () => {
     const userRole = (localStorage.getItem('userRole') || '').trim();
     const navigate = useNavigate();
-    const { notifications, loading, markAsRead, markAllAsRead } = useNotifications();
+    const { notifications, loading, markAsRead, markAllAsRead, fetchNotifications } = useNotifications();
     const [searchTerm, setSearchTerm] = useState('');
 
     const handleRowClick = (notification) => {
@@ -26,6 +26,13 @@ const NotificationsHistoryView = () => {
             navigate(notification.link);
         }
     };
+
+    // Ajout pour rafraîchir les notifications au montage du composant
+    useEffect(() => {
+        if (fetchNotifications) {
+            fetchNotifications();
+        }
+    }, [fetchNotifications]);
 
     const getTypeBadge = (type) => {
         switch (type) {
@@ -114,9 +121,9 @@ const NotificationsHistoryView = () => {
                             Tout marquer comme lu
                         </Button>
                     )}
-                    <Button variant="outline-primary" disabled className="rounded-pill shadow-sm">
+                    <Button variant="outline-primary" onClick={fetchNotifications} disabled={loading} className="rounded-pill shadow-sm">
                         <iconify-icon icon="solar:refresh-bold" className="me-2 align-middle"></iconify-icon>
-                        Actualiser
+                        {loading ? 'Actualisation...' : 'Actualiser'}
                     </Button>
                 </div>
             </div>

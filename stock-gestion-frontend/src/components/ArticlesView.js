@@ -12,6 +12,7 @@ import IntelligentSupplyModal from './common/IntelligentSupplyModal'; // Importe
 import { useLocation, useSearchParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import logo from '../assets/logo.png';
 
 const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [articles, setArticles] = useState([]);
@@ -251,18 +252,20 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
-    
-    // En-tête du rapport avec fond coloré
-    doc.setFillColor(41, 128, 185); // Bleu professionnel
-    doc.rect(0, 0, 210, 25, 'F');
-    
+    let finalY = 0;
+
+    // --- 1. EN-TÊTE ---
+    doc.addImage(logo, 'PNG', 14, 8, 40, 15);
+
     doc.setFontSize(18);
-    doc.setTextColor(255, 255, 255);
-    doc.text(title || "Rapport de Stock", 14, 16);
-    
+    doc.setTextColor(41, 128, 185);
+    doc.setFont("helvetica", "bold");
+    doc.text(title || "Rapport de Stock", 60, 16);
+
     doc.setFontSize(10);
-    doc.setTextColor(220, 220, 220);
-    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 14, 22);
+    doc.setTextColor(100);
+    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 60, 22);
+    finalY = 35;
 
     // Calcul des statistiques globales pour le PDF
     const totalArticles = filteredArticles.reduce((acc, curr) => acc + curr.quantite, 0);
@@ -272,27 +275,29 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     // Affichage des résumés dans un cadre
     doc.setFillColor(245, 247, 250);
     doc.setDrawColor(200, 200, 200);
-    doc.roundedRect(14, 30, 182, 25, 2, 2, 'FD');
+    doc.roundedRect(14, finalY, 182, 25, 2, 2, 'FD');
+    finalY += 5;
 
     doc.setFontSize(10);
     doc.setTextColor(50);
     
     // Ligne 1 : Nombre d'articles
-    doc.text(`Nombre total d'articles :`, 20, 40);
+    doc.text(`Nombre total d'articles :`, 20, finalY + 5);
     doc.setFont("helvetica", "bold");
-    doc.text(`${totalArticles}`, 65, 40);
+    doc.text(`${totalArticles}`, 65, finalY + 5);
     doc.setFont("helvetica", "normal");
 
     // Ligne 2 : Valeurs financières
-    doc.text(`Valeur Stock (Achat) :`, 20, 48);
+    doc.text(`Valeur Stock (Achat) :`, 20, finalY + 13);
     doc.setFont("helvetica", "bold");
-    doc.text(`${(totalValeurAchat.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 65, 48);
+    doc.text(`${(totalValeurAchat.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 65, finalY + 13);
     
     doc.setFont("helvetica", "normal");
-    doc.text(`Valeur Potentielle (Vente) :`, 110, 48);
+    doc.text(`Valeur Potentielle (Vente) :`, 110, finalY + 13);
     doc.setFont("helvetica", "bold");
-    doc.text(`${(totalValeurVente.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 160, 48);
+    doc.text(`${(totalValeurVente.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 160, finalY + 13);
     doc.setFont("helvetica", "normal");
+    finalY += 30;
     
     const tableColumn = ["Nom", "Code", "Boutique", "P. Achat", "P. Vente", "Qté", "Valeur Stock"];
     const tableRows = [];
@@ -314,7 +319,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 60,
+      startY: finalY,
       theme: 'grid',
       styles: { 
         fontSize: 9, 

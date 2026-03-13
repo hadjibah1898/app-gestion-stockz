@@ -2,6 +2,7 @@ const Fournisseur = require('../models/Fournisseur');
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
 const Mouvement = require('../models/Mouvement');
+const { logAction } = require('../services/auditLogService');
 
 // --- CRUD Fournisseur ---
 
@@ -147,6 +148,16 @@ exports.approvisionnerCentrale = async (req, res) => {
             articles: items.map(i => ({ nomArticle: i.nom, quantite: i.quantite })),
             operateur: req.user.id,
             details: `Depuis fournisseur ${fournisseur.nom}`
+        });
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'SUPPLY_STOCK',
+            entity: 'Fournisseur',
+            entityId: fournisseurId,
+            details: { items, created: articlesCrees, updated: articlesMisAJour },
+            status: 'SUCCESS'
         });
 
         res.status(200).json({ 

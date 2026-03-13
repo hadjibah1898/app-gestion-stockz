@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const Boutique = require('../models/Boutique');
 const nodemailer = require('nodemailer');
 const Notification = require('../models/Notification');
+const { logAction } = require('../services/auditLogService');
 
 exports.register = async (req, res) => {
     try {
@@ -20,19 +21,31 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
-        const user = await User.findOne({ email });
+        const user = await User.findOne({ email }).select('+password');
         
         if (!user || !(await user.comparePassword(password))) {
+            // Log failed login attempt
+            await logAction({
+                req,
+                user: { _id: '000000000000000000000000', nom: 'Système' }, // Use a system user for failed logins
+                action: 'LOGIN_FAILURE',
+                entity: 'User',
+                details: { email: email, reason: 'Identifiants invalides' },
+                status: 'FAILURE',
+                errorMessage: 'Identifiants invalides'
+            });
             return res.status(401).json({ message: "Identifiants invalides" });
         }
 
         // Vérification du statut actif. 
         if (user.active === false && user.role !== 'Admin') {
+            await logAction({ req, user, action: 'LOGIN_FAILURE', entity: 'User', details: { email: email, reason: 'Compte désactivé' }, status: 'FAILURE', errorMessage: 'Compte désactivé' });
             return res.status(403).json({ message: "Votre compte est désactivé. Veuillez contacter l'administrateur." });
         }
 
         // Vérification qu'une boutique est bien assignée pour les gérants
         if (user.role === 'Gérant' && !user.boutique) {
+            await logAction({ req, user, action: 'LOGIN_FAILURE', entity: 'User', details: { email: email, reason: 'Aucune boutique associée' }, status: 'FAILURE', errorMessage: 'Aucune boutique associée' });
             return res.status(403).json({ message: "Accès refusé : Aucune boutique n'est associée à ce compte. Veuillez contacter l'administrateur." });
         }
 
@@ -42,6 +55,19 @@ exports.login = async (req, res) => {
             process.env.JWT_SECRET, 
             { expiresIn: '24h' }
         );
+
+        // Mise à jour de la date de dernière connexion
+        user.lastLogin = new Date();
+        await user.save();
+
+        // Log successful login
+        await logAction({
+            req,
+            user,
+            action: 'LOGIN_SUCCESS',
+            entity: 'User',
+            status: 'SUCCESS'
+        });
 
         res.json({ token, role: user.role, nom: user.nom, mustChangePassword: user.mustChangePassword });
     } catch (error) {
@@ -82,7 +108,7 @@ exports.markAllNotificationsRead = async (req, res) => {
 
 exports.updateManager = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User.findById(req.params.id).lean();
         if (!user) {
             return res.status(404).json({ message: "Gérant introuvable." });
         }
@@ -104,23 +130,39 @@ exports.updateManager = async (req, res) => {
             }
         }
 
+        const userToUpdate = await User.findById(req.params.id);
+
         // Update fields
-        user.nom = req.body.nom || user.nom;
-        user.email = req.body.email || user.email;
+        userToUpdate.nom = req.body.nom || userToUpdate.nom;
+        userToUpdate.email = req.body.email || userToUpdate.email;
         
         if (req.body.boutique !== undefined) {
-            user.boutique = req.body.boutique || null;
+            userToUpdate.boutique = req.body.boutique || null;
         }
         if (req.body.active !== undefined) {
-            user.active = req.body.active;
+            userToUpdate.active = req.body.active;
         }
 
         // If password is provided, the pre-save hook will hash it
         if (req.body.password) {
-            user.password = req.body.password;
+            userToUpdate.password = req.body.password;
         }
 
-        const updatedUser = await user.save();
+        const updatedUser = await userToUpdate.save();
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'UPDATE_USER',
+            entity: 'User',
+            entityId: updatedUser._id,
+            details: {
+                before: user,
+                after: updatedUser.toObject()
+            },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json(updatedUser);
 
     } catch (error) {
@@ -176,6 +218,16 @@ exports.createManager = async (req, res) => {
             mustChangePassword: true // Force le changement de mot de passe à la première connexion
         });
 
+        await logAction({
+            req,
+            user: req.user,
+            action: 'CREATE_USER',
+            entity: 'User',
+            entityId: user._id,
+            details: { createdUser: { nom: user.nom, email: user.email, role: user.role } },
+            status: 'SUCCESS'
+        });
+
         // 3. Envoyer l'email avec le mot de passe
         // Configuration du transporteur (Nécessite les variables d'environnement EMAIL_USER et EMAIL_PASS)
         const transporter = nodemailer.createTransport({
@@ -229,8 +281,17 @@ exports.createManager = async (req, res) => {
             }
         });
 
-        res.status(201).json({ message: "Compte Gérant créé avec succès. Un email a été envoyé.", userId: user._id });
+        res.status(201).json({ message: "Compte Gérant créé avec succès. Un email a été envoyé.", user: user });
     } catch (error) {
+        await logAction({
+            req,
+            user: req.user,
+            action: 'CREATE_USER',
+            entity: 'User',
+            details: { data: req.body },
+            status: 'FAILURE',
+            errorMessage: error.message
+        });
         if (error.code === 11000) return res.status(400).json({ message: "Un utilisateur avec cet email existe déjà." });
         res.status(400).json({ message: error.message });
     }
@@ -259,6 +320,7 @@ exports.changePassword = async (req, res) => {
         }
 
         if (!await user.comparePassword(currentPassword)) {
+            await logAction({ req, user, action: 'CHANGE_PASSWORD', entity: 'User', entityId: user._id, status: 'FAILURE', errorMessage: 'Mot de passe actuel incorrect.' });
             return res.status(400).json({ message: "Mot de passe actuel incorrect." });
         }
 
@@ -266,8 +328,21 @@ exports.changePassword = async (req, res) => {
         user.mustChangePassword = false; // Désactive l'obligation de changement
         await user.save();
 
+        await logAction({
+            req,
+            user,
+            action: 'CHANGE_PASSWORD',
+            entity: 'User',
+            entityId: user._id,
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: "Mot de passe modifié avec succès." });
     } catch (error) {
+        try {
+            const user = await User.findById(req.user.id);
+            await logAction({ req, user, action: 'CHANGE_PASSWORD', entity: 'User', entityId: user._id, status: 'FAILURE', errorMessage: error.message });
+        } catch (logError) { console.error("Failed to log password change error", logError); }
         res.status(500).json({ message: error.message });
     }
 };

@@ -1,6 +1,16 @@
+/**
+ * @file CaisseView.js
+ * @description Ce composant gère l'ensemble de la logique de la caisse pour un gérant.
+ * Il permet d'ouvrir la caisse avec un fond initial, de la clôturer en générant un rapport,
+ * et de gérer les dépenses de la session.
+ * Il est divisé en plusieurs onglets :
+ * - Caisse : Pour l'ouverture/clôture.
+ * - Dépenses : Pour enregistrer les dépenses et payer les commissions.
+ * - Mes Rapports : Pour visualiser l'historique des rapports de caisse du gérant.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Form, Spinner, Alert, Row, Col, InputGroup, Modal, Tabs, Tab, Table, Badge } from 'react-bootstrap';
-import { caisseAPI } from '../services/api';
+import { caisseAPI, clientAPI } from '../services/api';
 
 // CSS pour l'animation de clignotement
 const blinkAnimationStyle = `
@@ -44,7 +54,7 @@ const CaisseView = () => {
     
     // Nouvel état pour les statistiques de la session
     const [statistiquesSession, setStatistiquesSession] = useState(null);
-    
+
     const fetchStatut = useCallback(async () => {
         try {
             setLoading(true);
@@ -117,7 +127,8 @@ const CaisseView = () => {
             const timeoutId = setTimeout(() => {
                 const montantClotureNum = parseFloat(value);
                 const totalDepenses = caisseStatut.session?.totalDepenses || 0;
-                const soldeTheorique = (caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - totalDepenses;
+                const totalDettes = caisseStatut.session?.totalDettes || 0;
+                const soldeTheorique = (caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - totalDettes - totalDepenses;
                 const ecartCalcule = montantClotureNum - soldeTheorique;
                 
                 setEcart(ecartCalcule);
@@ -141,7 +152,8 @@ const CaisseView = () => {
 
         // Recalculer l'écart immédiatement pour validation (évite les problèmes de timeout)
         const totalDepenses = caisseStatut.session?.totalDepenses || 0;
-        const soldeTheorique = (caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - totalDepenses;
+        const totalDettes = caisseStatut.session?.totalDettes || 0;
+        const soldeTheorique = (caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - totalDettes - totalDepenses;
         const ecartCalcule = montantClotureNum - soldeTheorique;
 
         // Vérifier si un écart existe et si la justification est obligatoire
@@ -153,7 +165,9 @@ const CaisseView = () => {
         }
 
         try {
-            await caisseAPI.fermer({ montantCloture: montantClotureNum, commentairesGérant: commentaires });
+            await caisseAPI.fermer({ 
+                montantCloture: montantClotureNum, commentairesGérant: commentaires 
+            });
             setSuccess("Caisse fermée et rapport généré avec succès.");
             setMontantCloture('');
             setCommentaires('');
@@ -265,7 +279,7 @@ const CaisseView = () => {
                     </div>
                 </Tab>
                 <Tab eventKey="depenses" title="Dépenses">
-                    <DepensesTab onExpenseCreated={fetchStatut} />
+                    <DepensesTab onExpenseCreated={fetchStatut} key={caisseStatut?._id || 'no-session'} caisseStatut={caisseStatut} />
                 </Tab>
                 <Tab eventKey="rapports" title="Mes Rapports">
                     <RapportsTab />
@@ -329,7 +343,13 @@ const CaisseView = () => {
                                     </td>
                                 </tr>
                                 <tr>
-                                    <td className="text-muted">Total Dépenses Session</td>
+                                    <td className="text-muted">Dettes accordées (Crédit)</td>
+                                    <td className="text-end fw-bold text-warning">
+                                        - {(statistiquesSession?.session?.totalDettes || 0).toLocaleString()} GNF
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td className="text-muted">Total Dépenses</td>
                                     <td className="text-end fw-bold text-danger">
                                         - {(statistiquesSession?.session?.totalDepenses || 0).toLocaleString()} GNF
                                     </td>
@@ -337,7 +357,7 @@ const CaisseView = () => {
                                 <tr style={{border: '2px solid var(--bs-danger)'}}>
                                     <td className="fw-bold text-danger">Solde théorique attendu</td>
                                     <td className="text-end fw-bold fs-5 text-danger">
-                                        {((statistiquesSession?.fondInitial || caisseStatut?.fondInitial || 0) + (statistiquesSession?.session?.totalVentes || caisseStatut?.session?.totalVentes || 0) - (statistiquesSession?.session?.totalDepenses || 0)).toLocaleString()} GNF
+                                        {((statistiquesSession?.fondInitial || caisseStatut?.fondInitial || 0) + (statistiquesSession?.session?.totalVentes || caisseStatut?.session?.totalVentes || 0) - (statistiquesSession?.session?.totalDettes || 0) - (statistiquesSession?.session?.totalDepenses || 0)).toLocaleString()} GNF
                                     </td>
                                 </tr>
                             </tbody>
@@ -386,30 +406,74 @@ const CaisseView = () => {
 };
 
 // Sous-composant pour l'onglet Dépenses
-const DepensesTab = ({ onExpenseCreated }) => {
+const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [depenses, setDepenses] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [showModal, setShowModal] = useState(false); // Uniquement pour la création
+    const [showModal, setShowModal] = useState(false); // Pour la création de dépense simple
+    const [showCommissionModal, setShowCommissionModal] = useState(false); // Pour le paiement de commission
     const [newExpense, setNewExpense] = useState({ montant: '', motif: '' });
     const [submitLoading, setSubmitLoading] = useState(false);
     const [error, setError] = useState('');
     
+    // États pour le paiement de commission
+    const [workers, setWorkers] = useState([]);
+    const [loadingWorkers, setLoadingWorkers] = useState(false);
+    const [selectedWorkerId, setSelectedWorkerId] = useState('');
+    const [paymentAmount, setPaymentAmount] = useState('');
+
+    const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false);
+    const [commissionError, setCommissionError] = useState('');
+    
     const fetchDepenses = useCallback(() => {
+        // Si aucune session de caisse n'est ouverte, on n'affiche aucune dépense.
+        if (!caisseStatut) {
+            setDepenses([]);
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         caisseAPI.getMesDepenses()
-            .then(res => setDepenses(res.data))
-            .catch(err => console.error(err))
+            .then(res => {
+                // On filtre les dépenses pour ne garder que celles de la session de caisse actuelle.
+                const sessionDepenses = res.data.filter(d => d.ouvertureCaisse === caisseStatut._id);
+                setDepenses(sessionDepenses);
+            })
+            .catch(err => {
+                console.error(err);
+                setDepenses([]); // Vider en cas d'erreur pour éviter d'afficher de mauvaises données.
+            })
             .finally(() => setLoading(false));
-    }, []);
+    }, [caisseStatut]);
 
     useEffect(() => {
         fetchDepenses();
     }, [fetchDepenses]);
 
+    // Charger les ouvriers quand la modale de commission s'ouvre
+    useEffect(() => {
+        if (showCommissionModal) {
+            setLoadingWorkers(true);
+            clientAPI.getAll()
+                .then(res => {
+                    const workersWithCommission = res.data.filter(c => c.type === 'Ouvrier' && c.commission > 0);
+                    setWorkers(workersWithCommission);
+                })
+                .catch(err => setCommissionError("Erreur chargement des ouvriers."))
+                .finally(() => setLoadingWorkers(false));
+        }
+    }, [showCommissionModal]);
+
     const handleOpenCreateModal = () => {
         setNewExpense({ montant: '', motif: '' });
         setError('');
         setShowModal(true);
+    };
+
+    const handleOpenCommissionModal = () => {
+        setSelectedWorkerId('');
+        setPaymentAmount('');
+        setCommissionError('');
+        setShowCommissionModal(true);
     };
 
     const handleCreateExpense = async (e) => {
@@ -429,14 +493,69 @@ const DepensesTab = ({ onExpenseCreated }) => {
         }
     };
 
+    const handlePayCommission = async (e) => {
+        e.preventDefault();
+        setCommissionSubmitLoading(true);
+        setCommissionError('');
+        const selectedWorker = workers.find(w => w._id === selectedWorkerId);
+        if (!selectedWorker) {
+            setCommissionError("Veuillez sélectionner un ouvrier.");
+            setCommissionSubmitLoading(false);
+            return;
+        }
+
+        const amountToPay = parseFloat(paymentAmount);
+        if (isNaN(amountToPay) || amountToPay <= 0) {
+            setCommissionError("Le montant à payer est invalide.");
+            setCommissionSubmitLoading(false);
+            return;
+        }
+
+        if (amountToPay > selectedWorker.commission) {
+            setCommissionError("Le montant à payer ne peut pas dépasser la commission due.");
+            setCommissionSubmitLoading(false);
+            return;
+        }
+
+        try {
+            // 1. Créer la dépense
+            await caisseAPI.creerDepense({
+                montant: amountToPay,
+                motif: `Paiement commission: ${selectedWorker.nom}`
+            });
+
+            // 2. Mettre à jour la commission de l'ouvrier
+            const newCommission = selectedWorker.commission - amountToPay;
+            await clientAPI.update(selectedWorker._id, { commission: newCommission });
+
+            // 3. Rafraîchir
+            fetchDepenses();
+            setShowCommissionModal(false);
+            if (onExpenseCreated) onExpenseCreated();
+
+        } catch (err) {
+            setCommissionError(err.response?.data?.message || "Erreur lors du paiement de la commission.");
+        } finally {
+            setCommissionSubmitLoading(false);
+        }
+    };
+
+    const selectedWorkerForInfo = workers.find(w => w._id === selectedWorkerId);
+
     return (
         <Card className="border-0 shadow-sm rounded-4 mt-4">
-            <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center">
+            <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h5 className="fw-bold mb-0">Mes Dépenses</h5>
-                <Button variant="primary" size="sm" onClick={handleOpenCreateModal}>
-                    <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
-                    Nouvelle Dépense
-                </Button>
+                <div className="d-flex gap-2">
+                    <Button variant="info" size="sm" onClick={handleOpenCommissionModal} className="text-white">
+                        <iconify-icon icon="solar:money-bag-bold" className="me-2 align-middle"></iconify-icon>
+                        Payer Commission
+                    </Button>
+                    <Button variant="primary" size="sm" onClick={handleOpenCreateModal}>
+                        <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
+                        Nouvelle Dépense
+                    </Button>
+                </div>
             </Card.Header>
             <Card.Body>
                 <Table striped hover responsive className="align-middle">
@@ -444,7 +563,7 @@ const DepensesTab = ({ onExpenseCreated }) => {
                         <tr>
                             <th>Date</th>
                             <th>Motif</th>
-                            <th>Montant</th>
+                            <th className="text-end">Montant</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -455,7 +574,7 @@ const DepensesTab = ({ onExpenseCreated }) => {
                                 <tr key={d._id}>
                                     <td>{new Date(d.createdAt).toLocaleDateString()}</td>
                                     <td>{d.motif}</td>
-                                    <td>{d.montant.toLocaleString()} GNF</td>
+                                    <td className="text-end fw-bold">{(d.montant || 0).toLocaleString()} GNF</td>
                                 </tr>
                             ))
                         ) : (
@@ -501,6 +620,62 @@ const DepensesTab = ({ onExpenseCreated }) => {
                         <Button variant="secondary" onClick={() => setShowModal(false)}>Annuler</Button>
                         <Button variant="primary" type="submit" disabled={submitLoading}>
                             {submitLoading ? <Spinner size="sm" /> : 'Enregistrer'}
+                        </Button>
+                    </Modal.Footer>
+                </Form>
+            </Modal>
+
+            {/* Modale Paiement Commission */}
+            <Modal show={showCommissionModal} onHide={() => setShowCommissionModal(false)} centered>
+                <Modal.Header closeButton>
+                    <Modal.Title>Payer une Commission</Modal.Title>
+                </Modal.Header>
+                <Form onSubmit={handlePayCommission}>
+                    <Modal.Body>
+                        {commissionError && <Alert variant="danger">{commissionError}</Alert>}
+                        {loadingWorkers ? <div className="text-center"><Spinner /></div> : (
+                            <>
+                                <Form.Group className="mb-3">
+                                    <Form.Label>Ouvrier</Form.Label>
+                                    <Form.Select
+                                        value={selectedWorkerId}
+                                        onChange={e => setSelectedWorkerId(e.target.value)}
+                                        required
+                                    >
+                                        <option value="">Sélectionner un ouvrier...</option>
+                                        {workers.map(w => (
+                                            <option key={w._id} value={w._id}>
+                                                {w.nom} (Due: {w.commission.toLocaleString()} GNF)
+                                            </option>
+                                        ))}
+                                    </Form.Select>
+                                    {workers.length === 0 && <Form.Text className="text-muted">Aucun ouvrier avec une commission en attente.</Form.Text>}
+                                </Form.Group>
+
+                                {selectedWorkerForInfo && (
+                                    <Form.Group className="mb-3">
+                                        <Form.Label>Montant à Payer</Form.Label>
+                                        <InputGroup>
+                                            <Form.Control
+                                                type="number"
+                                                required
+                                                min="1"
+                                                max={selectedWorkerForInfo.commission}
+                                                value={paymentAmount}
+                                                onChange={e => setPaymentAmount(e.target.value)}
+                                                placeholder={`Max: ${selectedWorkerForInfo.commission.toLocaleString()}`}
+                                            />
+                                            <InputGroup.Text>GNF</InputGroup.Text>
+                                        </InputGroup>
+                                    </Form.Group>
+                                )}
+                            </>
+                        )}
+                    </Modal.Body>
+                    <Modal.Footer>
+                        <Button variant="secondary" onClick={() => setShowCommissionModal(false)}>Annuler</Button>
+                        <Button variant="primary" type="submit" disabled={commissionSubmitLoading || !selectedWorkerId}>
+                            {commissionSubmitLoading ? <Spinner size="sm" /> : 'Payer et Enregistrer'}
                         </Button>
                     </Modal.Footer>
                 </Form>

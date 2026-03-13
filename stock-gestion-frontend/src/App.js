@@ -25,8 +25,10 @@ import StockStatusView from './components/StockStatusView';
 import ClientsView from './components/ClientsView';
 import NotificationsHistoryView from './components/NotificationsHistoryView';
 import ProtectedRoute from './components/common/ProtectedRoute';
+import AuditLogView from './components/AuditLogView'; // Importer le nouveau composant
 import CaisseView from './components/CaisseView';
 import AdminCaisseView from './components/AdminCaisseView';
+import DebtManagementView from './components/DebtManagementView';
 import './App.css';
 import setupAxiosInterceptors from './utils/axiosConfig';
 
@@ -171,6 +173,8 @@ function App() {
             <Route path="clients" element={<ClientsView />} />
             <Route path="notifications" element={<NotificationsHistoryView />} />
             <Route path="caisse" element={<AdminCaisseView />} />
+            <Route path="creances" element={<DebtManagementView />} />
+            <Route path="audit" element={<AuditLogView />} /> {/* Ajouter la nouvelle route */}
           </Route>
           
 
@@ -186,6 +190,7 @@ function App() {
             <Route path="historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
             <Route path="clients" element={<ClientsView userRole="Gérant" />} />
             <Route path="notifications" element={<NotificationsHistoryView />} />
+            <Route path="creances" element={<DebtManagementView />} />
             <Route path="caisse" element={<CaisseView />} />
           </Route>
 

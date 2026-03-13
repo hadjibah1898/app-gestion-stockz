@@ -8,7 +8,7 @@ const { checkCaisseOuverte, checkAucunRapportEnAttente } = require('../middlewar
 router.use(protect); // Toutes les routes suivantes nécessitent une connexion
 
 // Gérer sa propre caisse
-router.post('/ouvrir', authorize('Gérant'), checkAucunRapportEnAttente, caisseController.ouvrirCaisse);
+router.post('/ouvrir', authorize('Gérant'), caisseController.ouvrirCaisse);
 router.post('/fermer', authorize('Gérant'), checkCaisseOuverte, caisseController.fermerCaisse);
 router.get('/statut', authorize('Gérant'), caisseController.getStatutCaisse);
 router.get('/statistiques-session', authorize('Gérant'), checkCaisseOuverte, caisseController.getStatistiquesSession);

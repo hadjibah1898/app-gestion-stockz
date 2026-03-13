@@ -24,7 +24,7 @@ exports.ouvrirCaisse = async (req, res) => {
 
 exports.fermerCaisse = async (req, res) => {
     try {
-        const { montantCloture, commentairesGérant } = req.body;
+        const { montantCloture, commentairesGérant, paiementsCommissions } = req.body;
         const ouvertureCaisseId = req.ouvertureCaisse._id; // Fourni par le middleware checkCaisseOuverte
         const gerantId = req.user.id;
 
@@ -32,7 +32,7 @@ exports.fermerCaisse = async (req, res) => {
             return res.status(400).json({ message: "Le montant de clôture est requis." });
         }
 
-        const rapport = await caisseService.fermerCaisseEtCreerRapport({ ouvertureCaisseId, montantCloture, commentairesGérant, gerantId });
+        const rapport = await caisseService.fermerCaisseEtCreerRapport({ ouvertureCaisseId, montantCloture, commentairesGérant, gerantId, paiementsCommissions });
         res.status(201).json({ message: "Caisse fermée et rapport généré avec succès.", rapport });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la fermeture de la caisse.", error: error.message });

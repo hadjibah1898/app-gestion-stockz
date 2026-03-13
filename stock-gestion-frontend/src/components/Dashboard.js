@@ -7,10 +7,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Row, Col, Card, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer, Modal, Form, Spinner } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
-import { dashboardAPI, articleAPI, venteAPI } from '../services/api'; // Import the new API
+import { dashboardAPI, articleAPI, clientAPI } from '../services/api'; // Import the new API
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './Dashboard.css';
+import logo from '../assets/logo.png'; // Assurez-vous que le chemin vers votre logo est correct
 import { boutiqueAPI } from '../services/api'; // Import boutiqueAPI
 
 // Helper to format currency
@@ -85,6 +86,7 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [lowStockArticles, setLowStockArticles] = useState([]);
   const [allArticles, setAllArticles] = useState([]); // Nouvel état pour stocker tous les articles
+  const [evolutionData, setEvolutionData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', variant: 'light' });
   const [timeRange, setTimeRange] = useState('monthly'); // 1. Ajouter l'état pour le filtre
@@ -103,38 +105,23 @@ const Dashboard = () => {
     const fetchStats = async () => {
       try {
         setLoading(true);
-        // On récupère aussi l'historique des ventes pour corriger les calculs côté client (exclusion des annulés)
-        const [statsRes, articlesRes, ventesRes, boutiquesRes] = await Promise.all([
+        // Simplification : On fait confiance au backend pour les statistiques.
+        // On ne récupère plus l'historique complet des ventes ici.
+        const [statsRes, articlesRes, boutiquesRes, evolutionRes] = await Promise.all([
           dashboardAPI.getStats({ range: timeRange }),
           articleAPI.getAll(),
-          venteAPI.getHistorique(),
-          boutiqueAPI.getAll()
+          boutiqueAPI.getAll(),
+          clientAPI.getDebtEvolution()
         ]);
         
         let statsData = statsRes.data || {};
         const fetchedArticles = articlesRes.data || [];
-        const allVentes = ventesRes.data || [];
         const allBoutiques = boutiquesRes.data || [];
+        setEvolutionData(evolutionRes.data);
         
         // Identifier la boutique centrale
         const centrale = allBoutiques.find(b => b.type === 'Centrale');
         if (centrale) setCentralShopId(centrale._id);
-
-        // --- CORRECTIF : Recalcul des stats en excluant les ventes annulées ---
-        if (allVentes.length > 0) {
-            const validSales = allVentes.filter(v => !v.isCancelled);
-            const today = new Date().toISOString().split('T')[0];
-            const todaySales = validSales.filter(v => v.createdAt.startsWith(today));
-
-            statsData.dailySales = todaySales.reduce((acc, v) => acc + v.prixTotal, 0);
-            statsData.dailyOrders = todaySales.length;
-            statsData.totalCA = validSales.reduce((acc, v) => acc + v.prixTotal, 0);
-            statsData.totalVentes = validSales.length;
-            statsData.totalBenefice = validSales.reduce((acc, v) => {
-                const prixAchat = v.article?.prixAchat || 0;
-                return acc + (v.prixTotal - (prixAchat * v.quantite));
-            }, 0);
-        }
         
         setStats(statsData);
         setAllArticles(fetchedArticles); // Sauvegarder tous les articles pour la recherche ultérieure
@@ -203,6 +190,35 @@ const Dashboard = () => {
     stroke: { show: true, colors: [cardBg], width: 2 } // Bordure pour séparer les segments
   };
 
+  const debtEvolutionChartOptions = {
+    chart: { type: 'area', toolbar: { show: false }, fontFamily: 'inherit', foreColor: textColor },
+    colors: ['#dc3545'], // Red for debt
+    dataLabels: { enabled: false },
+    stroke: { curve: 'smooth', width: 2 },
+    fill: { 
+        type: 'gradient', 
+        gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.1, stops: [0, 100] } 
+    },
+    xaxis: { 
+        type: 'datetime',
+        categories: evolutionData.map(d => d.date) 
+    },
+    yaxis: {
+        title: { text: 'Montant Total des Dettes (GNF)' }
+    },
+    tooltip: { 
+        theme: theme,
+        x: { format: 'dd MMM yyyy' },
+        y: {
+            formatter: function (val) {
+                return val.toLocaleString('fr-FR') + " GNF"
+            }
+        }
+    },
+    grid: { borderColor: gridColor }
+  };
+  const debtEvolutionChartSeries = [{ name: "Dette Totale", data: evolutionData.map(d => d.totalDebt) }];
+
   // Logique de pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -211,85 +227,146 @@ const Dashboard = () => {
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
-    
-    // En-tête
-    doc.setFillColor(41, 128, 185);
-    doc.rect(0, 0, 210, 25, 'F');
+    const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+    let finalY = 0; // Garder une trace de la position Y
+
+    // --- 1. EN-TÊTE ---
+    // Ajout du logo dans l'en-tête
+    // Vous pouvez ajuster les valeurs (14, 8, 40, 15) pour changer la position (x, y) et la taille (largeur, hauteur)
+    doc.addImage(logo, 'PNG', 14, 8, 40, 15);
+
     doc.setFontSize(18);
-    doc.setTextColor(255, 255, 255);
-    doc.text("Rapport Tableau de Bord Admin", 14, 16);
+    doc.setTextColor(41, 128, 185);
+    doc.setFont("helvetica", "bold");
+    doc.text("Rapport de Synthèse - Dashboard Admin", 60, 16); // Décalé pour faire de la place au logo
     doc.setFontSize(10);
-    doc.setTextColor(220, 220, 220);
-    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 14, 22);
+    doc.setTextColor(100);
+    doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 60, 22);
+    finalY = 35; // Augmenter l'espace après l'en-tête
 
-    // Stats Globales Box
-    doc.setFillColor(245, 247, 250);
-    doc.setDrawColor(200, 200, 200);
-    doc.roundedRect(14, 30, 182, 30, 2, 2, 'FD');
+    // --- 2. RÉSUMÉ DES INDICATEURS CLÉS ---
+    doc.setFontSize(14);
+    doc.setTextColor(41, 128, 185);
+    doc.text("Indicateurs Clés", 14, finalY);
+    finalY += 5;
 
-    doc.setFontSize(10);
-    doc.setTextColor(50);
-    
-    doc.text(`Chiffre d'affaires :`, 20, 40);
-    doc.setFont("helvetica", "bold");
-    doc.text(`${formatCurrency(stats?.totalCA)}`, 60, 40);
-    
-    doc.setFont("helvetica", "normal");
-    doc.text(`Bénéfice Net :`, 110, 40);
-    doc.setFont("helvetica", "bold");
-    doc.text(`${formatCurrency(stats?.totalBenefice)}`, 150, 40);
+    const summaryData = [
+        ['Ventes du Jour', formatCurrency(stats?.dailySales)],
+        ['Commandes du Jour', stats?.dailyOrders || 0],
+        ['Recouvrement du Jour', formatCurrency(stats?.dailyRecoveries)],
+        ['Chiffre d\'Affaires Total', formatCurrency(stats?.totalCA)],
+        ['Bénéfice Net Total', formatCurrency(stats?.totalBenefice)],
+        ['Dette Totale Actuelle', formatCurrency(evolutionData[evolutionData.length - 1]?.totalDebt || 0)],
+        ['Articles en Stock Faible', `${lowStockArticles.length} article(s)`],
+    ];
 
-    doc.setFont("helvetica", "normal");
-    doc.text(`Total Ventes :`, 20, 50);
-    doc.setFont("helvetica", "bold");
-    doc.text(`${stats?.totalVentes}`, 60, 50);
+    autoTable(doc, {
+        startY: finalY,
+        body: summaryData,
+        theme: 'grid',
+        styles: {
+            fontStyle: 'bold',
+            fontSize: 10,
+        },
+        columnStyles: {
+            0: { fillColor: [245, 247, 250], textColor: 50 },
+            1: { halign: 'right' }
+        }
+    });
+    finalY = doc.lastAutoTable.finalY + 10;
 
-    let finalY = 70;
-
-    // Performance Boutiques
+    // --- 3. PERFORMANCE PAR BOUTIQUE ---
     if (stats?.performanceBoutiques?.length > 0) {
         doc.setFontSize(14);
         doc.setTextColor(41, 128, 185);
         doc.text("Performance par Boutique", 14, finalY);
+        finalY += 5;
         autoTable(doc, {
-            startY: finalY + 5,
-            head: [['Boutique', 'CA']],
+            startY: finalY,
+            head: [['Boutique', 'Chiffre d\'Affaires']],
             body: stats.performanceBoutiques.map(b => [b.nom, formatCurrency(b.chiffreAffaires)]),
-            theme: 'grid',
+            theme: 'striped',
             headStyles: { fillColor: [41, 128, 185] },
-            alternateRowStyles: { fillColor: [248, 249, 250] }
+            columnStyles: { 1: { halign: 'right' } }
         });
-        finalY = doc.lastAutoTable.finalY + 15;
+        finalY = doc.lastAutoTable.finalY + 10;
     }
 
-    // Stock Faible
-    if (lowStockArticles.length > 0) {
+    // --- 4. PERFORMANCE PAR GÉRANT ---
+    if (stats?.performanceGerants?.length > 0) {
+        // Vérifier si on a besoin d'une nouvelle page
+        if (finalY > pageHeight - 40) {
+            doc.addPage();
+            finalY = 20;
+        }
         doc.setFontSize(14);
-        doc.setTextColor(220, 53, 69); // Rouge pour l'alerte
-        doc.text("Alerte Stock Faible", 14, finalY);
+        doc.setTextColor(41, 128, 185);
+        doc.text("Performance par Gérant", 14, finalY);
+        finalY += 5;
         autoTable(doc, {
-            startY: finalY + 5,
-            head: [['Article', 'Boutique', 'Quantité']],
-            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', a.quantite]),
-            theme: 'grid',
-            headStyles: { fillColor: [220, 53, 69] },
-            alternateRowStyles: { fillColor: [255, 245, 245] }
+            startY: finalY,
+            head: [['Gérant', 'Boutique', 'Chiffre d\'Affaires']],
+            body: stats.performanceGerants.map(g => [g.nom, g.boutiqueNom || 'N/A', formatCurrency(g.chiffreAffaires)]),
+            theme: 'striped',
+            headStyles: { fillColor: [41, 128, 185] },
+            columnStyles: { 2: { halign: 'right' } }
         });
+        finalY = doc.lastAutoTable.finalY + 10;
     }
 
-    // Footer
+    // --- 5. TOP 5 ARTICLES VENDUS ---
+    if (stats?.productSales?.labels?.length > 0) {
+        if (finalY > pageHeight - 40) {
+            doc.addPage();
+            finalY = 20;
+        }
+        doc.setFontSize(14);
+        doc.setTextColor(41, 128, 185);
+        doc.text("Top 5 des Articles les plus Vendus", 14, finalY);
+        finalY += 5;
+        autoTable(doc, {
+            startY: finalY,
+            head: [['Article', 'Quantité Vendue']],
+            body: stats.productSales.labels.map((label, index) => [label, stats.productSales.series[index]]),
+            theme: 'striped',
+            headStyles: { fillColor: [41, 128, 185] },
+            columnStyles: { 1: { halign: 'center' } }
+        });
+        finalY = doc.lastAutoTable.finalY + 10;
+    }
+
+    // --- 6. ALERTE STOCK FAIBLE ---
+    if (lowStockArticles.length > 0) {
+        if (finalY > pageHeight - 50) {
+            doc.addPage();
+            finalY = 20;
+        }
+        doc.setFontSize(14);
+        doc.setTextColor(0, 0, 0); // Noir pour une meilleure lisibilité
+        doc.text("Alerte Stock Faible (≤ 10 unités)", 14, finalY); // Le titre est maintenant en noir
+        finalY += 5;
+        autoTable(doc, {
+            startY: finalY,
+            head: [['Article', 'Boutique', 'Quantité Restante']],
+            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', a.quantite]),
+            theme: 'striped',
+            headStyles: { fillColor: [220, 53, 69] }, // L'en-tête du tableau reste rouge pour signifier l'alerte
+            columnStyles: { 2: { halign: 'center' } }
+        });
+        finalY = doc.lastAutoTable.finalY + 10;
+    }
+
+    // --- 7. PIED DE PAGE ---
     const pageCount = doc.internal.getNumberOfPages();
     for(let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
         doc.setFontSize(8);
         doc.setTextColor(150);
-        const pageSize = doc.internal.pageSize;
-        const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
-        doc.text(`StockDash - Admin`, 14, pageHeight - 10);
-        doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+        doc.text(`StockDash - Rapport Admin`, 14, pageHeight - 10);
+        doc.text(`Page ${i} sur ${pageCount}`, doc.internal.pageSize.width - 14, pageHeight - 10, { align: 'right' });
     }
 
-    doc.save("dashboard_admin.pdf");
+    doc.save(`rapport_synthese_admin_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const handleLowStockAction = useCallback((article) => {
@@ -398,6 +475,10 @@ const Dashboard = () => {
                 <h4 className="mb-0 fw-bold">{stats?.dailyOrders || 0}</h4>
                 <small className="opacity-75">Commandes</small>
               </div>
+              <div className="glass-stat p-2 px-3 rounded-3">
+                <h4 className="mb-0 fw-bold">{formatCurrency(stats?.dailyRecoveries)}</h4>
+                <small className="opacity-75">Recouvrement</small>
+              </div>
             </div>
           </div>
           <div className="illustration-placeholder d-none d-md-block">
@@ -464,6 +545,23 @@ const Dashboard = () => {
               <Chart options={productChartOptions} series={stats?.productSales?.series || []} type="donut" height={320} />
             </Card.Body>
           </Card>
+        </Col>
+      </Row>
+
+      <Row className="g-4 mt-4">
+        <Col lg={12}>
+            <Card className="border-0 shadow-sm h-100 rounded-4">
+                <Card.Body className="p-4">
+                    <h5 className="fw-bold mb-3">Évolution du Total des Dettes</h5>
+                    {loading ? (
+                        <div className="text-center py-5"><Spinner animation="border" /></div>
+                    ) : evolutionData.length > 0 ? (
+                        <Chart options={debtEvolutionChartOptions} series={debtEvolutionChartSeries} type="area" height={300} />
+                    ) : (
+                        <Alert variant="info" className="m-0">Aucune donnée disponible pour afficher l'évolution des dettes.</Alert>
+                    )}
+                </Card.Body>
+            </Card>
         </Col>
       </Row>
 

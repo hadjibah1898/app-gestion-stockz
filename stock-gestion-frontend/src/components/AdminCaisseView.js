@@ -4,6 +4,7 @@ import { Card, Button, Table, Badge, Tabs, Tab, Spinner, Alert, Modal, Form, Row
 import { useSearchParams } from 'react-router-dom';
 import { caisseAPI, authAPI } from '../services/api';
 import jsPDF from 'jspdf';
+import logo from '../assets/logo.png';
 import autoTable from 'jspdf-autotable';
 
 const AdminCaisseView = () => {
@@ -41,29 +42,25 @@ const AdminCaisseView = () => {
         setLoading(true);
         setError('');
         try {
-            if (key === 'rapports') {
-                const [usersRes, res] = await Promise.all([
-                    authAPI.getUsers(),
-                    caisseAPI.listerRapports({ ...dateFilter, gerant: filterGerant })
-                ]);
-                setManagers(usersRes.data.filter(u => u.role === 'Gérant'));
-                setRapports(res.data);
-                setCurrentPage(1); // Reset page on filter change
-            } else if (key === 'caisse-centrale') {
-                const [usersRes, res] = await Promise.all([
-                    authAPI.getUsers(),
-                    caisseAPI.getCaisseAdmin()
-                ]);
-                setManagers(usersRes.data.filter(u => u.role === 'Gérant'));
-                setCaisseAdmin(res.data);
-            }
+            // On charge toutes les données nécessaires pour la vue, indépendamment de l'onglet
+            const [usersRes, rapportsRes, caisseAdminRes] = await Promise.all([
+                authAPI.getUsers(),
+                caisseAPI.listerRapports({ ...dateFilter, gerant: filterGerant }),
+                caisseAPI.getCaisseAdmin()
+            ]);
+
+            setManagers(usersRes.data.filter(u => u.role === 'Gérant'));
+            setRapports(rapportsRes.data);
+            setCaisseAdmin(caisseAdminRes.data);
+            setCurrentPage(1); // Réinitialiser la page lors d'un changement de filtre
+
         } catch (err) {
             console.error(err);
             setError("Impossible de charger les données. Vérifiez votre connexion.");
         } finally {
             setLoading(false);
         }
-    }, [key, dateFilter, filterGerant]);
+    }, [dateFilter, filterGerant]);
 
     useEffect(() => {
         fetchData();
@@ -141,11 +138,14 @@ const AdminCaisseView = () => {
         };
         
         // En-tête du document
+        doc.addImage(logo, 'PNG', 14, 8, 40, 15);
         doc.setFontSize(18);
-        doc.text("HISTORIQUE DES ENCAISSEMENTS", 14, 22);
+        doc.setTextColor(41, 128, 185);
+        doc.setFont("helvetica", "bold");
+        doc.text("HISTORIQUE DES ENCAISSEMENTS", 60, 16);
         doc.setFontSize(11);
         doc.setTextColor(100);
-        let startY = 32;
+        let startY = 30;
         doc.text(`Période du ${dateFilter.startDate || 'début'} au ${dateFilter.endDate || 'fin'}`, 14, startY);
         startY += 8;
         
@@ -315,17 +315,13 @@ const AdminCaisseView = () => {
         }
     };
 
-    // Calcul des totaux pour l'affichage
-    const totalRapports = rapports.reduce((acc, r) => acc + r.montantCloture, 0);
-    const totalTheorique = rapports.reduce((acc, r) => acc + r.soldeTheorique, 0);
-
     // Logique de pagination
     const indexOfLastItem = currentPage * itemsPerPage;
     const indexOfFirstItem = indexOfLastItem - itemsPerPage;
     const currentRapports = rapports.slice(indexOfFirstItem, indexOfLastItem);
     const totalPages = Math.ceil(rapports.length / itemsPerPage);
 
-    // Filtrage de l'historique des encaissements (Caisse Centrale)
+    // Filtrage de l'historique des encaissements (Caisse Centrale) pour les totaux et l'affichage
     const filteredHistory = caisseAdmin?.historique?.filter(entry => {
         const entryDate = new Date(entry.dateValidation);
         const start = dateFilter.startDate ? new Date(dateFilter.startDate) : null;
@@ -343,6 +339,10 @@ const AdminCaisseView = () => {
         }
         return dateMatch && gerantMatch;
     }) || [];
+
+    // Calcul des totaux pour l'affichage
+    const totalEncaissementsPeriode = filteredHistory.reduce((acc, entry) => acc + entry.montant, 0);
+    const totalTheorique = rapports.reduce((acc, r) => acc + r.soldeTheorique, 0);
 
     return (
         <div className="p-4">
@@ -395,8 +395,8 @@ const AdminCaisseView = () => {
                     <Card className="border-0 shadow-sm bg-primary-subtle text-primary h-100">
                         <Card.Body className="d-flex align-items-center justify-content-between">
                             <div>
-                                <h6 className="mb-1">Total Encaissé (Rapports)</h6>
-                                <h4 className="fw-bold mb-0">{formatCurrency(totalRapports)}</h4>
+                                <h6 className="mb-1">Total des Encaissements (Période)</h6>
+                                <h4 className="fw-bold mb-0">{formatCurrency(totalEncaissementsPeriode)}</h4>
                             </div>
                             <iconify-icon icon="solar:wallet-money-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
                         </Card.Body>
@@ -550,7 +550,11 @@ const AdminCaisseView = () => {
                                                             <div className="small text-muted">Validé par {entry.admin}</div>
                                                         </td>
                                                         <td>
-                                                            <div className="fw-bold">{entry.boutique}</div>
+                                                            {entry.description ? (
+                                                                <div className="fw-bold">{entry.description}</div>
+                                                            ) : (
+                                                                <div className="fw-bold">Rapport de: {entry.boutique}</div>
+                                                            )}
                                                             <div className="small text-muted">Gérant: {entry.gerant}</div>
                                                         </td>
                                                         <td className="text-end pe-4 fw-bold text-success">

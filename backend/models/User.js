@@ -25,7 +25,11 @@ const userSchema = new mongoose.Schema({
     mustChangePassword: {
         type: Boolean,
         default: false
-    }
+    },
+    lastLogin: {
+        type: Date,
+        default: null
+    },
 }, { timestamps: true });
 
 // Hashage du mot de passe avant sauvegarde [cite: 16]

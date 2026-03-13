@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
 const Client = require('../models/Client');
+const DebtPayment = require('../models/DebtPayment');
 const mongoose = require('mongoose');
 
 exports.getDashboardStats = async (req, res) => {
@@ -21,6 +22,22 @@ exports.getDashboardStats = async (req, res) => {
                     _id: null,
                     dailySales: { $sum: '$prixTotal' },
                     dailyOrders: { $sum: 1 }
+                }
+            }
+        ]);
+
+        // NOUVEAU: Calcul des recouvrements de dettes validés aujourd'hui
+        const dailyRecoveriesStats = await DebtPayment.aggregate([
+            {
+                $match: {
+                    statut: 'VALIDEE',
+                    dateValidation: { $gte: todayStart, $lte: todayEnd }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: '$montant' }
                 }
             }
         ]);
@@ -237,6 +254,7 @@ exports.getDashboardStats = async (req, res) => {
             // Nouveaux champs pour les graphiques et la bannière
             dailySales: dailyStats[0]?.dailySales || 0,
             dailyOrders: dailyStats[0]?.dailyOrders || 0,
+            dailyRecoveries: dailyRecoveriesStats[0]?.total || 0, // Ajout du recouvrement du jour
             salesProfit: salesChartData,
             productSales: productChartData
         };
