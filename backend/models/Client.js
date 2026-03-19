@@ -21,10 +21,7 @@ const clientSchema = new mongoose.Schema({
         type: String,
         trim: true,
     },
-    photo: {
-        type: String, // Stockage en Base64
-        default: ''
-    },
+   
     type: {
         type: String,
         enum: ['Client', 'Ouvrier'],

@@ -587,7 +587,7 @@ const AdminCaisseView = () => {
                         {selectedReport && selectedReport.ecart !== 0 && (
                             <Alert variant="warning">
                                 <strong>Attention :</strong> Il y a un écart de {formatCurrency(selectedReport.ecart)} dans ce rapport.
-                                <div className="small mt-1">Commentaire gérant : {selectedReport.commentairesGérant || "Aucun"}</div>
+                                <div className="small mt-1" style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto' }}>Commentaire gérant : {selectedReport.commentairesGérant || "Aucun"}</div>
                             </Alert>
                         )}
                         <Form.Group>

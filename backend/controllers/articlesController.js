@@ -34,21 +34,38 @@ const articleService = require('../services/articleService');
 // Mis à jour pour filtrer par rôle
 exports.getAllArticles = async (req, res) => {
     try {
+        const { page, limit, search, boutique, fournisseur } = req.query;
         const filter = {};
+
+        // Filtre de recherche (Nom ou Code)
+        if (search) {
+            filter.$or = [
+                { nom: { $regex: search, $options: 'i' } },
+                { code: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        // Filtre par boutique (Admin filter param)
+        if (boutique) {
+            filter.boutique = boutique;
+        }
+
+        // Filtre par fournisseur
+        if (fournisseur) {
+            filter.fournisseur = fournisseur;
+        }
+
         // Si l'utilisateur connecté est un Gérant (info venant du token JWT via le middleware 'protect')
         if (req.user.role === 'Gérant') {
             // S'il n'a pas de boutique assignée, il ne voit aucun article.
             if (!req.user.boutique) {
-                return res.status(200).json([]);
+                return res.status(200).json(page ? { data: [], totalPages: 0 } : []);
             }
             // On ajoute un filtre pour ne retourner que les articles de sa boutique.
             filter.boutique = req.user.boutique;
         }
 
-        // Le service doit être mis à jour pour accepter ce filtre
-        // et pour "populer" les informations de la boutique.
-        // Ex: articleService.listerArticles(filter) -> Article.find(filter).populate('boutique')
-        const articles = await articleService.listerArticles(filter);
+        const articles = await articleService.listerArticles(filter, parseInt(page), parseInt(limit));
         res.status(200).json(articles);
     } catch (error) {
         console.error("Erreur getAllArticles:", error);

@@ -2,10 +2,11 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/authMiddleware');
+const { validateAuth } = require('../middleware/validators');
 
 // Routes publiques (pas besoin d'être authentifié)
-router.post('/register', authController.register);
-router.post('/login', authController.login);
+router.post('/register', validateAuth, authController.register);
+router.post('/login', validateAuth, authController.login);
 router.post('/forgot-password', authController.forgotPassword);
 
 router.post('/change-password', protect, authController.changePassword);
@@ -18,7 +19,7 @@ router.put('/notifications/mark-all-read', protect, authController.markAllNotifi
 
 // --- Routes Admin ---
 // Créer un gérant
-router.post('/create-manager', protect, authorize('Admin'), authController.createManager);
+router.post('/create-manager', protect, authorize('Admin'), validateAuth, authController.createManager);
 // Obtenir tous les utilisateurs
 router.get('/users', protect, authorize('Admin'), authController.getUsers);
 router.get('/users/trash', protect, authorize('Admin'), authController.getDeletedUsers);

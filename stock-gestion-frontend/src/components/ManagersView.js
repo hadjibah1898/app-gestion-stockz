@@ -1,323 +1,236 @@
 // src/components/ManagersView.js
-// Composant de gestion des gérants
-// Permet de visualiser, créer, modifier et supprimer les gérants
-// Affiche les informations sur les boutiques gérées et les performances
-// Contient les fonctionnalités de recherche et de filtres
-
-// src/components/ManagersView.js
-import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
-import { Card } from 'react-bootstrap'; // Import Card
+import React, { useState, useEffect, useCallback } from 'react';
+import { Button, Form, Modal, Alert, Spinner, Badge, OverlayTrigger, Tooltip, Card, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { authAPI, boutiqueAPI, venteAPI } from '../services/api';
 
 const ManagersView = () => {
+  // --- États Principaux ---
   const [managers, setManagers] = useState([]);
   const [boutiques, setBoutiques] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // --- Pagination Gérants ---
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const itemsPerPage = 10;
+
+  // --- États Modale Formulaire ---
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentManagerId, setCurrentManagerId] = useState(null);
-  const [formData, setFormData] = useState({
-    nom: '',
-    email: '',
-    password: '',
-    boutique: ''
-  });
+  const [formData, setFormData] = useState({ nom: '', email: '', password: '', boutique: '' });
 
-  // États pour l'historique des ventes d'un gérant
+  // --- États Historique ---
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [managerHistory, setManagerHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [selectedManagerName, setSelectedManagerName] = useState('');
+  const [selectedManager, setSelectedManager] = useState(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalPages, setHistoryTotalPages] = useState(1);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  // --- Chargement des données ---
+  const fetchData = useCallback(async () => {
     try {
+      setLoading(true);
+      const params = { page: currentPage, limit: itemsPerPage, search: searchTerm, role: 'Gérant' };
       const [managersRes, boutiquesRes] = await Promise.all([
-        authAPI.getUsers(),
+        authAPI.getUsers(params),
         boutiqueAPI.getAll()
       ]);
-      // Filtrage côté client maintenu pour compatibilité, mais le backend envoie maintenant les objets boutique complets
-      setManagers(managersRes.data.filter(u => u.role === 'Gérant'));
-      setBoutiques(boutiquesRes.data);
+
+      if (managersRes.data.data) {
+        setManagers(managersRes.data.data);
+        setTotalPages(managersRes.data.totalPages || 1);
+      } else {
+        setManagers(managersRes.data || []);
+        setTotalPages(1);
+      }
+      setBoutiques(boutiquesRes.data || []);
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de chargement');
+      setError('Erreur lors du chargement des données.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, searchTerm]);
 
-  const handleShowModal = (manager = null) => {
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // --- Actions ---
+  const handleOpenModal = (manager = null) => {
     if (manager) {
       setEditMode(true);
       setCurrentManagerId(manager._id);
-      setFormData({
-        nom: manager.nom,
-        email: manager.email,
-        password: '', // Ne pas pré-remplir le mot de passe
-        boutique: manager.boutique?._id || ''
-      });
+      setFormData({ nom: manager.nom, email: manager.email, password: '', boutique: manager.boutique?._id || '' });
     } else {
       setEditMode(false);
-      setCurrentManagerId(null);
       setFormData({ nom: '', email: '', password: '', boutique: '' });
     }
     setShowModal(true);
   };
-  const handleCloseModal = () => setShowModal(false);
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
-    setSuccessMessage('');
     try {
       if (editMode) {
-        const updateData = { ...formData };
-        // Ne pas envoyer le mot de passe s'il est vide pour ne pas l'écraser
-        if (!updateData.password) {
-          delete updateData.password;
-        }
-        await authAPI.updateManager(currentManagerId, updateData);
-        setSuccessMessage('Gérant modifié avec succès !');
+        await authAPI.updateManager(currentManagerId, formData);
+        setSuccessMessage('Gérant mis à jour !');
       } else {
         await authAPI.createManager(formData);
-        setSuccessMessage('Gérant créé avec succès !');
+        setSuccessMessage('Gérant créé !');
       }
+      setShowModal(false);
       fetchData();
-      handleCloseModal();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error || "Erreur d'enregistrement");
+      setError("Erreur d'enregistrement.");
     }
   };
 
-  const handleToggleActive = async (manager) => {
-    try {
-      await authAPI.updateManager(manager._id, { active: !manager.active });
-      // Mettre à jour l'état local pour une réactivité immédiate
-      setManagers(managers.map(m => m._id === manager._id ? { ...m, active: !m.active } : m));
-    } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error || 'Erreur de mise à jour du statut');
-    }
-  };
-
-  const handleShowHistory = async (manager) => {
-    setSelectedManagerName(manager.nom);
-    setShowHistoryModal(true);
+  const loadHistory = async (manager, page = 1) => {
     setHistoryLoading(true);
+    setHistoryPage(page);
+    if (manager) setSelectedManager(manager);
+    const mId = manager ? manager._id : selectedManager?._id;
+
     try {
-      // L'API renvoie un objet { ventes: [], totalPages: X, ... }
-      // On doit donc extraire le tableau 'ventes'. On met limit=0 pour tout avoir.
-      const res = await venteAPI.getHistorique({ gerantId: manager._id, limit: 0 });
-      setManagerHistory(res.data.ventes || []); // On s'assure que c'est un tableau
+      const res = await venteAPI.getHistorique({ gerantId: mId, page, limit: 10 });
+      setManagerHistory(res.data.ventes || []);
+      setHistoryTotalPages(res.data.totalPages || 1);
+      setShowHistoryModal(true);
     } catch (err) {
-      setError("Impossible de charger l'historique des ventes.");
-      setManagerHistory([]); // En cas d'erreur, on initialise avec un tableau vide pour éviter un crash
+      setError("Impossible de charger l'historique.");
     } finally {
       setHistoryLoading(false);
     }
   };
 
-  // Créer un Set des IDs de boutiques déjà assignées pour une recherche rapide
-  const assignedBoutiqueIds = new Set(managers.map(m => m.boutique?._id).filter(Boolean));
-
+  // --- Configuration Tableau ---
   const columns = [
     { key: 'nom', label: 'Nom' },
-    { key: 'email', label: 'Email' },
-    { 
-      key: 'boutique', 
-      label: 'Boutique',
-      render: (value) => value?.nom || 'Non affecté'
-    },
-    {
-      key: 'active',
-      label: 'Statut',
-      render: (value) => <Badge bg={value ? 'success' : 'danger'}>{value ? 'Actif' : 'Inactif'}</Badge>
-    },
-    {
-      key: 'createdAt',
-      label: 'Date Création',
-      render: (date) => date ? new Date(date).toLocaleDateString('fr-FR') : 'N/A'
-    },
-    {
-      key: 'lastLogin',
-      label: 'Dernière Connexion',
-      render: (date) => date ? new Date(date).toLocaleString('fr-FR') : <span className="text-muted">Jamais</span>
-    },
+    { key: 'boutique', label: 'Boutique', render: (b) => b?.nom || 'N/A' },
+    { key: 'active', label: 'Statut', render: (a) => <Badge bg={a ? 'success' : 'danger'}>{a ? 'Actif' : 'Inactif'}</Badge> },
     {
       key: 'actions',
       label: 'Actions',
       render: (_, manager) => (
         <div className="d-flex gap-2">
-            <OverlayTrigger overlay={<Tooltip>Voir l'historique des ventes</Tooltip>}>
-                <Button variant="link" className="text-info p-0" onClick={() => handleShowHistory(manager)}>
-                  <iconify-icon icon="solar:bill-list-bold" style={{ fontSize: '20px' }}></iconify-icon>
-                </Button>
-            </OverlayTrigger>
-
-            <>
-              <OverlayTrigger overlay={<Tooltip>Modifier</Tooltip>}>
-                <Button variant="link" className="text-primary p-0" onClick={() => handleShowModal(manager)}>
-                  <iconify-icon icon="solar:pen-new-square-linear" style={{ fontSize: '20px' }}></iconify-icon>
-                </Button>
-              </OverlayTrigger>
-
-              <OverlayTrigger overlay={<Tooltip>{manager.active ? 'Désactiver' : 'Activer'}</Tooltip>}>
-                <Button 
-                  variant="link"
-                  className={manager.active ? "text-warning p-0" : "text-success p-0"} 
-                  onClick={() => handleToggleActive(manager)}
-                >
-                  <iconify-icon icon={manager.active ? "solar:user-block-rounded-linear" : "solar:user-check-rounded-linear"} style={{ fontSize: '20px' }}></iconify-icon>
-                </Button>
-              </OverlayTrigger>
-            </>
+          <OverlayTrigger overlay={<Tooltip>Ventes</Tooltip>}>
+            <Button variant="link" className="text-info p-0" onClick={() => loadHistory(manager, 1)}>
+              <iconify-icon icon="solar:bill-list-bold" style={{ fontSize: '20px' }}></iconify-icon>
+            </Button>
+          </OverlayTrigger>
+          <OverlayTrigger overlay={<Tooltip>Modifier</Tooltip>}>
+            <Button variant="link" className="text-primary p-0" onClick={() => handleOpenModal(manager)}>
+              <iconify-icon icon="solar:pen-new-square-linear" style={{ fontSize: '20px' }}></iconify-icon>
+            </Button>
+          </OverlayTrigger>
         </div>
       )
     }
   ];
 
-  if (loading) return <Spinner animation="border" />;
+  if (loading) return <div className="text-center p-5"><Spinner animation="border" variant="primary" /></div>;
 
   return (
     <div className="p-4">
-      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
-        <h3 className="fw-bold mb-0 text-body">Gestion des Gérants</h3>
-        <div className="d-flex gap-2">
-            <Button variant="primary" onClick={() => handleShowModal(null)} className="rounded-pill px-4 shadow-sm">
-              <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
-              Ajouter un Gérant
-            </Button>
-        </div>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h3 className="fw-bold">Gestion des Gérants</h3>
+        <Button variant="primary" onClick={() => handleOpenModal()} className="rounded-pill px-4">
+          Ajouter un Gérant
+        </Button>
       </div>
 
-      {successMessage && <Alert variant="success" onClose={() => setSuccessMessage('')} dismissible>
-        {successMessage}
-      </Alert>}
-      {error && <Alert variant="danger" onClose={() => setError('')} dismissible>
-        {error}
-      </Alert>}
+      <Form.Control 
+        className="mb-4 w-25 shadow-sm" 
+        placeholder="Rechercher..." 
+        value={searchTerm}
+        onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} 
+      />
 
-      {/* Enveloppement du tableau dans une Card style "Soft UI" */}
+      {successMessage && <Alert variant="success" dismissible onClose={() => setSuccessMessage('')}>{successMessage}</Alert>}
+      {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}
+
       <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
-        <Card.Body className="p-0">
-          <TableComponent 
-            columns={columns}
-            data={managers}
-            emptyMessage="Aucun gérant trouvé"
-          />
-        </Card.Body>
+        <TableComponent columns={columns} data={managers} emptyMessage="Aucun gérant." />
+        
+        {/* PAGINATION PRINCIPALE */}
+        {totalPages > 1 && (
+          <div className="d-flex justify-content-center p-3 border-top">
+            <Pagination className="mb-0">
+              <Pagination.Prev disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)} />
+              {[...Array(totalPages)].map((_, i) => (
+                <Pagination.Item key={i+1} active={i+1 === currentPage} onClick={() => setCurrentPage(i+1)}>
+                  {i+1}
+                </Pagination.Item>
+              ))}
+              <Pagination.Next disabled={currentPage === totalPages} onClick={() => setCurrentPage(currentPage + 1)} />
+            </Pagination>
+          </div>
+        )}
       </Card>
 
-      <Modal show={showModal} onHide={handleCloseModal}>
-        <Modal.Header closeButton>
-          <Modal.Title>
-            {editMode ? 'Modifier le Gérant' : 'Nouveau Gérant'}
-          </Modal.Title>
-        </Modal.Header>
+      {/* MODALE FORMULAIRE */}
+      <Modal show={showModal} onHide={() => setShowModal(false)}>
+        <Modal.Header closeButton><Modal.Title>{editMode ? 'Modifier' : 'Ajouter'} un gérant</Modal.Title></Modal.Header>
         <Form onSubmit={handleSubmit}>
           <Modal.Body>
-            <Form.Group className="mb-3">
-              <Form.Label>Nom complet</Form.Label>
-              <Form.Control
-                type="text"
-                name="nom"
-                value={formData.nom}
-                onChange={handleChange}
-                required
-              />
+            <Form.Group className="mb-3"><Form.Label>Nom</Form.Label>
+              <Form.Control value={formData.nom} onChange={e => setFormData({...formData, nom: e.target.value})} required />
             </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Email</Form.Label>
-              <Form.Control
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                required
-              />
+            <Form.Group className="mb-3"><Form.Label>Email</Form.Label>
+              <Form.Control type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} required />
             </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Boutique</Form.Label>
-              <Form.Select
-                name="boutique"
-                value={formData.boutique}
-                onChange={handleChange}
-              >
-                <option value="">Aucune boutique</option>
-                {boutiques.map(boutique => {
-                  // Le Dépôt Principal ne peut pas être assigné à un gérant
-                  if (boutique.type === 'Centrale') return null;
-
-                  const isAssigned = assignedBoutiqueIds.has(boutique._id);
-                  const isAssignedToCurrentUser = editMode && formData.boutique === boutique._id;
-
-                  // La boutique est désactivée si elle est assignée à quelqu'un d'autre
-                  const isDisabled = isAssigned && !isAssignedToCurrentUser;
-
-                  return (
-                    <option key={boutique._id} value={boutique._id} disabled={isDisabled}>
-                      {boutique.nom} {isDisabled ? '(déjà affectée)' : ''}
-                    </option>
-                  );
-                })}
+            {!editMode && (
+              <Form.Group className="mb-3"><Form.Label>Mot de passe</Form.Label>
+                <Form.Control type="password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} required />
+              </Form.Group>
+            )}
+            <Form.Group><Form.Label>Boutique</Form.Label>
+              <Form.Select value={formData.boutique} onChange={e => setFormData({...formData, boutique: e.target.value})}>
+                <option value="">Sélectionner une boutique</option>
+                {boutiques.map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
               </Form.Select>
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>
-            <Button variant="secondary" onClick={handleCloseModal}>
-              Annuler
-            </Button>
-            <Button variant="primary" type="submit">
-              {editMode ? 'Enregistrer les modifications' : 'Créer'}
-            </Button>
+            <Button variant="secondary" onClick={() => setShowModal(false)}>Annuler</Button>
+            <Button variant="primary" type="submit">Enregistrer</Button>
           </Modal.Footer>
         </Form>
       </Modal>
 
-      {/* Modale Historique des Ventes */}
+      {/* MODALE HISTORIQUE */}
       <Modal show={showHistoryModal} onHide={() => setShowHistoryModal(false)} size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title>Historique des ventes - {selectedManagerName}</Modal.Title>
-        </Modal.Header>
+        <Modal.Header closeButton><Modal.Title>Historique de {selectedManager?.nom}</Modal.Title></Modal.Header>
         <Modal.Body>
-          {historyLoading ? (
-            <div className="text-center py-4"><Spinner animation="border" /></div>
-          ) : (
-            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              <TableComponent
+          {historyLoading ? <div className="text-center p-4"><Spinner animation="border" /></div> : (
+            <>
+              <TableComponent 
                 columns={[
-                  { key: 'createdAt', label: 'Date', render: (d) => new Date(d).toLocaleDateString() + ' ' + new Date(d).toLocaleTimeString() },
-                  { key: 'article', label: 'Article', render: (a) => a?.nom || 'Article supprimé' },
-                  { key: 'quantite', label: 'Qté' },
-                  { key: 'prixTotal', label: 'Total', render: (p) => p.toLocaleString() + ' GNF' },
-                  { key: 'boutique', label: 'Boutique', render: (b) => b?.nom || 'N/A' }
-                ]}
-                data={managerHistory}
-                emptyMessage="Aucune vente enregistrée pour ce gérant."
+                  { key: 'createdAt', label: 'Date', render: d => new Date(d).toLocaleDateString() },
+                  { key: 'article', label: 'Article', render: a => a?.nom || 'N/A' },
+                  { key: 'prixTotal', label: 'Total', render: p => p.toLocaleString() + ' GNF' }
+                ]} 
+                data={managerHistory} 
               />
-            </div>
+              {historyTotalPages > 1 && (
+                <Pagination className="justify-content-center mt-3">
+                  {[...Array(historyTotalPages)].map((_, i) => (
+                    <Pagination.Item key={i+1} active={i+1 === historyPage} onClick={() => loadHistory(null, i+1)}>
+                      {i+1}
+                    </Pagination.Item>
+                  ))}
+                </Pagination>
+              )}
+            </>
           )}
         </Modal.Body>
-        <Modal.Footer>
-          <div className="me-auto fw-bold">
-            Total CA: {managerHistory.reduce((acc, curr) => acc + curr.prixTotal, 0).toLocaleString()} GNF
-          </div>
-          <Button variant="secondary" onClick={() => setShowHistoryModal(false)}>Fermer</Button>
-        </Modal.Footer>
       </Modal>
     </div>
   );

@@ -4,8 +4,8 @@
 // Affiche les informations de contact et les articles fournis
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState, useEffect } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import { fournisseurAPI } from '../services/api';
 import TableComponent from './common/Table';
 
@@ -15,6 +15,9 @@ const SuppliersView = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const itemsPerPage = 10;
 
   // États pour Création/Modif Fournisseur
   const [showModal, setShowModal] = useState(false);
@@ -25,21 +28,32 @@ const SuppliersView = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState(null);
 
-  useEffect(() => {
-    fetchFournisseurs();
-  }, []);
-
-  const fetchFournisseurs = async () => {
+  const fetchFournisseurs = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fournisseurAPI.getAll();
-      setFournisseurs(res.data);
+      const params = {
+        page: currentPage,
+        limit: itemsPerPage,
+        search: searchTerm,
+      };
+      const res = await fournisseurAPI.getAll(params);
+      if (res.data.data) {
+        setFournisseurs(res.data.data);
+        setTotalPages(res.data.totalPages);
+      } else {
+        setFournisseurs(res.data);
+        setTotalPages(1);
+      }
     } catch (err) {
       setError("Erreur chargement fournisseurs");
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, searchTerm]);
+
+  useEffect(() => {
+    fetchFournisseurs();
+  }, [fetchFournisseurs]);
 
   // --- Gestion Fournisseurs ---
   const handleShowModal = (fournisseur = null) => {
@@ -93,9 +107,20 @@ const SuppliersView = () => {
     }
   };
 
-  const filteredFournisseurs = fournisseurs.filter(f =>
-    f.nom.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Le filtrage se fait maintenant côté serveur, on peut retirer le filtre côté client.
+  const filteredFournisseurs = fournisseurs;
+
+  // Éléments de pagination
+  const paginationItems = [];
+  if (totalPages > 1) {
+    for (let number = 1; number <= totalPages; number++) {
+        paginationItems.push(
+            <Pagination.Item key={number} active={number === currentPage} onClick={() => setCurrentPage(number)}>
+                {number}
+            </Pagination.Item>
+        );
+    }
+  }
 
   const columns = [
     { key: 'nom', label: 'Nom' },
@@ -141,7 +166,7 @@ const SuppliersView = () => {
           type="text"
           placeholder="Rechercher un fournisseur par nom..."
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
           style={{ maxWidth: '300px' }}
           className="shadow-sm"
         />
@@ -151,6 +176,11 @@ const SuppliersView = () => {
         <Card.Body className="p-0">
           <TableComponent columns={columns} data={filteredFournisseurs} emptyMessage="Aucun fournisseur trouvé." />
         </Card.Body>
+        {totalPages > 1 && (
+            <Card.Footer className="d-flex justify-content-center border-0 pt-0">
+                <Pagination>{paginationItems}</Pagination>
+            </Card.Footer>
+        )}
       </Card>
 
       {/* Modale Création/Edition */}

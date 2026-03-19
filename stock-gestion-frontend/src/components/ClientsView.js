@@ -4,7 +4,7 @@
 // Affiche l'historique des achats et les remises accordées
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Form,  Alert, Spinner, Badge, Card, Tab, Tabs,  } from 'react-bootstrap';
 import TableComponent from './common/Table';
@@ -27,12 +27,7 @@ const ClientsView = () => {
   const [showModal, setShowModal] = useState(false);
   const [currentClient, setCurrentClient] = useState(null);
 
-  useEffect(() => {
-    fetchClients();
-    fetchDebtHistory();
-  }, []);
-
-  const fetchClients = async () => {
+  const fetchClients = useCallback(async () => {
     try {
       setLoading(true);
       // Simulation de données si l'API n'est pas encore prête côté backend
@@ -48,9 +43,9 @@ const ClientsView = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchDebtHistory = async () => {
+  const fetchDebtHistory = useCallback(async () => {
     try {
         setHistoryLoading(true);
         const res = await clientAPI.getDebtHistory();
@@ -60,7 +55,12 @@ const ClientsView = () => {
     } finally {
         setHistoryLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchClients();
+    fetchDebtHistory();
+  }, [fetchClients, fetchDebtHistory]);
 
   // Effet pour gérer l'ouverture via notification
   useEffect(() => {

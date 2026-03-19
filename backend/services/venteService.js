@@ -5,7 +5,6 @@ const Mouvement = require('../models/Mouvement');
 const Client = require('../models/Client');
 const notificationService = require('./notificationService');
 const DebtMovement = require('../models/DebtMovement'); // Importer le nouveau modèle
-const Notification = require('../models/Notification');
 
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
 exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null) => {
@@ -263,75 +262,4 @@ exports.annulerVente = async (venteId, user) => {
     });
 
     return { message: "Vente annulée avec succès. Le stock a été restauré." };
-};
-
-exports.listerVentesEnAttente = async (filter = {}) => {
-    const finalFilter = { ...filter, statut: 'en_attente_remise', isCancelled: false };
-    return await Vente.find(finalFilter)
-        .sort({ createdAt: -1 })
-        .populate('article', 'nom image code')
-        .populate('gerant', 'nom')
-        .populate('client', 'nom');
-};
-
-exports.validerRemise = async (venteId) => {
-    const vente = await Vente.findById(venteId).populate('article', 'nom');
-    if (!vente) throw new Error("Vente introuvable.");
-    if (vente.statut !== 'en_attente_remise') throw new Error("Cette vente n'est pas en attente de validation.");
-
-    vente.statut = 'finalisee';
-    await vente.save();
-
-    // Mettre à jour le stock de l'article (car la vente était en attente et le stock n'avait pas été déduit)
-    const article = await Article.findById(vente.article);
-    if (article) {
-        article.quantite -= vente.quantite;
-        await article.save();
-    }
-
-    // --- Notification pour le gérant ---
-    if (vente.gerant) {
-        await Notification.create({
-            recipient: vente.gerant,
-            message: `✅ La remise de ${vente.remiseAppliquee}% sur la vente de "${vente.article.nom}" a été approuvée.`,
-            type: 'success',
-            link: '/gerant/ventes?tab=history' // Lien vers l'historique des ventes
-        });
-    }
-
-    return vente;
-};
-
-exports.refuserRemise = async (venteId, adminUser) => {
-    // Refuser une remise équivaut à annuler la vente. 
-    // Le gérant pourra la refaire sans remise.
-    const vente = await Vente.findById(venteId).populate('article', 'nom');
-    if (!vente) throw new Error("Vente introuvable.");
-    if (vente.statut !== 'en_attente_remise') throw new Error("Cette vente n'est pas en attente de validation.");
-
-    // Le stock n'est pas restauré car il n'a jamais été déduit pour une vente en attente.
-    vente.isCancelled = true;
-    vente.statut = 'refusee'; // Statut final pour le suivi
-    await vente.save();
-
-    // --- Notification pour le gérant ---
-    if (vente.gerant) {
-        await Notification.create({
-            recipient: vente.gerant,
-            message: `❌ La remise de ${vente.remiseAppliquee}% sur la vente de "${vente.article?.nom || 'un article'}" a été refusée. La vente est annulée.`,
-            type: 'error',
-            link: '/gerant/ventes?tab=history' // Lien vers l'historique des ventes
-        });
-    }
-
-    await Mouvement.create({
-        type: 'Vente',
-        details: `REFUS REMISE (ANNULATION) Vente #${vente._id}`,
-        boutiqueSource: vente.boutique,
-        articles: [{ nomArticle: vente.article?.nom || 'Article Inconnu', quantite: vente.quantite }],
-        operateur: adminUser.id, // L'admin qui a refusé est l'opérateur
-        isCancelled: true
-    });
-
-    return { message: "Remise refusée et vente annulée. Le stock n'a pas été affecté." };
 };

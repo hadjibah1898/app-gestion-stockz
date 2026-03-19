@@ -37,38 +37,9 @@ exports.getHistorique = async (req, res) => {
     }
 };
 
-
-exports.getPendingSales = async (req, res) => {
-    try {
-        const filter = req.user.role === 'Gérant' ? { gerant: req.user.id } : {};
-        const ventes = await venteService.listerVentesEnAttente(filter);
-        res.status(200).json(ventes);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
 exports.annulerVente = async (req, res) => {
     try {
         const result = await venteService.annulerVente(req.params.id, req.user);
-        res.status(200).json(result);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-};
-
-exports.validateRemise = async (req, res) => {
-    try {
-        const vente = await venteService.validerRemise(req.params.id);
-        res.status(200).json(vente);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-};
-
-exports.rejectRemise = async (req, res) => {
-    try {
-        const result = await venteService.refuserRemise(req.params.id, req.user);
         res.status(200).json(result);
     } catch (error) {
         res.status(400).json({ message: error.message });

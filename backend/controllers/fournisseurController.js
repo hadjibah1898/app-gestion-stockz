@@ -17,8 +17,30 @@ exports.createFournisseur = async (req, res) => {
 
 exports.getAllFournisseurs = async (req, res) => {
     try {
-        const fournisseurs = await Fournisseur.find().sort({ createdAt: -1 });
-        res.status(200).json(fournisseurs);
+        const page = parseInt(req.query.page);
+        const limit = parseInt(req.query.limit) || 10;
+        const { search } = req.query;
+        const query = {};
+
+        if (search) {
+            query.nom = { $regex: search, $options: 'i' };
+        }
+
+        if (page) {
+            const skip = (page - 1) * limit;
+            const total = await Fournisseur.countDocuments(query);
+            const fournisseurs = await Fournisseur.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit);
+            
+            res.status(200).json({
+                data: fournisseurs,
+                totalPages: Math.ceil(total / limit),
+                currentPage: page,
+                totalCount: total
+            });
+        } else {
+            const fournisseurs = await Fournisseur.find(query).sort({ createdAt: -1 });
+            res.status(200).json(fournisseurs);
+        }
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

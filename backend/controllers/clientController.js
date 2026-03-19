@@ -6,6 +6,8 @@ const notificationService = require('../services/notificationService');
 const CaisseAdmin = require('../models/CaisseAdmin');
 const User = require('../models/User');
 const Boutique = require('../models/Boutique');
+const Caisse = require('../models/OuvertureCaisse');
+const Depense = require('../models/Depense');
 
 /**
  * @desc    Créer un client
@@ -125,6 +127,14 @@ exports.deleteClient = async (req, res) => {
             });
         }
 
+        // AUDIT : Vérifier si le client a un historique de paiements (même soldés)
+        const hasHistory = await DebtPayment.exists({ client: req.params.id });
+        if (hasHistory) {
+            return res.status(400).json({ 
+                message: "Suppression impossible (Piste d'audit) : Ce client a des transactions historiques. Veuillez le désactiver plutôt." 
+            });
+        }
+
         await Client.findByIdAndDelete(req.params.id);
 
         await logAction({
@@ -171,6 +181,7 @@ exports.payDette = async (req, res) => {
             montant: montantRembourse,
             gerant: req.user.id,
             boutique: req.user.boutique,
+            datePaiement: new Date(), // FIX: Assurer que la date est enregistrée dès la création
         });
  
         // Notifier les administrateurs
@@ -208,14 +219,46 @@ exports.getDebts = async (req, res) => {
  */
 exports.getPendingDebtPayments = async (req, res) => {
     try {
-        const payments = await DebtPayment.find({ statut: 'EN_ATTENTE' })
-            .populate('client', 'nom telephone')
+        const query = { statut: 'EN_ATTENTE' };
+
+        // Sécurité & Logique Comptable : Un gérant ne doit voir que les encaissements
+        // qu'il a lui-même réalisés pour le calcul de sa propre caisse.
+        // L'admin voit tout.
+        if (req.user.role === 'Gérant' || req.user.role === 'Gerant') {
+            query.gerant = req.user.id;
+        }
+
+        const payments = await DebtPayment.find(query)
+            .populate('client', 'nom telephone dette')
             .populate('gerant', 'nom')
             .populate('boutique', 'nom')
             .sort({ createdAt: -1 });
         res.status(200).json(payments);
     } catch (error) {
         res.status(500).json({ message: "Erreur lors du chargement des validations.", error: error.message });
+    }
+};
+
+/**
+ * @desc    Rejeter un paiement de dette (Annulation)
+ * @route   PUT /api/clients/debt-payments/:id/reject
+ * @access  Private/Admin
+ */
+exports.rejectDebtPayment = async (req, res) => {
+    try {
+        const payment = await DebtPayment.findById(req.params.id);
+        if (!payment || payment.statut !== 'EN_ATTENTE') {
+            return res.status(404).json({ message: "Paiement introuvable ou déjà traité." });
+        }
+
+        payment.statut = 'REJETE';
+        payment.adminValidateur = req.user.id;
+        payment.dateValidation = new Date();
+        await payment.save();
+
+        res.status(200).json({ message: "Paiement rejeté (annulé) avec succès." });
+    } catch (error) {
+        res.status(500).json({ message: "Erreur lors du rejet.", error: error.message });
     }
 };
 
@@ -246,6 +289,18 @@ exports.validateDebtPayment = async (req, res) => {
         payment.dateValidation = new Date();
         await payment.save();
 
+        // AJOUT EXPERT : Créer un mouvement de dette (Ledger) pour l'historique complet du client
+        // Cela permet de voir dans "Evolution Dette" quand la dette a baissé.
+        await DebtMovement.create({
+            client: client._id,
+            type: 'REMBOURSEMENT', // Ou 'PAIEMENT'
+            montant: payment.montant, // Montant négatif implicite pour la dette
+            soldeAnterieur: client.dette + payment.montant,
+            nouveauSolde: client.dette,
+            operateur: req.user.id,
+            details: `Paiement validé (Réf: ${payment._id})`
+        });
+
         // Mettre à jour la caisse admin
         const caisseAdmin = await CaisseAdmin.getInstance();
         caisseAdmin.soldeActuel += payment.montant;
@@ -261,7 +316,10 @@ exports.validateDebtPayment = async (req, res) => {
         await caisseAdmin.save();
 
         // Notifier le gérant
-        await notificationService.sendDebtPaymentValidatedAlert(payment.gerant, client, payment.montant);
+        if (payment.gerant) {
+            // On passe l'ID explicitement pour éviter les erreurs si l'objet est peuplé
+            notificationService.sendDebtPaymentValidatedAlert(payment.gerant._id || payment.gerant, client, payment.montant).catch(console.error);
+        }
 
         res.status(200).json({ message: "Paiement validé avec succès." });
     } catch (error) {
@@ -312,20 +370,84 @@ exports.getDebtEvolution = async (req, res) => {
  */
 exports.getDebtHistory = async (req, res) => {
     try {
+        // La méthode .find({}) sans condition est cruciale : elle sélectionne TOUS les documents.
+        // C'est la bonne pratique pour un historique complet.
         const query = {};
 
-        // Sécurité : Chaque gérant ne voit que son historique d'opérations
-        if (req.user.role === 'Gérant' || req.user.role === 'Gerant') {
-            query.operateur = req.user.id;
+        // FIX: Permettre le filtrage par client si demandé (ex: Fiche client)
+        if (req.query.client) {
+            query.client = req.query.client;
         }
 
-        const history = await DebtMovement.find(query)
-            .populate('client', 'nom')
-            .populate('operateur', 'nom')
-            .sort({ createdAt: -1 });
+        // Sécurité : Chaque gérant ne voit que les paiements qu'il a initiés.
+        if (req.user.role === 'Gérant' || req.user.role === 'Gerant') {
+            query.gerant = req.user.id;
+        }
 
+        const history = await DebtPayment.find(query)
+            .sort({ datePaiement: -1 }) // Toujours trier du plus récent au plus ancien
+            .populate('client', 'nom dette')
+            .populate('gerant', 'nom');
+            
         res.status(200).json(history);
     } catch (error) {
-        res.status(500).json({ message: "Erreur lors de la récupération de l'historique.", error: error.message });
+        console.error("Erreur dans getDebtHistory:", error);
+        res.status(500).json({ message: "Erreur serveur lors de la récupération de l'historique." });
+    }
+};
+
+/**
+ * @desc    Payer une commission à un ouvrier (Transaction Atomique)
+ * @route   POST /api/clients/pay-commission
+ * @access  Private (Gérant)
+ */
+exports.payCommission = async (req, res) => {
+    try {
+        const { workerId, montant } = req.body;
+        const amountToPay = parseFloat(montant);
+
+        if (!workerId || isNaN(amountToPay) || amountToPay <= 0) {
+            return res.status(400).json({ message: "Données invalides." });
+        }
+
+        // 1. Trouver l'ouvrier
+        const worker = await Client.findOne({ _id: workerId, type: 'Ouvrier' });
+        if (!worker) {
+            return res.status(404).json({ message: "Ouvrier introuvable." });
+        }
+
+        if (amountToPay > worker.commission) {
+            return res.status(400).json({ message: "Le montant dépasse la commission due." });
+        }
+
+        // 2. Trouver la caisse ouverte du gérant
+        const currentCaisse = await Caisse.findOne({ gerant: req.user.id, dateFermeture: null });
+        if (!currentCaisse) {
+            return res.status(400).json({ message: "Aucune caisse ouverte. Veuillez ouvrir votre caisse d'abord." });
+        }
+
+        // 3. Exécution "Atomique" (Séquentielle sécurisée)
+        // A. Mise à jour commission
+        worker.commission -= amountToPay;
+        await worker.save();
+
+        // B. Création Dépense
+        await Depense.create({
+            montant: amountToPay,
+            motif: `Paiement commission: ${worker.nom}`,
+            ouvertureCaisse: currentCaisse._id,
+            boutique: req.user.boutique,
+            gerant: req.user.id,
+            date: new Date() // S'assurer que la date est présente
+        });
+
+        // C. Mise à jour explicite du total des dépenses de la caisse
+        // Cela garantit que le solde théorique est juste immédiatement, même sans 'hook' Mongoose sur le modèle.
+        currentCaisse.totalDepenses = (currentCaisse.totalDepenses || 0) + amountToPay;
+        await currentCaisse.save();
+
+        res.status(200).json({ success: true, message: "Commission payée avec succès.", newCommission: worker.commission });
+    } catch (error) {
+        res.status(500).json({ message: "Erreur lors du paiement de la commission.", error: error.message });
     }
 };

@@ -15,6 +15,12 @@ exports.protect = async (req, res, next) => {
 
             // Ajoute l'utilisateur (sans le mot de passe) à l'objet de requête
             req.user = await User.findById(decoded.id).select('-password');
+
+            // SÉCURITÉ : Vérifier si l'utilisateur existe toujours
+            if (!req.user) {
+                return res.status(401).json({ message: 'Utilisateur introuvable ou compte supprimé.', redirect: '/login' });
+            }
+            
             next();
         } catch (error) {
             return res.status(401).json({ message: 'Non autorisé, le token a échoué.', redirect: '/login' });

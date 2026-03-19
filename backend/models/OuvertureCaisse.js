@@ -32,6 +32,10 @@ const ouvertureCaisseSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
+    totalDepenses: {
+        type: Number,
+        default: 0,
+    },
 }, { timestamps: true });
 
 // Index pour s'assurer qu'un gérant ne peut avoir qu'une seule caisse ouverte à la fois

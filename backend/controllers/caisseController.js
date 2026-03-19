@@ -1,4 +1,6 @@
 const caisseService = require('../services/caisseService');
+const RapportCaisse = require('../models/RapportCaisse');
+const notificationService = require('../services/notificationService');
 
 // --- Gérant: Ouverture / Fermeture / Statut ---
 
@@ -36,6 +38,38 @@ exports.fermerCaisse = async (req, res) => {
         res.status(201).json({ message: "Caisse fermée et rapport généré avec succès.", rapport });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la fermeture de la caisse.", error: error.message });
+    }
+};
+
+exports.corrigerRapport = async (req, res) => {
+    try {
+        const { montantCloture, commentairesGérant } = req.body;
+        const gerantId = req.user.id;
+
+        // Trouver le dernier rapport du gérant
+        const rapport = await RapportCaisse.findOne({ gerant: gerantId }).sort({ createdAt: -1 });
+
+        if (!rapport) {
+            return res.status(404).json({ message: "Aucun rapport trouvé." });
+        }
+
+        if (rapport.statut !== 'REJETE') {
+            return res.status(400).json({ message: "Le dernier rapport n'est pas rejeté." });
+        }
+
+        // Mise à jour des informations
+        rapport.montantCloture = montantCloture;
+        rapport.commentairesGérant = commentairesGérant;
+        rapport.ecart = montantCloture - rapport.soldeTheorique;
+        rapport.statut = 'EN_ATTENTE'; // On repasse en attente de validation
+        await rapport.save();
+
+        // Notifier les admins de la correction
+        await notificationService.sendNewReportAlert(rapport);
+
+        res.status(200).json({ message: "Rapport corrigé et renvoyé pour validation.", rapport });
+    } catch (error) {
+        res.status(500).json({ message: "Erreur lors de la correction du rapport.", error: error.message });
     }
 };
 

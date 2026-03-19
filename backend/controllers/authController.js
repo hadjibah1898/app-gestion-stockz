@@ -349,8 +349,37 @@ exports.changePassword = async (req, res) => {
 
 exports.getUsers = async (req, res) => {
     try {
-        const users = await User.find({ deleted: { $ne: true } }).select('-password').populate('boutique'); // On exclut le mot de passe des résultats
-        res.status(200).json(users);
+        const page = parseInt(req.query.page);
+        const limit = parseInt(req.query.limit) || 10;
+        const { search, role } = req.query;
+        const query = { deleted: { $ne: true } };
+
+        // Si un rôle est spécifié dans la requête, on l'ajoute au filtre
+        if (role) {
+            query.role = role;
+        }
+
+        if (search) {
+            query.$or = [
+                { nom: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        if (page) {
+            const skip = (page - 1) * limit;
+            const total = await User.countDocuments(query);
+            const users = await User.find(query).select('-password').populate('boutique').sort({ createdAt: -1 }).skip(skip).limit(limit);
+            res.status(200).json({
+                data: users,
+                totalPages: Math.ceil(total / limit),
+                currentPage: page,
+                totalCount: total
+            });
+        } else {
+            const users = await User.find(query).select('-password').populate('boutique').sort({ createdAt: -1 }); // On exclut le mot de passe des résultats
+            res.status(200).json(users);
+        }
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

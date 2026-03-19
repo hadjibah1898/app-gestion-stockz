@@ -5,7 +5,7 @@
 // Contient les fonctionnalités d'export PDF et de filtres avancés
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col } from 'react-bootstrap';
+import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { articleAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
 import IntelligentSupplyModal from './common/IntelligentSupplyModal'; // Importer la nouvelle modale
@@ -26,6 +26,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [filterFournisseur, setFilterFournisseur] = useState(''); // Nouvel état pour le filtre fournisseur
   const [showPromoOnly, setShowPromoOnly] = useState(false); // État pour le filtre promo
   const [sortBy, setSortBy] = useState(''); // État pour le tri
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -65,13 +67,29 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      const params = {
+        page: currentPage,
+        limit: 15, // Items per page
+        search: searchTerm,
+        boutique: filterBoutique,
+        fournisseur: filterFournisseur
+      };
+
       try {
         const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
-          articleAPI.getAll(),
+          articleAPI.getAll(params), // API call now accepts params
           userRole === 'Admin' ? boutiqueAPI.getAll() : Promise.resolve({ data: [] }),
           userRole === 'Admin' ? fournisseurAPI.getAll() : Promise.resolve({ data: [] })
         ]);
-        setArticles(articlesRes.data);
+        
+        // Handle paginated response or simple array
+        if (articlesRes.data.data) {
+            setArticles(articlesRes.data.data);
+            setTotalPages(articlesRes.data.totalPages);
+        } else {
+            setArticles(articlesRes.data);
+        }
+
         setBoutiques(boutiquesRes.data);
         // Identifier la boutique centrale pour la logique de filtrage
         const centrale = boutiquesRes.data.find(b => b.type === 'Centrale');
@@ -87,7 +105,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur de chargement');
     }
-  }, [userRole]);
+  }, [userRole, currentPage, searchTerm, filterBoutique, filterFournisseur]);
 
   useEffect(() => {
     fetchData();
@@ -379,15 +397,11 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     }
   };
 
-  // Logique de filtrage (déplacée avant columns pour être utilisée dans handleSelectAll)
+  // Client-side filtering removed/simplified as we now do server-side filtering
+  // We still keep the promo filter client-side or we could move it to backend too
   let filteredArticles = articles.filter(article => {
-    const matchBoutique = !filterBoutique || (article.boutique?._id || article.boutique) === filterBoutique;
-    const matchFournisseur = !filterFournisseur || (article.fournisseur?._id || article.fournisseur) === filterFournisseur;
-    const matchSearch = !searchTerm || article.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                        (article.code && article.code.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchPromo = !showPromoOnly || (article.promoActive && article.promo > 0);
-
-    return matchBoutique && matchFournisseur && matchSearch && matchPromo;
+    return matchPromo;
   });
 
   // Logique de tri
@@ -543,6 +557,21 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     }
   ];
 
+  // Function to handle page change
+  const handlePageChange = (pageNumber) => {
+      setCurrentPage(pageNumber);
+  };
+
+  // Pagination Items
+  let paginationItems = [];
+  for (let number = 1; number <= totalPages; number++) {
+    paginationItems.push(
+      <Pagination.Item key={number} active={number === currentPage} onClick={() => handlePageChange(number)}>
+        {number}
+      </Pagination.Item>,
+    );
+  }
+
   const handleSupplySuccess = () => {
     setSuccessMessage("Approvisionnement enregistré avec succès !");
     setShowIntelligentSupplyModal(false);
@@ -596,7 +625,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             type="text"
             placeholder="Rechercher par nom ou code..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
           />
         </Col>
         {userRole === 'Admin' && !boutiqueId && (
@@ -609,6 +638,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 if (e.target.value !== centralShopId) {
                     setFilterFournisseur('');
                 }
+                setCurrentPage(1);
               }}
             >
               <option value="">Toutes les boutiques</option>
@@ -626,6 +656,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
               onChange={(e) => {
                 setFilterFournisseur(e.target.value);
                 setSelectedArticles([]);
+                setCurrentPage(1);
               }}
             >
               <option value="">Tous les fournisseurs</option>
@@ -669,6 +700,17 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             data={filteredArticles}
             emptyMessage="Aucun article trouvé"
           />
+          {totalPages > 1 && (
+            <div className="d-flex justify-content-center py-3">
+                <Pagination>
+                    <Pagination.First onClick={() => handlePageChange(1)} disabled={currentPage === 1} />
+                    <Pagination.Prev onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1} />
+                    {paginationItems.slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))} 
+                    <Pagination.Next onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages} />
+                    <Pagination.Last onClick={() => handlePageChange(totalPages)} disabled={currentPage === totalPages} />
+                </Pagination>
+            </div>
+          )}
         </Card.Body>
       </Card>
 

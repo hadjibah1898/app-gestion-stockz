@@ -3,18 +3,20 @@ const router = express.Router();
 const caisseController = require('../controllers/caisseController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { checkCaisseOuverte, checkAucunRapportEnAttente } = require('../middleware/caisseMiddleware');
+const { validateOuvertureCaisse, validateFermetureCaisse, validateDepense } = require('../middleware/validators');
 
 // --- Routes pour les Gérants ---
 router.use(protect); // Toutes les routes suivantes nécessitent une connexion
 
 // Gérer sa propre caisse
-router.post('/ouvrir', authorize('Gérant'), caisseController.ouvrirCaisse);
-router.post('/fermer', authorize('Gérant'), checkCaisseOuverte, caisseController.fermerCaisse);
+router.post('/ouvrir', authorize('Gérant'), validateOuvertureCaisse, caisseController.ouvrirCaisse);
+router.post('/fermer', authorize('Gérant'), checkCaisseOuverte, validateFermetureCaisse, caisseController.fermerCaisse);
+router.put('/correction', authorize('Gérant'), validateFermetureCaisse, caisseController.corrigerRapport); // Nouvelle route de correction
 router.get('/statut', authorize('Gérant'), caisseController.getStatutCaisse);
 router.get('/statistiques-session', authorize('Gérant'), checkCaisseOuverte, caisseController.getStatistiquesSession);
 
 // Gérer ses propres dépenses
-router.post('/depenses', authorize('Gérant'), checkCaisseOuverte, caisseController.creerDepense);
+router.post('/depenses', authorize('Gérant'), checkCaisseOuverte, validateDepense, caisseController.creerDepense);
 router.get('/depenses/me', authorize('Gérant'), caisseController.listerMesDepenses);
 
 // Gérer ses propres rapports

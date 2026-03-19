@@ -6,6 +6,16 @@ const nodemailer = require('nodemailer');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const RapportCaisse = require('../models/RapportCaisse');
+
+// Configuration du transporteur (Déplacé en haut pour être accessible partout)
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+
 /**
  * Envoie une notification aux admins lorsqu'un gérant demande une remise
  * @param {Object} article - L'article concerné
@@ -58,15 +68,6 @@ exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) =
         console.error("❌ Erreur lors de l'envoi de la demande de remise:", error);
     }
 };
-
-// Configuration du transporteur (réutilisation des variables d'environnement existantes)
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    }
-});
 
 /**
  * Envoie une alerte par email aux administrateurs si le stock est faible
@@ -317,8 +318,8 @@ exports.sendReportRejectedAlert = async (rapport, admin, commentaire) => {
         await Notification.create({
             recipient: gerant._id,
             message: message,
-            type: 'error',
-            link: '/gerant/caisse' // Lien vers la vue caisse gérant
+                type: 'warning', // Changé en warning car ce n'est pas une erreur système, mais une action requise
+                link: '/gerant/caisse?action=correction' // Lien incitant à l'action
         });
         console.log(`📲 Notification in-app de rejet de rapport envoyée à ${gerant.nom}.`);
 
@@ -420,6 +421,26 @@ exports.sendDebtPaymentValidatedAlert = async (gerantId, client, montant) => {
         if (!gerant) return;
 
         const message = `✅ Le paiement de ${montant.toLocaleString('fr-FR')} GNF pour le client ${client.nom} a été validé. La dette du client est à jour.`;
+
+        // 1. Email notification (Nouveau)
+        if (gerant.email) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: gerant.email,
+                subject: `✅ Paiement de dette validé`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                        <h2 style="color: #198754; margin-top: 0;">Paiement Validé</h2>
+                        <p>Bonjour <strong>${gerant.nom}</strong>,</p>
+                        <p>L'administrateur a validé le paiement suivant que vous aviez enregistré :</p>
+                        <ul style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; list-style: none;">
+                            <li style="margin-bottom: 10px;"><strong>👤 Client :</strong> ${client.nom}</li>
+                            <li style="margin-bottom: 10px;"><strong>💰 Montant :</strong> <span style="font-weight: bold;">${montant.toLocaleString('fr-FR')} GNF</span></li>
+                        </ul>
+                    </div>
+                `
+            });
+        }
 
         // In-app notification
         await Notification.create({
