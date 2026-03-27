@@ -1,24 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Modal, Button, Form, Table, Alert, InputGroup, Spinner, Badge, Accordion } from 'react-bootstrap';
 import { fournisseurAPI } from '../../services/api';
 
 const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply = [], preSelectedFournisseurId }) => {
-    const [fournisseurs, setFournisseurs] = useState([]);
     const [groupedItems, setGroupedItems] = useState({});
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    useEffect(() => {
-        if (show) {
-            loadInitialData();
-        }
-    }, [show, articlesToSupply, preSelectedFournisseurId]);
-
-    const loadInitialData = async () => {
+    const loadInitialData = useCallback(async () => {
         try {
             const res = await fournisseurAPI.getAll();
             const allSuppliers = res.data;
-            setFournisseurs(allSuppliers);
+            // setFournisseurs(allSuppliers); // Cette ligne est supprimée car 'fournisseurs' n'est pas utilisé directement
 
             // Grouper les articles par fournisseur
             const itemsBySupplier = articlesToSupply.reduce((acc, article) => {
@@ -68,7 +61,13 @@ const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply = []
         } catch (err) {
             setError("Erreur lors de l'initialisation des données.");
         }
-    };
+    }, [articlesToSupply, preSelectedFournisseurId, setGroupedItems, setError]);
+
+    useEffect(() => {
+        if (show) {
+            loadInitialData();
+        }
+    }, [show, loadInitialData]);
 
     const handleItemChange = (supplierId, itemIndex, field, value) => {
         // On garde la valeur en string pour permettre l'effacement total au clavier
