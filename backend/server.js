@@ -19,6 +19,7 @@ const caisseRoutes = require('./routes/caisseRoutes');
 const auditRoutes = require('./routes/auditRoutes'); 
 
 const app = express();
+app.disable('x-powered-by'); // Supprime l'en-tête X-Powered-By pour cacher que le serveur utilise Express
 
 // 1. Connexion à MongoDB
 connectDB();
@@ -27,6 +28,26 @@ connectDB();
 initReminderService();
 
 // 2. Middlewares de base
+app.use((req, res, next) => {
+    // Empêche les navigateurs de deviner le type MIME (MIME-sniffing)
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Protection contre le Clickjacking (interdit l'affichage dans une iframe)
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    // Active le filtre XSS élémentaire des navigateurs
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    // Force l'utilisation du HTTPS (HSTS) - À ajuster si vous n'êtes pas encore en HTTPS
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // Contrôle les informations de provenance envoyées (Referrer)
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    // Content Security Policy (CSP) : définit les sources de contenu autorisées
+    res.setHeader('Content-Security-Policy', 
+        "default-src 'self'; " +
+        "img-src 'self' https://ui-avatars.com https://*.tile.openstreetmap.org data:; " +
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+        "style-src 'self' 'unsafe-inline';"
+    );
+    next();
+});
 app.use(cors());
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));

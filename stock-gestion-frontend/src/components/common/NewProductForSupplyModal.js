@@ -64,13 +64,36 @@ const NewProductForSupplyModal = ({ show, onHide, onAddProduct }) => {
     const handleImageChange = (e) => {
         const file = e.target.files[0];
         if (file) {
-            if (file.size > 2 * 1024 * 1024) { // 2MB limit
-                setError("L'image est trop volumineuse (max 2Mo).");
-                return;
-            }
             const reader = new FileReader();
-            reader.onloadend = () => {
-                setProduct(p => ({ ...p, image: reader.result }));
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 800;
+                    const MAX_HEIGHT = 800;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                    setProduct(p => ({ ...p, image: compressedBase64 }));
+                };
             };
             reader.readAsDataURL(file);
         }
@@ -169,8 +192,8 @@ const NewProductForSupplyModal = ({ show, onHide, onAddProduct }) => {
                         </Col>
                         <Col md={4}>
                             <Form.Group className="mb-3">
-                                <Form.Label>Image</Form.Label>
-                                <Form.Control type="file" accept="image/*" onChange={handleImageChange} />
+                                <Form.Label><iconify-icon icon="solar:camera-bold" className="me-1"></iconify-icon> Image</Form.Label>
+                                <Form.Control type="file" accept="image/*" capture="environment" onChange={handleImageChange} />
                                 {product.image && <img src={product.image} alt="Aperçu" className="img-fluid rounded mt-2" />}
                             </Form.Group>
                         </Col>

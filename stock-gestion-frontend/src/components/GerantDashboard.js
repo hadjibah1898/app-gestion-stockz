@@ -6,12 +6,61 @@
 // src/components/GerantDashboard.js
 
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Spinner, Alert, Table, Badge, Button } from 'react-bootstrap';
+import { Row, Col, Card, Alert, Table, Badge, Button, Placeholder } from 'react-bootstrap';
 import { Link, useOutletContext } from 'react-router-dom';
 import { venteAPI, articleAPI, caisseAPI } from '../services/api';
 import Chart from 'react-apexcharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+
+const blinkAnimationStyle = `
+.blink-animation {
+    animation: blinker 1.5s linear infinite;
+}
+@keyframes blinker {
+    50% { opacity: 0.3; }
+}`;
+
+const styleSheet = document.createElement("style");
+styleSheet.type = "text/css";
+styleSheet.innerText = blinkAnimationStyle;
+document.head.appendChild(styleSheet);
+
+const GerantDashboardSkeleton = () => (
+    <div className="p-4">
+        <Row className="align-items-center justify-content-between mb-4 g-3">
+            <Col xs={12} md="auto">
+                <Placeholder as="h3" animation="glow"><Placeholder xs={8} /></Placeholder>
+                <Placeholder as="p" animation="glow"><Placeholder xs={10} /></Placeholder>
+            </Col>
+        </Row>
+        <Row className="g-4 mb-4">
+            {[...Array(4)].map((_, i) => (
+                <Col lg={3} md={6} xs={12} key={i}>
+                    <Card className="border-0 shadow-sm h-100">
+                        <Card.Body className="p-4">
+                            <Placeholder as="h6" animation="glow"><Placeholder xs={6} /></Placeholder>
+                            <Placeholder as="h4" animation="glow"><Placeholder xs={8} /></Placeholder>
+                        </Card.Body>
+                    </Card>
+                </Col>
+            ))}
+        </Row>
+        <Row className="g-4">
+            <Col lg={7}>
+                <Card className="border-0 shadow-sm h-100 rounded-4">
+                    <Card.Body className="p-4">
+                        <Placeholder as="h5" animation="glow"><Placeholder xs={5} /></Placeholder>
+                        <Placeholder as="div" animation="glow" style={{ height: '300px' }} />
+                    </Card.Body>
+                </Card>
+            </Col>
+            <Col lg={5}>
+                <Card className="border-0 shadow-sm h-100 rounded-4"><Card.Body className="p-4"><Placeholder as="h5" animation="glow"><Placeholder xs={4} /></Placeholder><Placeholder as="div" animation="glow"><Placeholder xs={12} /><Placeholder xs={12} /><Placeholder xs={12} /></Placeholder></Card.Body></Card>
+            </Col>
+        </Row>
+    </div>
+);
 
 const GerantDashboard = () => {
     const { theme } = useOutletContext(); // Récupération du thème
@@ -25,6 +74,7 @@ const GerantDashboard = () => {
     const [recentArticles, setRecentArticles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [isCaisseOpen, setIsCaisseOpen] = useState(false);
 
     const [salesChartData, setSalesChartData] = useState({
         options: {
@@ -51,8 +101,11 @@ const GerantDashboard = () => {
                 ]);
 
                 const allHistorique = historiqueRes.data.ventes || [];
-                const allArticles = articlesRes.data || [];
+                const allArticles = articlesRes.data.data || [];
                 const caisseData = caisseRes?.data;
+
+                // Mettre à jour l'état de la caisse
+                setIsCaisseOpen(!!caisseData);
 
                 // Filtrer les ventes annulées
                 const validSales = allHistorique.filter(v => !v.isCancelled);
@@ -108,7 +161,7 @@ const GerantDashboard = () => {
     }, []);
 
     if (loading) {
-        return <div className="d-flex justify-content-center align-items-center vh-100"><Spinner animation="border" /></div>;
+        return <GerantDashboardSkeleton />;
     }
 
     const handleExportPDF = () => {
@@ -200,6 +253,17 @@ const GerantDashboard = () => {
                         <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                         Rapport
                     </Button>
+                    {!isCaisseOpen ? (
+                        <Button as={Link} to="/gerant/caisse" variant="success" className="rounded-pill px-4 shadow-sm">
+                            <iconify-icon icon="solar:key-bold" className="me-2 align-middle" style={{fontSize: '20px'}}></iconify-icon>
+                            Ouvrir Caisse
+                        </Button>
+                    ) : (
+                        <Button as={Link} to="/gerant/caisse" state={{ openCloseModal: true }} variant="danger" className="rounded-pill px-4 shadow-sm text-white">
+                            <iconify-icon icon="solar:logout-3-bold" className="me-2 align-middle" style={{fontSize: '20px'}}></iconify-icon>
+                            Fermer Caisse
+                        </Button>
+                    )}
                     <Button as={Link} to="/gerant/ventes" variant="primary" className="rounded-pill px-4 shadow-sm">
                          <iconify-icon icon="solar:cart-plus-bold" className="me-2 align-middle" style={{fontSize: '20px'}}></iconify-icon>
                         Nouvelle Vente
@@ -209,15 +273,22 @@ const GerantDashboard = () => {
 
             <Row className="g-4 mb-4">
                 {[
-                    { title: 'Revenu Session', value: `${stats.revenuAujourdhui.toLocaleString()} GNF`, color: 'success' },
-                    { title: 'Ventes Session', value: stats.ventesAujourdhui, color: 'primary' },
-                    { title: 'Articles en Stock', value: stats.totalArticles, color: 'info' },
-                    { title: 'Stock Faible (<10)', value: stats.articlesPeuStock, color: 'danger' },
+                    { title: 'Revenu Session', value: `${stats.revenuAujourdhui.toLocaleString()} GNF`, color: 'success', link: '/gerant/caisse', live: true },
+                    { title: 'Ventes Session', value: stats.ventesAujourdhui, color: 'primary', link: '/gerant/ventes?tab=history', live: true },
+                    { title: 'Articles en Stock', value: stats.totalArticles, color: 'info', link: '/gerant/articles' },
+                    { title: 'Stock Faible (<10)', value: stats.articlesPeuStock, color: 'danger', link: '/gerant/articles' },
                 ].map(stat => (
                     <Col lg={3} md={6} xs={12} key={stat.title}>
-                        <Card className={`stat-card border-0 shadow-sm h-100 bg-${stat.color}-subtle`}>
+                        <Card as={Link} to={stat.link} className={`stat-card text-decoration-none border-0 shadow-sm h-100 bg-${stat.color}-subtle`}>
                             <Card.Body className="p-4">
-                                <h6 className={`text-${stat.color} mb-1`}>{stat.title}</h6>
+                                <h6 className={`text-${stat.color} mb-1 d-flex align-items-center`}>
+                                    {stat.title}
+                                    {stat.live && isCaisseOpen && (
+                                        <Badge bg="danger" pill className="ms-2 blink-animation">
+                                            LIVE
+                                        </Badge>
+                                    )}
+                                </h6>
                                 <h4 className="fw-bold mb-0">{stat.value}</h4>
                             </Card.Body>
                         </Card>

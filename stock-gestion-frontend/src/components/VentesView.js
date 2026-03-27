@@ -13,7 +13,8 @@ import { useSearchParams } from 'react-router-dom';
 import { articleAPI, venteAPI, clientAPI } from '../services/api';
 import { Html5QrcodeScanner } from "html5-qrcode";
 import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
-import { generateReceiptPDF, generateHistoryPDF } from '../utils/pdfUtils';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import logo from '../assets/logo.png';
 import SaleTab from './SaleTab';
 import HistoryTab from './HistoryTab';
@@ -41,6 +42,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [montantPaye, setMontantPaye] = useState(''); // Montant payé par le client
   const [echeanceDette, setEcheanceDette] = useState(''); // Échéance pour la dette
 
+  const [isSubmitting, setIsSubmitting] = useState(false); // Pour le feedback sur le bouton de vente
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [saleToCancel, setSaleToCancel] = useState(null);
 
@@ -98,7 +100,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       const historiqueRes = results[1];
       const clientsRes = userRole !== 'Admin' ? results[2] : { data: [] };
 
-      setArticles((articlesRes.data || []).filter(a => a.quantite > 0));
+      setArticles((articlesRes.data.data || []).filter(a => a.quantite > 0));
       setHistorique(historiqueRes.data.ventes || []);
       setTotalPages(historiqueRes.data.totalPages || 0);
       setClients(clientsRes.data || []);
@@ -142,6 +144,13 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setError("La quantité doit être supérieure à 0");
       return;
     }
+    
+    // Sécurité : Forcer un entier pour éviter les décimales non gérées
+    if (!Number.isInteger(parseFloat(quantite))) {
+        setError("La quantité doit être un nombre entier.");
+        return;
+    }
+
     if (remisePanier !== '' && (isNaN(parseFloat(remisePanier)) || parseFloat(remisePanier) < 0)) {
       setError("La remise doit être un montant positif (supérieur ou égal à 0 GNF)");
       return;
@@ -238,6 +247,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         return;
     }
 
+    setIsSubmitting(true);
     const venteData = {
       panier: panier.map(item => ({
         article: item.article._id,
@@ -273,6 +283,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           totalNet: totalVente,
           amountPaid: montantPayeFinal,
           change: montantPayeFinal - totalVente,
+          echeanceDette: echeanceDette, // Ajout de l'échéance pour le ticket
       };
       // Stocker les données et afficher la modale de choix au lieu d'imprimer directement
       setCurrentReceiptData(receiptData);
@@ -288,6 +299,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur lors de la vente');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -328,6 +341,168 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setShowCancelModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     }
+  };
+
+  // Génération du ticket de caisse (Format ticket thermique)
+  const generateReceiptPDF = (ticketData) => {
+    if (!ticketData) return;
+
+    // Helper pour nettoyer le formatage des nombres pour le PDF
+    const formatPrice = (price) => {
+        return (price || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
+    };
+
+    const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [80, 150 + (ticketData.items.length * 8)] // Hauteur dynamique
+    });
+
+    const {
+        shopName = 'BOUTIQUE',
+        address = '',
+        phone = '',
+        transactionId = 'N/A',
+        date = new Date(),
+        clientName = 'Client de passage',
+        cashierName = 'N/A',
+        items = [],
+        subTotal = 0,
+        discount = 0,
+        totalNet = 0,
+        amountPaid = 0,
+        echeanceDette = null, // Récupération de l'échéance
+    } = ticketData;
+
+    // --- En-tête ---
+    try {
+        doc.addImage(logo, 'PNG', 25, 5, 30, 10);
+    } catch (e) {
+        doc.setFontSize(14);
+        doc.text(shopName || 'BOUTIQUE', 40, 10, { align: 'center' });
+    }
+    
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.text(address || '', 40, 20, { align: 'center' });
+    if (phone) doc.text(`Tel: ${phone}`, 40, 24, { align: 'center' });
+    doc.text("------------------------------------------------", 40, 30, { align: 'center' });
+
+    // --- Infos Transaction ---
+    doc.text(`Ticket: ${transactionId}`, 5, 35);
+    doc.text(`Date: ${new Date(date).toLocaleString('fr-FR')}`, 5, 39);
+    doc.text(`Client: ${clientName}`, 5, 43);
+    doc.text(`Caissier: ${cashierName}`, 5, 47);
+    
+    // --- Tableau Articles ---
+    const tableRows = items.map(item => [
+        item.article.nom.substring(0, 20),
+        item.quantite,
+        formatPrice(item.prixUnitaire),
+        formatPrice(item.prixTotal)
+    ]);
+
+    autoTable(doc, {
+        head: [["Article", "Qté", "P.U.", "Total"]],
+        body: tableRows,
+        startY: 50,
+        theme: 'plain',
+        styles: { fontSize: 7, cellPadding: 1 },
+        headStyles: { fontStyle: 'bold', halign: 'center' },
+        columnStyles: {
+            0: { cellWidth: 25 },
+            1: { halign: 'center' },
+            2: { halign: 'right' },
+            3: { halign: 'right' }
+        },
+        margin: { left: 2, right: 2 }
+    });
+
+    let finalY = doc.lastAutoTable.finalY + 5;
+
+    // --- Totaux ---
+    doc.setFontSize(8);
+    doc.text('Sous-total:', 5, finalY);
+    doc.text(`${formatPrice(subTotal)} GNF`, 75, finalY, { align: 'right' });
+    finalY += 4;
+
+    if (discount > 0) {
+        doc.text('Remise:', 5, finalY);
+        doc.text(`- ${formatPrice(discount)} GNF`, 75, finalY, { align: 'right' });
+        finalY += 4;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text('TOTAL NET:', 5, finalY);
+    doc.text(`${formatPrice(totalNet)} GNF`, 75, finalY, { align: 'right' });
+    finalY += 5;
+    
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text('Montant versé:', 5, finalY);
+    doc.text(`${formatPrice(amountPaid)} GNF`, 75, finalY, { align: 'right' });
+    finalY += 5;
+
+    const balance = amountPaid - totalNet;
+
+    if (balance >= 0) {
+        // Cas normal : Monnaie à rendre
+        doc.text('Monnaie rendue:', 5, finalY);
+        doc.text(`${formatPrice(balance)} GNF`, 75, finalY, { align: 'right' });
+    } else {
+        // Cas dette : Reste à payer
+        doc.setFont("helvetica", "bold");
+        doc.text('RESTE A PAYER:', 5, finalY);
+        doc.text(`${formatPrice(Math.abs(balance))} GNF`, 75, finalY, { align: 'right' });
+        
+        if (echeanceDette) {
+            finalY += 5;
+            doc.setFontSize(7);
+            doc.setFont("helvetica", "italic");
+            doc.text(`Echeance le : ${new Date(echeanceDette).toLocaleDateString('fr-FR')}`, 40, finalY, { align: 'center' });
+        }
+    }
+
+    // --- Pied de page ---
+    doc.text("------------------------------------------------", 40, finalY + 10, { align: 'center' });
+    doc.setFont("helvetica", "bold");
+    doc.text("Merci de votre visite !", 40, finalY + 15, { align: 'center' });
+
+    doc.save(`ticket_${transactionId}.pdf`);
+  };
+
+  // Génération de l'historique (Format A4)
+  const generateHistoryPDF = (sales, logoImg) => {
+    const doc = new jsPDF();
+    try { doc.addImage(logoImg, 'PNG', 14, 8, 40, 15); } catch (e) {}
+
+    doc.setFontSize(18);
+    doc.setTextColor(41, 128, 185);
+    doc.text("Historique des Ventes", 60, 16);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 60, 22);
+
+    const tableRows = sales.map(v => [
+        new Date(v.createdAt).toLocaleString('fr-FR'),
+        v.article?.nom || 'N/A',
+        v.quantite,
+        (v.prixTotal || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ') + ' GNF',
+        v.gerant?.nom || 'N/A',
+        v.isCancelled ? 'Annulée' : 'OK'
+    ]);
+
+    autoTable(doc, {
+        head: [["Date", "Article", "Qté", "Total", "Vendeur", "Statut"]],
+        body: tableRows,
+        startY: 30,
+        theme: 'grid',
+        headStyles: { fillColor: [41, 128, 185] },
+        styles: { fontSize: 8 }
+    });
+
+    doc.save(`historique_ventes_${new Date().toISOString().slice(0,10)}.pdf`);
   };
 
   const handlePrintReceipt = () => {
@@ -568,6 +743,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                     calculerTotal={calculerTotal}
                     effectuerVente={effectuerVente}
                     historique={historique}
+                    isSubmitting={isSubmitting}
                 />
             </Tab>
             <Tab eventKey="history" title={<span className="d-flex align-items-center"><iconify-icon icon="solar:bill-list-bold" className="me-2"></iconify-icon>Historique Complet</span>}>

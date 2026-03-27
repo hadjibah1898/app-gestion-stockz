@@ -65,17 +65,26 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [autoPromoLoading, setAutoPromoLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const params = {
-        page: currentPage,
-        limit: 15, // Items per page
-        search: searchTerm,
-        boutique: filterBoutique,
-        fournisseur: filterFournisseur
-      };
+    setLoading(true);
+    setError('');
 
-      try {
+    let sortParam = '';
+    let orderParam = 'asc';
+    if (sortBy === 'datePeremptionAsc') { sortParam = 'datePeremption'; orderParam = 'asc'; }
+    else if (sortBy === 'datePeremptionDesc') { sortParam = 'datePeremption'; orderParam = 'desc'; }
+    else if (sortBy === 'nomAsc') { sortParam = 'nom'; orderParam = 'asc'; }
+
+    const params = {
+      page: currentPage,
+      limit: 15,
+      search: searchTerm,
+      boutique: filterBoutique,
+      fournisseur: filterFournisseur,
+      sort: sortParam,
+      order: orderParam
+    };
+
+    try {
         const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
           articleAPI.getAll(params), // API call now accepts params
           userRole === 'Admin' ? boutiqueAPI.getAll() : Promise.resolve({ data: [] }),
@@ -83,11 +92,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         ]);
         
         // Handle paginated response or simple array
-        if (articlesRes.data.data) {
+        if (articlesRes.data && articlesRes.data.data) {
             setArticles(articlesRes.data.data);
             setTotalPages(articlesRes.data.totalPages);
         } else {
-            setArticles(articlesRes.data);
+            setArticles(articlesRes.data || []);
+            setTotalPages(1);
         }
 
         setBoutiques(boutiquesRes.data);
@@ -102,10 +112,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       } finally {
         setLoading(false);
       }
-    } catch (err) {
-      setError(err.response?.data?.message || 'Erreur de chargement');
-    }
-  }, [userRole, currentPage, searchTerm, filterBoutique, filterFournisseur]);
+  }, [userRole, currentPage, searchTerm, filterBoutique, filterFournisseur, sortBy]);
 
   useEffect(() => {
     fetchData();
@@ -123,6 +130,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                  if (supplierId) {
                      setFilterFournisseur(supplierId);
                  }
+                 // S'assurer que les articles sélectionnés ne sont pas vides
+                 if (articleId) setSelectedArticles([articleId]);
                  setShowIntelligentSupplyModal(true);
                  // Nettoyer l'état pour éviter la réouverture intempestive
                  window.history.replaceState({}, document.title);
@@ -205,13 +214,36 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) { // Limite 2Mo
-        setError("L'image est trop volumineuse (max 2Mo)");
-        return;
-      }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setCurrentArticle({ ...currentArticle, image: reader.result });
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 800;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+          setCurrentArticle({ ...currentArticle, image: compressedBase64 });
+        };
       };
       reader.readAsDataURL(file);
     }
@@ -404,21 +436,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     return matchPromo;
   });
 
-  // Logique de tri
-  if (sortBy === 'datePeremptionAsc') {
-    filteredArticles.sort((a, b) => {
-      if (!a.datePeremption) return 1;
-      if (!b.datePeremption) return -1;
-      return new Date(a.datePeremption) - new Date(b.datePeremption);
-    });
-  } else if (sortBy === 'datePeremptionDesc') {
-    filteredArticles.sort((a, b) => {
-      if (!a.datePeremption) return 1;
-      if (!b.datePeremption) return -1;
-      return new Date(b.datePeremption) - new Date(a.datePeremption);
-    });
-  }
-
   const handleSelectAll = (e) => {
     if (e.target.checked) {
         setSelectedArticles(filteredArticles.map(a => a._id));
@@ -473,20 +490,21 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         );
       }
     },
-    {
-      key: 'fournisseur',
-      label: 'Fournisseur',
-      render: (fournisseur) => {
-        if (!fournisseur) {
-          return <Badge bg="secondary">Non spécifié</Badge>;
+    // La colonne Fournisseur est visible uniquement pour l'Admin
+    ...(userRole === 'Admin' ? [{
+        key: 'fournisseur',
+        label: 'Fournisseur',
+        render: (fournisseur) => {
+            if (!fournisseur) {
+                return <Badge bg="secondary">Non spécifié</Badge>;
+            }
+            return (
+                <span>
+                    {fournisseur.nom}
+                </span>
+            );
         }
-        return (
-          <span>
-            {fournisseur.nom}
-          </span>
-        );
-      }
-    },
+    }] : []),
     {
       key: 'promo',
       label: 'Promo/Remise',
@@ -674,6 +692,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
               <option value="">Tri par défaut</option>
               <option value="datePeremptionAsc">Péremption (Plus proche)</option>
               <option value="datePeremptionDesc">Péremption (Plus lointaine)</option>
+              <option value="boutiqueAsc">Boutique (A-Z)</option>
+              <option value="boutiqueDesc">Boutique (Z-A)</option>
             </Form.Select>
         </Col>
         <Col md="auto">
@@ -724,7 +744,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           <Modal.Body>
             <Form.Group className="mb-3">
               <Form.Label>Image du produit</Form.Label>
-              <Form.Control type="file" accept="image/*" onChange={handleImageChange} />
+              <Form.Control type="file" accept="image/*" capture="environment" onChange={handleImageChange} />
               {currentArticle.image && (
                 <div className="mt-2 text-center position-relative">
                   <img src={currentArticle.image} alt="Aperçu" className="img-fluid rounded shadow-sm" style={{maxHeight: '150px'}} />

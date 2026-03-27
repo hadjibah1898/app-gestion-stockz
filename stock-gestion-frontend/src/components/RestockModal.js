@@ -24,7 +24,8 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
 
             if (centrale) {
                 const articlesRes = await articleAPI.getAll();
-                const shopArticles = articlesRes.data.filter(a => (a.boutique?._id || a.boutique) === centrale._id);
+                const allArticles = articlesRes.data.data || articlesRes.data || [];
+                const shopArticles = allArticles.filter(a => (a.boutique?._id || a.boutique) === centrale._id);
                 setCentralShopArticles(shopArticles);
             }
         } catch (err) {
@@ -58,7 +59,11 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
         }));
 
         try {
-            const res = await articleAPI.restock({ targetId: restockTargetId, articles: articlesPayload });
+            const res = await articleAPI.transferStock({ 
+                sourceId: centralShop._id,
+                targetId: restockTargetId, 
+                articles: articlesPayload 
+            });
             onSuccess(res.data.message);
             handleClose();
         } catch (err) {

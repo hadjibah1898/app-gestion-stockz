@@ -2,31 +2,41 @@ const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { validateClient } = require('../middleware/validators');
+const { validateClient, validateCommission } = require('../middleware/validators');
+const validateObjectId = require('../middleware/validateObjectId');
 
-// Toutes les routes pour les clients sont protégées et nécessitent une authentification
+/**
+ * ROUTES CLIENTS
+ * Toutes les routes ci-dessous nécessitent une authentification
+ */
 router.use(protect);
 
-// Nouvelles routes pour la gestion des créances
+// --- Gestion des Créances & Statistiques ---
 router.get('/debts', clientController.getDebts);
-router.get('/debt-payments/pending', protect, clientController.getPendingDebtPayments);
-router.put('/debt-payments/:id/validate', authorize('Admin'), clientController.validateDebtPayment);
-router.put('/debt-payments/:id/reject', authorize('Admin'), clientController.rejectDebtPayment);
 router.get('/debt-evolution', clientController.getDebtEvolution);
-
 router.get('/debt-history', clientController.getDebtHistory);
 
-// Cette route doit être AVANT router.route('/:id') pour ne pas être interceptée
-router.post('/pay-commission', clientController.payCommission);
+// --- Validation des Paiements (Administration) ---
+router.get('/debt-payments/pending', clientController.getPendingDebtPayments);
+router.put('/debt-payments/:id/validate', authorize('Admin'), validateObjectId('id'), clientController.validateDebtPayment);
+router.put('/debt-payments/:id/reject', authorize('Admin'), validateObjectId('id'), clientController.rejectDebtPayment);
 
+// --- Actions Spécifiques ---
+// Note : Placées avant /:id pour éviter les conflits de capture
+router.post('/pay-commission', authorize('Gérant'), validateCommission, clientController.payCommission);
+
+// --- CRUD Standard ---
 router.route('/')
     .get(clientController.getAllClients)
     .post(validateClient, clientController.createClient);
 
 router.route('/:id')
+    .all(validateObjectId('id'))
+    .get(clientController.getClient)
     .put(validateClient, clientController.updateClient)
-    .delete(clientController.deleteClient);
+    .delete(authorize('Admin'), clientController.deleteClient);
 
-router.post('/:id/pay-dette', clientController.payDette);
+// --- Paiement Direct ---
+router.post('/:id/pay-dette', validateObjectId('id'), clientController.payDette);
 
 module.exports = router;

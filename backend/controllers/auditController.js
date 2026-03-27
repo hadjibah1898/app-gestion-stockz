@@ -7,8 +7,10 @@ const AuditLog = require('../models/AuditLog');
  */
 exports.getLogs = async (req, res) => {
     try {
-        const { user, action, startDate, endDate } = req.query;
+        const { user, action, startDate, endDate, page = 1, limit = 20 } = req.query;
         const query = {};
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
 
         if (user) {
             query.user = user;
@@ -29,8 +31,22 @@ exports.getLogs = async (req, res) => {
             }
         }
 
-        const logs = await AuditLog.find(query).sort({ createdAt: -1 }).limit(1000); // Limite pour éviter de surcharger
-        res.status(200).json(logs);
+        const totalLogs = await AuditLog.countDocuments(query);
+        let logsQuery = AuditLog.find(query).sort({ createdAt: -1 });
+
+        // Appliquer la pagination seulement si une limite positive est spécifiée
+        if (limitNum > 0) {
+            const skip = (pageNum - 1) * limitNum;
+            logsQuery = logsQuery.skip(skip).limit(limitNum);
+        }
+
+        const logs = await logsQuery;
+
+        res.status(200).json({
+            logs,
+            currentPage: pageNum,
+            totalPages: limitNum > 0 ? Math.ceil(totalLogs / limitNum) : 1
+        });
     } catch (error) {
         res.status(500).json({ message: "Erreur interne du serveur lors de la récupération des journaux.", error: error.message });
     }

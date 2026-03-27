@@ -1,5 +1,5 @@
 const notificationService = require('../services/notificationService');
-const { logAction } = require('../services/auditLogService');
+const { logAction } = require('../services/auditLogService'); // Assurez-vous que l'import est présent
 // Demande de remise par le gérant (stocke la demande et notifie les admins)
 exports.demanderRemise = async (req, res) => {
     try {
@@ -22,6 +22,17 @@ exports.demanderRemise = async (req, res) => {
         });
         // Notifier les admins
         await notificationService.sendRemiseRequestToAdmins(article, remise, req.user, clientNom);
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'REQUEST_DISCOUNT',
+            entity: 'Article',
+            entityId: article._id,
+            details: { article: article.nom, remise: remise, client: clientNom },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: "Demande de remise envoyée à l'administrateur pour validation." });
     } catch (error) {
         console.error("Erreur demande remise:", error);
@@ -34,7 +45,7 @@ const articleService = require('../services/articleService');
 // Mis à jour pour filtrer par rôle
 exports.getAllArticles = async (req, res) => {
     try {
-        const { page, limit, search, boutique, fournisseur } = req.query;
+        const { page, limit, search, boutique, fournisseur, sort, order } = req.query;
         const filter = {};
 
         // Filtre de recherche (Nom ou Code)
@@ -55,6 +66,13 @@ exports.getAllArticles = async (req, res) => {
             filter.fournisseur = fournisseur;
         }
 
+        if (sort) {
+            filter.sort = sort;
+        }
+        if (order) {
+            filter.order = order;
+        }
+
         // Si l'utilisateur connecté est un Gérant (info venant du token JWT via le middleware 'protect')
         if (req.user.role === 'Gérant') {
             // S'il n'a pas de boutique assignée, il ne voit aucun article.
@@ -73,13 +91,13 @@ exports.getAllArticles = async (req, res) => {
     }
 };
 
-//  Une seule version de addArticle (Gestion des articles - Point 5.4 [cite: 40, 41])
+//  Une seule version de addArticle (Gestion des articles 
 exports.addArticle = async (req, res) => {
     // Action désactivée pour forcer l'utilisation du module d'approvisionnement
     return res.status(403).json({ message: "La création manuelle d'article est désactivée. Veuillez utiliser le module d'approvisionnement." });
 };
 
-//  Ajoute l'export pour la suppression (Point 5.4 [cite: 43])
+//  Ajoute l'export pour la suppression 
 exports.deleteArticle = async (req, res) => {
     try {
         const article = await articleService.listerArticles({ _id: req.params.id });

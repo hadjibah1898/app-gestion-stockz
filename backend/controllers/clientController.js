@@ -8,6 +8,7 @@ const User = require('../models/User');
 const Boutique = require('../models/Boutique');
 const Caisse = require('../models/OuvertureCaisse');
 const Depense = require('../models/Depense');
+const commissionService = require('../services/commissionService');
 
 /**
  * @desc    Créer un client
@@ -67,6 +68,27 @@ exports.getAllClients = async (req, res) => {
         res.status(200).json(clients);
     } catch (error) {
         res.status(500).json({ message: "Impossible de récupérer les clients.", error: error.message });
+    }
+};
+
+/**
+ * @desc    Obtenir un client par ID
+ * @route   GET /api/clients/:id
+ * @access  Private
+ */
+exports.getClient = async (req, res) => {
+    try {
+        const client = await Client.findById(req.params.id)
+            .populate('createur', 'nom')
+            .populate('dernierModificateur', 'nom');
+            
+        if (!client) {
+            return res.status(404).json({ message: "Client introuvable." });
+        }
+
+        res.status(200).json(client);
+    } catch (error) {
+        res.status(500).json({ message: "Erreur lors de la récupération du client.", error: error.message });
     }
 };
 
@@ -246,7 +268,7 @@ exports.getPendingDebtPayments = async (req, res) => {
  */
 exports.rejectDebtPayment = async (req, res) => {
     try {
-        const payment = await DebtPayment.findById(req.params.id);
+        const payment = await DebtPayment.findById(req.params.id).populate('client', 'nom').populate('gerant', 'nom');
         if (!payment || payment.statut !== 'EN_ATTENTE') {
             return res.status(404).json({ message: "Paiement introuvable ou déjà traité." });
         }
@@ -256,6 +278,19 @@ exports.rejectDebtPayment = async (req, res) => {
         payment.dateValidation = new Date();
         await payment.save();
 
+        await logAction({
+            req,
+            user: req.user,
+            action: 'REJECT_DEBT_PAYMENT',
+            entity: 'DebtPayment',
+            entityId: payment._id,
+            details: {
+                client: payment.client?.nom,
+                amount: payment.montant,
+                gerant: payment.gerant?.nom
+            },
+            status: 'SUCCESS'
+        });
         res.status(200).json({ message: "Paiement rejeté (annulé) avec succès." });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors du rejet.", error: error.message });
@@ -301,6 +336,19 @@ exports.validateDebtPayment = async (req, res) => {
             details: `Paiement validé (Réf: ${payment._id})`
         });
 
+        await logAction({
+            req,
+            user: req.user,
+            action: 'VALIDATE_DEBT_PAYMENT',
+            entity: 'DebtPayment',
+            entityId: payment._id,
+            details: {
+                client: client.nom,
+                amount: payment.montant,
+                gerant: payment.gerant?.nom
+            },
+            status: 'SUCCESS'
+        });
         // Mettre à jour la caisse admin
         const caisseAdmin = await CaisseAdmin.getInstance();
         caisseAdmin.soldeActuel += payment.montant;
@@ -387,7 +435,8 @@ exports.getDebtHistory = async (req, res) => {
         const history = await DebtPayment.find(query)
             .sort({ datePaiement: -1 }) // Toujours trier du plus récent au plus ancien
             .populate('client', 'nom dette')
-            .populate('gerant', 'nom');
+            .populate('gerant', 'nom')
+            .populate('boutique', 'nom'); // Ajout de la population de la boutique
             
         res.status(200).json(history);
     } catch (error) {
@@ -404,50 +453,16 @@ exports.getDebtHistory = async (req, res) => {
 exports.payCommission = async (req, res) => {
     try {
         const { workerId, montant } = req.body;
-        const amountToPay = parseFloat(montant);
 
-        if (!workerId || isNaN(amountToPay) || amountToPay <= 0) {
-            return res.status(400).json({ message: "Données invalides." });
-        }
-
-        // 1. Trouver l'ouvrier
-        const worker = await Client.findOne({ _id: workerId, type: 'Ouvrier' });
-        if (!worker) {
-            return res.status(404).json({ message: "Ouvrier introuvable." });
-        }
-
-        if (amountToPay > worker.commission) {
-            return res.status(400).json({ message: "Le montant dépasse la commission due." });
-        }
-
-        // 2. Trouver la caisse ouverte du gérant
-        const currentCaisse = await Caisse.findOne({ gerant: req.user.id, dateFermeture: null });
-        if (!currentCaisse) {
-            return res.status(400).json({ message: "Aucune caisse ouverte. Veuillez ouvrir votre caisse d'abord." });
-        }
-
-        // 3. Exécution "Atomique" (Séquentielle sécurisée)
-        // A. Mise à jour commission
-        worker.commission -= amountToPay;
-        await worker.save();
-
-        // B. Création Dépense
-        await Depense.create({
-            montant: amountToPay,
-            motif: `Paiement commission: ${worker.nom}`,
-            ouvertureCaisse: currentCaisse._id,
-            boutique: req.user.boutique,
-            gerant: req.user.id,
-            date: new Date() // S'assurer que la date est présente
+        const result = await commissionService.payManualCommission({
+            workerId,
+            montant,
+            gerantId: req.user.id,
+            boutiqueId: req.user.boutique
         });
 
-        // C. Mise à jour explicite du total des dépenses de la caisse
-        // Cela garantit que le solde théorique est juste immédiatement, même sans 'hook' Mongoose sur le modèle.
-        currentCaisse.totalDepenses = (currentCaisse.totalDepenses || 0) + amountToPay;
-        await currentCaisse.save();
-
-        res.status(200).json({ success: true, message: "Commission payée avec succès.", newCommission: worker.commission });
+        res.status(200).json(result);
     } catch (error) {
-        res.status(500).json({ message: "Erreur lors du paiement de la commission.", error: error.message });
+        res.status(error.statusCode || 500).json({ message: error.message });
     }
 };

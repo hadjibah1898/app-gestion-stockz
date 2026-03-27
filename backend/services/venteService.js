@@ -5,29 +5,39 @@ const Mouvement = require('../models/Mouvement');
 const Client = require('../models/Client');
 const notificationService = require('./notificationService');
 const DebtMovement = require('../models/DebtMovement'); // Importer le nouveau modèle
+const mongoose = require('mongoose');
+const { logAction } = require('./auditLogService');
 
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
 exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null) => {
-    try {
-        const resultats = [];
-        const articlesVendusPourMouvement = [];
+    const resultats = [];
+    const articlesVendusPourMouvement = [];
+    const articlesStockModifies = []; // Pour le rollback manuel
 
+    try {
         for (const item of items) {
             // Correction pour correspondre aux données envoyées par le frontend (`article`, `quantite`, `remiseTemp`)
             const { article: articleId, quantite, remiseTemp } = item;
 
-            // 1. Récupérer l'article
-            const article = await Article.findById(articleId).populate('boutique');
+            // 1. Déduire le stock de manière atomique (pour une seule opération)
+            const article = await Article.findOneAndUpdate(
+                { _id: articleId, quantite: { $gte: quantite } },
+                { $inc: { quantite: -quantite } },
+                { new: true } // Retourne le document mis à jour
+            ).populate('boutique');
+
             if (!article) {
-                throw new Error(`Article introuvable (ID: ${articleId})`);
+                const exists = await Article.findById(articleId);
+                if (!exists) {
+                    throw new Error(`Article introuvable (ID: ${articleId})`);
+                } else {
+                    throw new Error(`Stock insuffisant pour l'article "${exists.nom}". Disponible: ${exists.quantite}, demandé: ${quantite}.`);
+                }
             }
-
-            // 2. Vérifier le stock
-            if (article.quantite < quantite) {
-                throw new Error(`Stock insuffisant pour l'article "${article.nom}". Disponible: ${article.quantite}, demandé: ${quantite}.`);
-            }
-
-            // 3. Créer l'enregistrement de la vente
+            // Garder une trace pour le rollback
+            articlesStockModifies.push({ articleId, quantite });
+            
+            // 2. Créer l'enregistrement de la vente
             // Calcul du prix unitaire avec Promo ou Remise
             let prixUnitaire = article.prixVente;
             
@@ -65,18 +75,11 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                 client: clientId // Ajout de l'ID client à chaque vente
             });
             
-            // Sauvegarde simple sans transaction
             const savedVente = await vente.save();
             
-            // 4. Mettre à jour le stock de l'article (Toujours, car la vente est finalisée immédiatement)
-            if (true) {
-                article.quantite -= quantite;
-                await article.save();
-                
-                // Notification Stock Faible
-                if (article.quantite <= 10) {
-                    notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
-                }
+            // Notification Stock Faible (effet de bord, non transactionnel, ce qui est normal)
+            if (article.quantite <= 10) {
+                notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
             }
             
             resultats.push(savedVente);
@@ -85,7 +88,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
 
         const totalVentePanier = resultats.reduce((acc, v) => acc + v.prixTotal, 0);
 
-        // Gestion de la dette et mise à jour du client
+        // 3. Gestion de la dette et mise à jour du client
         if (clientId) {
             const client = await Client.findById(clientId);
             if (!client) {
@@ -136,7 +139,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
             }
         }
 
-        // Enregistrer un seul mouvement pour tout le panier
+        // 4. Enregistrer un seul mouvement pour tout le panier
         if (articlesVendusPourMouvement.length > 0) {
             let details = `Vente de ${articlesVendusPourMouvement.length} article(s) pour un total de ${totalVentePanier.toLocaleString('fr-FR')} GNF.`;
 
@@ -156,17 +159,38 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                 }
             }
 
-            await Mouvement.create({
+            await Mouvement.create([{
                 type: 'Vente',
                 boutiqueSource: boutiqueId,
                 articles: articlesVendusPourMouvement,
                 operateur: userId,
                 details: details
-            });
+            }]);
         }
 
         return resultats
+
     } catch (error) {
+        // ROLLBACK MANUEL en cas d'erreur
+        console.error("❌ Erreur durant le traitement du panier, rollback manuel en cours...", error.message);
+
+        // 1. Annuler les ventes créées
+        if (resultats.length > 0) {
+            const venteIds = resultats.map(v => v._id);
+            await Vente.deleteMany({ _id: { $in: venteIds } });
+        }
+
+        // 2. Restaurer le stock des articles
+        if (articlesStockModifies.length > 0) {
+            const bulkOps = articlesStockModifies.map(item => ({
+                updateOne: {
+                    filter: { _id: item.articleId },
+                    update: { $inc: { quantite: item.quantite } }
+                }
+            }));
+            await Article.bulkWrite(bulkOps);
+        }
+
         throw error;
     }
 };
@@ -196,6 +220,11 @@ exports.listerVentes = async (filter = {}, user = null) => {
     // Si l'utilisateur est un gérant, on force le filtre sur son ID pour la sécurité.
     if (user && user.role === 'Gérant') {
         query.gerant = user.id;
+        // SÉCURITÉ : Filtrer aussi par la boutique actuelle du gérant
+        // Cela évite d'afficher les ventes d'une ancienne affectation dans le dashboard actuel
+        if (user.boutique) {
+            query.boutique = user.boutique;
+        }
     } else if (filter.gerantId) { // Sinon, si un filtre admin est passé, on l'utilise.
         query.gerant = filter.gerantId;
     }
@@ -223,43 +252,63 @@ exports.listerVentes = async (filter = {}, user = null) => {
     };
 };
 
-exports.annulerVente = async (venteId, user) => {
-    const vente = await Vente.findById(venteId);
-    if (!vente) throw new Error("Vente introuvable.");
-    if (vente.isCancelled) throw new Error("Cette vente est déjà annulée.");
+exports.annulerVente = async (venteId, user, req) => {
+    // NOTE: Cette opération n'est pas atomique sans Replica Set.
+    // Un crash serveur entre les différentes opérations peut laisser la base de données
+    // dans un état incohérent.
+    try {
+        const vente = await Vente.findById(venteId);
+        if (!vente) throw new Error("Vente introuvable.");
+        if (vente.isCancelled) throw new Error("Cette vente est déjà annulée.");
 
-    // Règle métier : Un gérant ne peut annuler une vente que dans les 24h.
-    if (user.role === 'Gérant') {
-        const now = new Date();
-        const saleDate = new Date(vente.createdAt);
-        const diffInHours = (now - saleDate) / (1000 * 60 * 60);
+        // Règle métier : Un gérant ne peut annuler une vente que dans les 24h.
+        if (user.role === 'Gérant') {
+            const now = new Date();
+            const saleDate = new Date(vente.createdAt);
+            const diffInHours = (now - saleDate) / (1000 * 60 * 60);
 
-        if (diffInHours > 24) {
-            throw new Error("L'annulation par un gérant n'est possible que dans les 24 heures suivant la vente.");
+            if (diffInHours > 24) {
+                throw new Error("L'annulation par un gérant n'est possible que dans les 24 heures suivant la vente.");
+            }
         }
+
+        const article = await Article.findById(vente.article);
+        // Si l'article a été supprimé, on ne peut pas restaurer le stock facilement.
+        if (!article) throw new Error("Impossible d'annuler : L'article associé n'existe plus.");
+
+        // Restauration du stock
+        article.quantite += vente.quantite;
+        await article.save();
+
+        // Marquer la vente comme annulée
+        vente.isCancelled = true;
+        await vente.save();
+
+        // Log audit (effet de bord, non transactionnel)
+        await logAction({
+            req,
+            user,
+            action: 'CANCEL_SALE',
+            entity: 'Vente',
+            entityId: vente._id,
+            details: {
+                article: article.nom,
+                prixTotal: vente.prixTotal
+            },
+            status: 'SUCCESS'
+        });
+        // Enregistrer un mouvement d'annulation pour la traçabilité
+        await Mouvement.create([{
+            type: 'Annulation Vente',
+            details: `Annulation de la vente #${vente._id}. Retour de ${vente.quantite} unité(s) en stock.`,
+            boutiqueSource: vente.boutique, // Le stock revient ici
+            articles: [{ articleId: article._id, nomArticle: article.nom, quantite: vente.quantite, prixAchatUnitaire: article.prixAchat }],
+            operateur: user.id,
+            isCancelled: true
+        }]);
+
+        return { message: "Vente annulée avec succès. Le stock a été restauré." };
+    } catch (error) {
+        throw error;
     }
-
-    const article = await Article.findById(vente.article);
-    // Si l'article a été supprimé, on ne peut pas restaurer le stock facilement.
-    if (!article) throw new Error("Impossible d'annuler : L'article associé n'existe plus.");
-
-    // Restauration du stock
-    article.quantite += vente.quantite;
-    await article.save();
-
-    // Marquer la vente comme annulée
-    vente.isCancelled = true;
-    await vente.save();
-
-    // Enregistrer un mouvement d'annulation pour la traçabilité
-    await Mouvement.create({
-        type: 'Annulation Vente',
-        details: `Annulation de la vente #${vente._id}. Retour de ${vente.quantite} unité(s) en stock.`,
-        boutiqueSource: vente.boutique, // Le stock revient ici
-        articles: [{ articleId: article._id, nomArticle: article.nom, quantite: vente.quantite, prixAchatUnitaire: article.prixAchat }],
-        operateur: user.id,
-        isCancelled: true
-    });
-
-    return { message: "Vente annulée avec succès. Le stock a été restauré." };
 };

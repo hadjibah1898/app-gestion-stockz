@@ -3,12 +3,13 @@ const router = express.Router();
 const fournisseurController = require('../controllers/fournisseurController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { validateFournisseur } = require('../middleware/validators');
+const validateObjectId = require('../middleware/validateObjectId');
 
 // Routes CRUD
 router.get('/', protect, fournisseurController.getAllFournisseurs);
 router.post('/', protect, authorize('Admin'), validateFournisseur, fournisseurController.createFournisseur);
-router.put('/:id', protect, authorize('Admin'), validateFournisseur, fournisseurController.updateFournisseur);
-router.delete('/:id', protect, authorize('Admin'), fournisseurController.deleteFournisseur);
+router.put('/:id', protect, authorize('Admin'), validateObjectId('id'), validateFournisseur, fournisseurController.updateFournisseur);
+router.delete('/:id', protect, authorize('Admin'), validateObjectId('id'), fournisseurController.deleteFournisseur);
 
 // Route Spéciale : Approvisionner la centrale
 router.post('/approvisionner', protect, authorize('Admin'), fournisseurController.approvisionnerCentrale);

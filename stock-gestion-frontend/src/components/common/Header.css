@@ -1,15 +1,14 @@
-.notifications-dropdown .dropdown-menu {
-    width: 350px;
-    padding: 0;
-    border: 1px solid var(--bs-border-color-translucent);
+.header {
+    z-index: 1030;
+    min-height: 70px;
 }
 
-.notification-list {
-    max-height: 400px;
-    overflow-y: auto;
+.custom-header-dropdown .dropdown-toggle {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0 !important;
 }
 
-.notifications-dropdown .dropdown-item {
-    white-space: normal;
-    border-bottom: 1px solid var(--bs-border-color-translucent);
+.custom-header-dropdown .dropdown-toggle::after {
+    margin-left: 0.5rem;
 }

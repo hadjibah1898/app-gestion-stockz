@@ -33,11 +33,11 @@ import './App.css';
 import setupAxiosInterceptors from './utils/axiosConfig';
 
 // Le Layout principal qui inclut la Sidebar et la zone de contenu
-const MainLayout = ({ userName, userRole, handleLogout, theme, toggleTheme }) => (
+const MainLayout = ({ userName, userRole, handleLogout, theme, toggleTheme, isSidebarOpen, toggleSidebar }) => (
   <>
-    <Sidebar userRole={userRole} />
-    <div className="page-wrapper">
-      <Header userName={userName} userRole={userRole} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+    <Sidebar userRole={userRole} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} userName={userName} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} /> {/* Sidebar receives toggleSidebar and other header props */}
+    <div className="page-wrapper"> {/* page-wrapper needs to be aware of sidebar state for margin-left on large screens */}
+      <Header userName={userName} userRole={userRole} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} toggleSidebar={toggleSidebar} /> {/* Header receives toggleSidebar */}
       <Outlet context={{ theme }} /> {/* Les composants de route enfants s'afficheront ici */}
     </div>
   </>
@@ -75,6 +75,7 @@ function App() {
   const [userRole, setUserRole] = useState(localStorage.getItem('userRole'));
   const [userName, setUserName] = useState(localStorage.getItem('userName'));
   const [mustChangePassword, setMustChangePassword] = useState(localStorage.getItem('mustChangePassword') === 'true');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // New state for sidebar
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   
   // États pour la modale de changement de mot de passe
@@ -85,17 +86,17 @@ function App() {
   const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
+  const [isApiLoading, setIsApiLoading] = useState(false); // Nouvel état pour le chargement API
 
   useEffect(() => {
     // Configure l'intercepteur Axios pour gérer les erreurs 401 (redirection auto)
-    setupAxiosInterceptors();
-  }, []);
+    setupAxiosInterceptors(setIsApiLoading);
+  }, []); // Exécuter une seule fois au montage
 
   useEffect(() => {
-    // Applique le thème au body et sauvegarde le choix
-    document.body.setAttribute('data-bs-theme', theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    // Apply sidebar-open class to body for mobile overlay
+    document.body.classList.toggle('sidebar-open', isSidebarOpen);
+  }, [isSidebarOpen]);
 
   const toggleTheme = () => {
     setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
@@ -110,6 +111,10 @@ function App() {
     setUserRole(role);
     setUserName(name);
     setMustChangePassword(mustChange);
+  };
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
   };
 
   const handleLogout = () => {
@@ -151,6 +156,7 @@ function App() {
 
   return (
     <NotificationProvider>
+      {isApiLoading && <div className="top-loading-bar"></div>}
       <div id="main-wrapper" data-bs-theme={theme}>
         <Routes>
           <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
@@ -158,7 +164,7 @@ function App() {
           {/* Routes Protégées pour l'Admin */}
           <Route path="/admin" element={
             <ProtectedRoute userRole={userRole} requiredRole="Admin">
-              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
           }>
             <Route index element={<Dashboard />} />
@@ -176,12 +182,11 @@ function App() {
             <Route path="creances" element={<DebtManagementView />} />
             <Route path="audit" element={<AuditLogView />} /> {/* Ajouter la nouvelle route */}
           </Route>
-          
 
           {/* Routes Protégées pour le Gérant */}
           <Route path="/gerant" element={
             <ProtectedRoute userRole={userRole} requiredRole="Gérant">
-              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
           }>
             <Route index element={<GerantDashboard />} />
@@ -197,7 +202,7 @@ function App() {
           {/* Routes Partagées (Profil) */}
           <Route path="/profile" element={
             <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant']}>
-              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
           }>
             <Route index element={<ProfileView />} />
@@ -289,5 +294,8 @@ const AppWrapper = () => (
     <App />
   </Router>
 );
+
+
+
 
 export default AppWrapper;

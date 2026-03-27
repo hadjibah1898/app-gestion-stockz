@@ -406,7 +406,7 @@ const AdminCaisseView = () => {
                     <Card className="border-0 shadow-sm bg-success-subtle text-success h-100">
                         <Card.Body className="d-flex align-items-center justify-content-between">
                             <div>
-                                <h6 className="mb-1">Solde Théorique (Période)</h6>
+                                <h6 className="mb-1">Total Espèces Attendu</h6>
                                 <h4 className="fw-bold mb-0">{formatCurrency(totalTheorique)}</h4>
                             </div>
                             <iconify-icon icon="solar:chart-square-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>

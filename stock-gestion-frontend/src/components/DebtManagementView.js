@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Badge, Card, Form, Modal, Spinner, Tab, Tabs, Alert, Pagination } from 'react-bootstrap';
 import { clientAPI } from '../services/api';
 import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const DebtManagementView = () => {
     const [dettes, setDettes] = useState([]);
@@ -16,6 +17,7 @@ const DebtManagementView = () => {
     const [selectedDebt, setSelectedDebt] = useState(null);
     const [amount, setAmount] = useState('');
     const [submitLoading, setSubmitLoading] = useState(false);
+    const [lastValidatedPayment, setLastValidatedPayment] = useState(null);
     const [lastPayment, setLastPayment] = useState(null);
 
     // --- Nouveaux états pour la modale de confirmation moderne ---
@@ -217,6 +219,20 @@ const DebtManagementView = () => {
         try {
             if (type === 'VALIDATE') {
                 await clientAPI.validateDebtPayment(id);
+                // Préparer les données pour le reçu de validation
+                const validatedPayment = encaissementsAValider.find(p => p._id === id);
+                if (validatedPayment) {
+                    setLastValidatedPayment({
+                        clientName: validatedPayment.client?.nom || 'N/A',
+                        amount: validatedPayment.montant,
+                        // La dette affichée dans la liste est la dette AVANT validation, donc c'est le bon "solde antérieur"
+                        oldDebt: validatedPayment.client?.dette || 0,
+                        adminName: localStorage.getItem('userName') || 'Admin',
+                        gerantName: validatedPayment.gerant?.nom || 'N/A',
+                        datePaiement: validatedPayment.datePaiement,
+                        dateValidation: new Date()
+                    });
+                }
                 setSuccess("Paiement validé avec succès.");
             } else if (type === 'REJECT') {
                 await clientAPI.rejectDebtPayment(id);
@@ -230,6 +246,51 @@ const DebtManagementView = () => {
         }
     };
 
+    const generateValidationReceipt = (payment) => {
+        const doc = new jsPDF();
+        
+        // En-tête
+        doc.setFontSize(18);
+        doc.setTextColor(41, 128, 185);
+        doc.text("Reçu de Validation d'Encaissement", 105, 20, { align: 'center' });
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(`Date de validation: ${new Date(payment.dateValidation).toLocaleString('fr-FR')}`, 105, 28, { align: 'center' });
+
+        // Tableau des détails
+        const tableBody = [
+            ['Client', payment.clientName],
+            ['Montant Validé', `${payment.amount.toLocaleString('fr-FR')} GNF`],
+            ['Date du Versement', new Date(payment.datePaiement).toLocaleString('fr-FR')],
+            ['Encaissé par (Gérant)', payment.gerantName],
+            ['Validé par (Admin)', payment.adminName],
+            ['Solde Précédent', `${payment.oldDebt.toLocaleString('fr-FR')} GNF`],
+            ['Nouveau Solde', `${(payment.oldDebt - payment.amount).toLocaleString('fr-FR')} GNF`],
+        ];
+
+        autoTable(doc, {
+            startY: 40,
+            body: tableBody,
+            theme: 'grid',
+            styles: {
+                fontSize: 11,
+                cellPadding: 3,
+            },
+            headStyles: { fontStyle: 'bold' },
+            columnStyles: {
+                0: { fontStyle: 'bold', fillColor: [240, 240, 240] },
+                1: { halign: 'right' }
+            },
+            didDrawCell: (data) => {
+                if (data.row.index === tableBody.length - 1) {
+                    data.cell.styles.fontStyle = 'bold';
+                }
+            }
+        });
+
+        doc.save(`validation_recu_${payment.clientName.replace(/\s+/g, '_')}.pdf`);
+    };
     const getStatusBadge = (date) => {
         if (!date) return <Badge bg="secondary">Non définie</Badge>;
         const echeance = new Date(date);
@@ -258,13 +319,19 @@ const DebtManagementView = () => {
 
             {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
             {success && (
-                <Alert variant="success" onClose={() => setSuccess('')} dismissible>
+                <Alert variant="success" onClose={() => { setSuccess(''); setLastPayment(null); setLastValidatedPayment(null); }} dismissible>
                     <div className="d-flex justify-content-between align-items-center">
                         <span>{success}</span>
                         {lastPayment && (
                             <Button variant="outline-success" size="sm" onClick={() => generateReceipt(lastPayment)}>
                                 <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
-                                Télécharger le Reçu
+                                Télécharger le Reçu (Gérant)
+                            </Button>
+                        )}
+                        {lastValidatedPayment && (
+                            <Button variant="outline-success" size="sm" onClick={() => generateValidationReceipt(lastValidatedPayment)}>
+                                <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
+                                Imprimer Reçu de Validation
                             </Button>
                         )}
                     </div>
@@ -573,6 +640,7 @@ const DebtHistoryTab = ({ history, loading }) => {
                             <th>Montant</th>
                             <th>Statut</th>
                             <th>Encaissé par</th>
+                            <th>Boutique</th>
                             <th>Validé le</th>
                         </tr>
                     </thead>
@@ -591,11 +659,12 @@ const DebtHistoryTab = ({ history, loading }) => {
                                     <td className="fw-bold">{p.montant.toLocaleString()} GNF</td>
                                     <td>{getStatusBadge(p.statut)}</td>
                                     <td>{p.gerant?.nom || <span className="text-muted">N/A</span>}</td>
+                                    <td>{p.boutique?.nom || <span className="text-muted">N/A</span>}</td>
                                     <td>{dateValidation}</td>
                                 </tr>
                             );
                         }) : (
-                            <tr><td colSpan="7" className="text-center text-muted py-5">Aucun paiement trouvé pour cette recherche.</td></tr>
+                            <tr><td colSpan="8" className="text-center text-muted py-5">Aucun paiement trouvé pour cette recherche.</td></tr>
                         )}
                     </tbody>
                 </Table>

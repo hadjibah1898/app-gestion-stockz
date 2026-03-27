@@ -1,6 +1,7 @@
 const caisseService = require('../services/caisseService');
 const RapportCaisse = require('../models/RapportCaisse');
 const notificationService = require('../services/notificationService');
+const { logAction } = require('../services/auditLogService');
 
 // --- Gérant: Ouverture / Fermeture / Statut ---
 
@@ -135,6 +136,17 @@ exports.validerRapport = async (req, res) => {
     try {
         const { commentairesAdmin } = req.body;
         const rapport = await caisseService.validerRapport({ rapportId: req.params.id, adminId: req.user.id, commentairesAdmin });
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'VALIDATE_CASH_REPORT',
+            entity: 'RapportCaisse',
+            entityId: rapport._id,
+            details: { gerant: rapport.gerant.nom, boutique: rapport.boutique.nom, ecart: rapport.ecart },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: "Rapport validé et caisse centrale mise à jour.", rapport });
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -145,6 +157,17 @@ exports.rejeterRapport = async (req, res) => {
     try {
         const { commentairesAdmin } = req.body;
         const rapport = await caisseService.rejeterRapport({ rapportId: req.params.id, adminId: req.user.id, commentairesAdmin });
+
+        await logAction({
+            req,
+            user: req.user,
+            action: 'REJECT_CASH_REPORT',
+            entity: 'RapportCaisse',
+            entityId: rapport._id,
+            details: { gerant: rapport.gerant.nom, boutique: rapport.boutique.nom, motif: commentairesAdmin },
+            status: 'SUCCESS'
+        });
+
         res.status(200).json({ message: "Rapport rejeté avec succès.", rapport });
     } catch (error) {
         res.status(400).json({ message: error.message });
@@ -163,7 +186,13 @@ exports.getReportDetails = async (req, res) => {
 // --- Gérant: Rapports ---
 exports.listerMesRapports = async (req, res) => {
     try {
-        const rapports = await caisseService.listerRapports({ gerant: req.user.id });
+        const filters = { gerant: req.user.id };
+        // SÉCURITÉ & LOGIQUE : Un gérant ne doit voir que les rapports de sa boutique actuelle.
+        if (req.user.boutique) {
+            filters.boutique = req.user.boutique;
+        }
+
+        const rapports = await caisseService.listerRapports(filters);
         res.status(200).json(rapports);
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la récupération de vos rapports.", error: error.message });

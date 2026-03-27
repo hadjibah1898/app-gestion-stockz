@@ -115,7 +115,7 @@ const Dashboard = () => {
         ]);
         
         let statsData = statsRes.data || {};
-        const fetchedArticles = articlesRes.data || [];
+        const fetchedArticles = articlesRes.data.data || [];
         const allBoutiques = boutiquesRes.data || [];
         setEvolutionData(evolutionRes.data);
         
@@ -442,7 +442,18 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="dashboard-content p-4 position-relative">
+    <div className="dashboard-content p-4 position-relative" role="main" aria-label="Tableau de bord administrateur">
+      {/* Bouton retour en haut discret */}
+      <Button 
+        variant="primary" 
+        className="position-fixed bottom-0 end-0 m-4 rounded-circle shadow-lg z-3 d-flex align-items-center justify-content-center border-0" 
+        style={{ width: '45px', height: '45px', opacity: '0.8' }}
+        onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        aria-label="Retour en haut de page"
+      >
+        <iconify-icon icon="solar:alt-arrow-up-bold" style={{ fontSize: '24px' }}></iconify-icon>
+      </Button>
+
       <ToastContainer position="top-end" className="p-3" style={{ zIndex: 9999, position: 'fixed' }}>
         <Toast onClose={() => setToast({ ...toast, show: false })} show={toast.show} delay={5000} autohide bg={toast.variant}>
           <Toast.Header>
@@ -457,7 +468,7 @@ const Dashboard = () => {
         <Card.Body className="p-4 d-flex align-items-center justify-content-between position-relative">
           <div className="z-1 position-relative w-100">
             <div className="d-flex flex-wrap align-items-center gap-3 mb-2">
-                <h2 className="fw-bold mb-0">Bienvenue sur votre Dashboard ! 👋</h2>
+                <h1 className="fw-bold mb-0 fs-2">Bienvenue sur votre Dashboard ! 👋</h1>
                 <Button variant="light" size="sm" onClick={handleExportPDF} className="text-primary fw-bold shadow-sm">
                     <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                     Exporter Rapport
@@ -488,15 +499,31 @@ const Dashboard = () => {
         </Card.Body>
       </Card>
 
+      {/* Barre de Navigation Rapide Interne */}
+      <div className="d-flex flex-wrap gap-2 mb-4 sticky-top py-2" style={{ top: '0', zIndex: 10, backdropFilter: 'blur(10px)', backgroundColor: theme === 'dark' ? 'rgba(28, 33, 40, 0.8)' : 'rgba(245, 247, 250, 0.8)' }}>
+        <Button variant="light" size="sm" className="rounded-pill shadow-sm px-3 fw-bold border-0" onClick={() => document.getElementById('quick-stats')?.scrollIntoView({ behavior: 'smooth' })}>
+          <iconify-icon icon="solar:widget-bold-duotone" className="me-2 align-middle text-primary"></iconify-icon> Résumé
+        </Button>
+        <Button variant="light" size="sm" className="rounded-pill shadow-sm px-3 fw-bold border-0" onClick={() => document.getElementById('charts')?.scrollIntoView({ behavior: 'smooth' })}>
+          <iconify-icon icon="solar:chart-square-bold-duotone" className="me-2 align-middle text-success"></iconify-icon> Analyses
+        </Button>
+        <Button variant="light" size="sm" className="rounded-pill shadow-sm px-3 fw-bold border-0" onClick={() => document.getElementById('low-stock')?.scrollIntoView({ behavior: 'smooth' })}>
+          <iconify-icon icon="solar:box-bold-duotone" className="me-2 align-middle text-danger"></iconify-icon> Alertes Stock
+        </Button>
+        <Button variant="light" size="sm" className="rounded-pill shadow-sm px-3 fw-bold border-0" onClick={() => document.getElementById('performance')?.scrollIntoView({ behavior: 'smooth' })}>
+          <iconify-icon icon="solar:users-group-two-rounded-bold-duotone" className="me-2 align-middle text-warning"></iconify-icon> Équipes
+        </Button>
+      </div>
+
       {/* B. Les Cartes de Statistiques */}
-      <Row className="mb-4 g-4">
+      <Row className="mb-4 g-4" id="quick-stats" role="region" aria-label="Statistiques rapides">
         {[
           { title: "Chiffre d'affaires", value: formatCurrency(stats?.totalCA), icon: 'solar:bag-smile-bold-duotone', color: 'primary', trend: 'Global', trendColor: 'primary' },
           { title: 'Bénéfice', value: formatCurrency(stats?.totalBenefice), icon: 'solar:wallet-money-bold-duotone', color: 'success', trend: 'Net', trendColor: 'success' },
           { title: 'Alerte Stock Faible', value: `${lowStockArticles.length} articles`, icon: 'solar:box-minimalistic-bold-duotone', color: 'danger', trend: '< 10 unités', trendColor: 'danger' },
         ].map((stat, idx) => (
           <Col md={4} key={idx}>
-            <HoverCard className="h-100">
+            <HoverCard className="h-100" aria-label={`${stat.title}: ${stat.value}`}>
               <Card.Body className="d-flex align-items-center p-4">
                 <div className={`icon-box bg-${stat.color}-subtle text-${stat.color} rounded-circle d-flex align-items-center justify-content-center me-3`}>
                   <iconify-icon icon={stat.icon} style={{ fontSize: '28px' }}></iconify-icon>
@@ -518,7 +545,7 @@ const Dashboard = () => {
       </Row>
 
       {/* C. & D. Graphiques */}
-      <Row className="g-4">
+      <Row className="g-4" id="charts">
         <Col lg={8}>
           <Card className="border-0 shadow-sm h-100 rounded-4">
             <Card.Body className="p-4">
@@ -566,7 +593,7 @@ const Dashboard = () => {
       </Row>
 
       {/* G. État du Stock par Boutique (Nouveau) */}
-      <Row className="mt-4 g-4">
+      <Row className="mt-4 g-4" id="low-stock">
         <Col lg={12}>
           {/* E. Liste des articles en stock faible */}
           <Card className="border-0 shadow-sm h-100 rounded-4">
@@ -644,7 +671,7 @@ const Dashboard = () => {
       </Row>
 
       {/* F. Performances par Boutique et Gérant */}
-      <Row className="mt-4">
+      <Row className="mt-4" id="performance">
         <Col lg={12}>
           <Card className="border-0 shadow-sm h-100 rounded-4">
             <Card.Header className="bg-body py-3">

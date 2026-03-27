@@ -4,6 +4,7 @@ const caisseController = require('../controllers/caisseController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { checkCaisseOuverte, checkAucunRapportEnAttente } = require('../middleware/caisseMiddleware');
 const { validateOuvertureCaisse, validateFermetureCaisse, validateDepense } = require('../middleware/validators');
+const validateObjectId = require('../middleware/validateObjectId');
 
 // --- Routes pour les Gérants ---
 router.use(protect); // Toutes les routes suivantes nécessitent une connexion
@@ -27,9 +28,10 @@ router.get('/rapports/me', authorize('Gérant'), caisseController.listerMesRappo
 
 // Gérer tous les rapports
 router.get('/rapports', authorize('Admin'), caisseController.listerRapports);
-router.put('/rapports/:id/valider', authorize('Admin'), caisseController.validerRapport);
-router.put('/rapports/:id/rejeter', authorize('Admin'), caisseController.rejeterRapport);
-router.get('/rapports/:id/details', authorize('Admin'), caisseController.getReportDetails);
+// La route /rapports-journaliers a été annulée
+router.put('/rapports/:id/valider', authorize('Admin'), validateObjectId('id'), caisseController.validerRapport);
+router.put('/rapports/:id/rejeter', authorize('Admin'), validateObjectId('id'), caisseController.rejeterRapport);
+router.get('/rapports/:id/details', authorize('Admin'), validateObjectId('id'), caisseController.getReportDetails);
 
 // Gérer la caisse centrale
 router.get('/admin', authorize('Admin'), caisseController.getCaisseAdmin);

@@ -7,7 +7,7 @@
  * depuis le composant parent `VentesView`.
  */
 import React from 'react';
-import { Row, Col, Card, Form, InputGroup, Button, Table, Badge, Alert } from 'react-bootstrap';
+import { Row, Col, Card, Form, InputGroup, Button, Table, Badge, Alert, Spinner } from 'react-bootstrap';
 
 const SaleTab = ({
     panier,
@@ -36,7 +36,8 @@ const SaleTab = ({
     setEcheanceDette,
     calculerTotal,
     effectuerVente,
-    historique
+    historique,
+    isSubmitting // Ajout de la prop
 }) => {
     return (
         <Row>
@@ -257,8 +258,13 @@ const SaleTab = ({
                                 )}
                                 <div className="d-flex justify-content-between align-items-center mt-3">
                                     <h2 className="fw-bold text-primary">Total: {calculerTotal().toLocaleString()} GNF</h2>
-                                    <Button variant="success" size="lg" onClick={effectuerVente}>
-                                        Valider la vente
+                                    <Button variant="success" size="lg" onClick={effectuerVente} disabled={isSubmitting}>
+                                        {isSubmitting ? (
+                                            <>
+                                                <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                                                <span className="ms-2">Validation...</span>
+                                            </>
+                                        ) : 'Valider la vente'}
                                     </Button>
                                 </div>
                             </>

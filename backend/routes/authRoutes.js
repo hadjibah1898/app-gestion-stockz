@@ -3,6 +3,7 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { validateAuth } = require('../middleware/validators');
+const validateObjectId = require('../middleware/validateObjectId');
 
 // Routes publiques (pas besoin d'être authentifié)
 router.post('/register', validateAuth, authController.register);
@@ -14,7 +15,7 @@ router.post('/change-password', protect, authController.changePassword);
 router.get('/me', protect, authController.getCurrentUser);
 router.put('/profile', protect, authController.updateProfile);
 router.get('/notifications', protect, authController.getNotifications);
-router.put('/notifications/:id/read', protect, authController.markNotificationRead);
+router.put('/notifications/:id/read', protect, validateObjectId('id'), authController.markNotificationRead);
 router.put('/notifications/mark-all-read', protect, authController.markAllNotificationsRead);
 
 // --- Routes Admin ---
@@ -25,8 +26,8 @@ router.get('/users', protect, authorize('Admin'), authController.getUsers);
 router.get('/users/trash', protect, authorize('Admin'), authController.getDeletedUsers);
 
 // Routes de modification et suppression des gérants
-router.put('/managers/:id', protect, authorize('Admin'), authController.updateManager);
-router.put('/managers/:id/restore', protect, authorize('Admin'), authController.restoreManager);
+router.put('/managers/:id', protect, authorize('Admin'), validateObjectId('id'), authController.updateManager);
+router.put('/managers/:id/restore', protect, authorize('Admin'), validateObjectId('id'), authController.restoreManager);
 
 // Route pour l'historique complet des notifications (Admin)
 router.get('/admin/notifications', protect, authorize('Admin'), authController.getAllNotifications);

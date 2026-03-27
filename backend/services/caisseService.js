@@ -3,10 +3,12 @@ const Depense = require('../models/Depense');
 const RapportCaisse = require('../models/RapportCaisse');
 const CaisseAdmin = require('../models/CaisseAdmin');
 const Vente = require('../models/Vente');
+const DebtPayment = require('../models/DebtPayment');
 const User = require('../models/User');
 const Client = require('../models/Client');
 const DebtMovement = require('../models/DebtMovement');
 const notificationService = require('./notificationService');
+const commissionService = require('./commissionService');
 
 // --- GESTION OUVERTURE / FERMETURE ---
 
@@ -34,31 +36,17 @@ exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture,
     if (paiementsCommissions && Array.isArray(paiementsCommissions)) {
         for (const paiement of paiementsCommissions) {
             const { clientId, montant } = paiement;
-            const montantPaye = parseFloat(montant);
 
-            if (!clientId || isNaN(montantPaye) || montantPaye <= 0) {
-                continue; // Ignore invalid payment data
-            }
-
-            const ouvrier = await Client.findById(clientId);
-            if (!ouvrier || ouvrier.type !== 'Ouvrier') {
-                throw new Error(`Ouvrier avec ID ${clientId} introuvable.`);
-            }
-            if (montantPaye > ouvrier.commission) {
-                throw new Error(`Le paiement de commission pour ${ouvrier.nom} (${montantPaye}) dépasse le montant dû (${ouvrier.commission}).`);
-            }
-
-            // Mettre à jour la commission de l'ouvrier
-            ouvrier.commission -= montantPaye;
-            await ouvrier.save();
-
-            // Créer une dépense correspondante pour la traçabilité de la caisse
-            await Depense.create({
-                montant: montantPaye,
-                motif: `Paiement commission: ${ouvrier.nom}`,
-                ouvertureCaisse: ouvertureCaisseId,
-                gerant: gerantId,
-                boutique: ouverture.boutique._id
+            // Utilisation du service centralisé
+            await commissionService.processPayment({
+                workerId: clientId,
+                montant,
+                gerantId,
+                boutiqueId: ouverture.boutique._id,
+                ouvertureCaisseId
+            }).catch(err => {
+                console.error(`Erreur commission lors de la clôture: ${err.message}`);
+                throw err; // On propage pour garantir l'intégrité du rapport
             });
         }
     }
@@ -143,6 +131,7 @@ exports.getStatutCaisse = async (gerantId) => {
             ...ouverture,
             session: {
                 totalVentes,
+                totalEncaisse: totalVentes - totalDettes, // Affiche uniquement le montant encaissé (Cash)
                 nombreVentes: ventes.length,
                 totalDepenses,
                 nombreDepenses: depenses.length,
@@ -179,6 +168,7 @@ exports.getStatistiquesSession = async (gerantId) => {
         ...ouverture,
         session: {
             totalVentes,
+            totalEncaisse: totalVentes - totalDettes, // Affiche uniquement le montant encaissé (Cash)
             nombreVentes: ventes.length,
             totalDepenses,
             nombreDepenses: depenses.length,

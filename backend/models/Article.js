@@ -55,7 +55,7 @@ const articleSchema = new mongoose.Schema({
     remise: {
         type: Number, // en %
         default: 0
-    },
+    },// Dans le schéma Article
     remiseEnAttente: {
         valeur: Number,
         clientNom: String,
@@ -67,8 +67,9 @@ const articleSchema = new mongoose.Schema({
         ref: 'Fournisseur'
     },
     datePeremption: {
+        required :false, 
         type: Date,
-        required: false
+    
     }
 }, {
     timestamps: true

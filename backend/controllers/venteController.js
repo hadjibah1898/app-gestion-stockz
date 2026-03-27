@@ -39,7 +39,7 @@ exports.getHistorique = async (req, res) => {
 
 exports.annulerVente = async (req, res) => {
     try {
-        const result = await venteService.annulerVente(req.params.id, req.user);
+        const result = await venteService.annulerVente(req.params.id, req.user, req);
         res.status(200).json(result);
     } catch (error) {
         res.status(400).json({ message: error.message });

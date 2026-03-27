@@ -6,9 +6,68 @@ const { logAction } = require('./auditLogService');
 const Notification = require('../models/Notification');
 
 // Doit maintenant accepter un filtre et utiliser populate
-exports.listerArticles = async (filter = {}) => {
-    // Afficher le fournisseur pour toutes les boutiques sans exception
-    return await Article.find(filter).populate('boutique').populate('fournisseur').populate('remiseEnAttente.gerant', 'nom');
+exports.listerArticles = async (filter = {}, page = 1, limit = 0) => {
+    // 1. Extraction des paramètres de contrôle (tri, pagination, recherche)
+    // pour qu'ils ne soient pas interprétés comme des critères de filtre BDD.
+    // On combine les paramètres passés dans filter et ceux en arguments (priorité aux arguments du controller)
+    const { sort, order, search, ...restFilters } = filter;
+    const dbFilters = { ...restFilters };
+    
+    // Nettoyage des paramètres de pagination s'ils traînent dans le filtre
+    delete dbFilters.page;
+    delete dbFilters.limit;
+
+    // 2. Nettoyage des filtres vides (ex: fournisseur="" si aucun sélectionné)
+    Object.keys(dbFilters).forEach(key => {
+        if (dbFilters[key] === '' || dbFilters[key] === null || dbFilters[key] === undefined) {
+            delete dbFilters[key];
+        }
+    });
+
+    // 3. Gestion de la recherche textuelle sur le nom
+    // 3. Gestion de la recherche textuelle (Nom OU Code)
+    if (search) {
+        dbFilters.nom = { $regex: search, $options: 'i' };
+        dbFilters.$or = [
+            { nom: { $regex: search, $options: 'i' } },
+            { code: { $regex: search, $options: 'i' } }
+        ];
+        // On s'assure que 'nom' ou 'code' ne sont pas présents individuellement dans le filtre
+        delete dbFilters.nom;
+        delete dbFilters.code;
+    }
+
+    // Calcul du nombre total d'articles (pour le frontend)
+    const totalCount = await Article.countDocuments(dbFilters);
+    const limitNum = parseInt(limit) || parseInt(filter.limit) || 0;
+    const pageNum = parseInt(page) || parseInt(filter.page) || 1;
+
+    let query = Article.find(dbFilters)
+        .populate('boutique')
+        .populate('fournisseur')
+        .populate('remiseEnAttente.gerant', 'nom');
+
+    // 4. Application du tri
+    if (sort) {
+        const sortOrder = order === 'desc' ? -1 : 1;
+        query.sort({ [sort]: sortOrder });
+    } else {
+        query.sort({ createdAt: -1 }); // Par défaut : les plus récents en premier
+    }
+
+    // 5. Pagination (si demandée)
+    if (limitNum > 0) {
+        query.skip((pageNum - 1) * limitNum).limit(limitNum);
+    }
+
+    const articles = await query;
+
+    return {
+        data: articles,
+        totalCount: totalCount,
+        totalPages: limitNum > 0 ? Math.ceil(totalCount / limitNum) : 1,
+        currentPage: pageNum
+    };
 };
 
 exports.supprimerArticle = async (id) => {
@@ -176,6 +235,11 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
     // MongoDB autonomes (non-replica set) courantes en environnement de développement.
     // Pour un environnement de production, il est fortement recommandé de réactiver les transactions
     // et d'utiliser une base de données configurée en replica set pour garantir l'atomicité.
+
+    // Tableaux pour suivre les modifications afin de permettre un rollback manuel
+    const sourceDecrements = []; // { articleId, quantite }
+    const targetChanges = [];    // { articleId, quantite, created: boolean }
+
     try {
         let transferCount = 0;
 
@@ -183,20 +247,35 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
             const qtyToTransfer = parseInt(item.quantite);
             if (isNaN(qtyToTransfer) || qtyToTransfer <= 0) continue;
 
-            const sourceArticle = await Article.findById(item.articleId);
-            if (!sourceArticle || sourceArticle.boutique.toString() !== sourceId.toString()) continue;
+            // 1. Décrémenter depuis la source
+            const sourceArticle = await Article.findOneAndUpdate(
+                { _id: item.articleId, boutique: sourceId, quantite: { $gte: qtyToTransfer } },
+                { $inc: { quantite: -qtyToTransfer } },
+                { new: true } // Retourne le document mis à jour
+            );
 
-            // Re-vérification du stock pour éviter les "race conditions" (conflits d'accès)
-            if (sourceArticle.quantite < qtyToTransfer) {
-                throw new Error(`Conflit de stock pour "${sourceArticle.nom}". Le stock a changé durant l'opération.`);
+            if (!sourceArticle) {
+                // Si null, soit l'article n'existe pas, soit le stock était insuffisant au moment précis de l'écriture
+                const checkArticle = await Article.findById(item.articleId);
+                const errorMessage = checkArticle
+                    ? `Stock insuffisant au moment du transfert pour "${checkArticle.nom}".`
+                    : `Article source (ID: ${item.articleId}) introuvable.`;
+                throw new Error(errorMessage);
             }
+            sourceDecrements.push({ articleId: sourceArticle._id, quantite: qtyToTransfer });
 
+            // 2. Incrémenter ou créer à la destination
             let targetArticle = await Article.findOne({ nom: sourceArticle.nom, boutique: targetId });
 
             if (targetArticle) {
-                targetArticle.quantite += qtyToTransfer;
-                await targetArticle.save();
+                // Mettre à jour un article existant à la destination
+                await Article.updateOne(
+                    { _id: targetArticle._id },
+                    { $inc: { quantite: qtyToTransfer } }
+                );
+                targetChanges.push({ articleId: targetArticle._id, quantite: qtyToTransfer, created: false });
             } else {
+                // Créer un nouvel article à la destination
                 const newArticleData = sourceArticle.toObject();
                 delete newArticleData._id;
                 delete newArticleData.createdAt;
@@ -204,14 +283,14 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
                 delete newArticleData.__v;
                 newArticleData.boutique = targetId;
                 newArticleData.quantite = qtyToTransfer;
-                await Article.create([newArticleData]);
+                const createdTargetArticle = await Article.create(newArticleData);
+                targetChanges.push({ articleId: createdTargetArticle._id, quantite: qtyToTransfer, created: true });
             }
 
-            sourceArticle.quantite -= qtyToTransfer;
-            await sourceArticle.save();
-            
             transferCount++;
         }
+
+        // 3. Créer le journal de mouvement
         const articlesDeplaces = await Promise.all(items.map(async item => {
             const article = await Article.findById(item.articleId).select('nom').lean();
             return { nomArticle: article.nom, quantite: item.quantite };
@@ -229,8 +308,28 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
         return { modifiedCount: transferCount };
 
     } catch (error) {
-        console.error("ERREUR CRITIQUE pendant le transfert de stock (non-transactionnel):", error);
-        throw new Error(`Une erreur est survenue pendant le transfert. L'état du stock peut être incohérent. Erreur: ${error.message}`);
+        console.error("❌ ERREUR CRITIQUE pendant le transfert de stock. Rollback manuel en cours...", error);
+
+        // --- ROLLBACK MANUEL ---
+        const rollbackPromises = [];
+
+        // Annuler les changements sur la destination
+        for (const change of targetChanges) {
+            const update = change.created ? Article.findByIdAndDelete(change.articleId) : Article.updateOne({ _id: change.articleId }, { $inc: { quantite: -change.quantite } });
+            rollbackPromises.push(update);
+        }
+
+        // Annuler les changements sur la source
+        for (const decrement of sourceDecrements) {
+            rollbackPromises.push(Article.updateOne({ _id: decrement.articleId }, { $inc: { quantite: decrement.quantite } }));
+        }
+
+        await Promise.all(rollbackPromises).catch(rollbackError => {
+            console.error("❌ ERREUR FATALE : Le rollback manuel a échoué. La base de données est dans un état incohérent.", rollbackError);
+        });
+
+        // Renvoyer l'erreur originale au contrôleur pour informer l'utilisateur
+        throw new Error(`Le transfert a échoué et a été annulé. Raison: ${error.message}`);
     }
 };
 
@@ -257,18 +356,42 @@ exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user, 
     // Transformation des articles : On a reçu les IDs des articles de la boutique CIBLE (Secondaire)
     // On doit trouver les articles correspondants dans la boutique SOURCE (Centrale) pour effectuer le transfert
     const itemsToTransfer = [];
-    
+
     for (const item of articles) {
+        const qtyToTransfer = parseInt(item.quantite);
+        if (isNaN(qtyToTransfer) || qtyToTransfer <= 0) continue;
+
         // 1. Trouver l'article cible pour avoir son nom
         const targetArticle = await Article.findById(item.articleId);
-        if (!targetArticle) continue;
+        if (!targetArticle) {
+            const err = new Error(`Article (ID: ${item.articleId}) introuvable dans la boutique de destination.`);
+            err.statusCode = 404;
+            throw err;
+        }
 
         // 2. Trouver l'article source correspondant (même nom, boutique Centrale)
         const sourceArticle = await Article.findOne({ nom: targetArticle.nom, boutique: centrale._id });
         
-        if (sourceArticle) {
-            itemsToTransfer.push({ articleId: sourceArticle._id, quantite: item.quantite });
+        if (!sourceArticle) {
+            const err = new Error(`L'article "${targetArticle.nom}" n'existe pas dans le Dépôt Principal.`);
+            err.statusCode = 404;
+            throw err;
         }
+
+        // 3. Vérifier le stock dans le Dépôt Principal
+        if (sourceArticle.quantite < qtyToTransfer) {
+            const err = new Error(`Stock insuffisant dans le Dépôt Principal pour l'article "${targetArticle.nom}". Disponible: ${sourceArticle.quantite}, demandé: ${qtyToTransfer}.`);
+            err.statusCode = 400;
+            throw err;
+        }
+
+        itemsToTransfer.push({ articleId: sourceArticle._id, quantite: qtyToTransfer });
+    }
+
+    if (itemsToTransfer.length === 0) {
+        const err = new Error("Aucun article valide à transférer n'a été trouvé dans le Dépôt Principal.");
+        err.statusCode = 400;
+        throw err;
     }
 
     return await performStockTransfer(centrale._id, targetBoutiqueId, itemsToTransfer, user, "Réapprovisionnement");

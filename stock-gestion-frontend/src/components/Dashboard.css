@@ -15,11 +15,11 @@ Fond général de la page
 }
 
 .glass-stat {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.25); /* Plus opaque pour un meilleur contraste */
   /* AJOUT ICI : Support pour Safari et iOS */
   -webkit-backdrop-filter: blur(5px); 
   backdrop-filter: blur(5px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4); /* Bordure plus marquée */
 }
 
 .illustration-placeholder {
@@ -44,11 +44,12 @@ Fond général de la page
   width: 56px;
   height: 56px;
   flex-shrink: 0;
+  border: 1px solid rgba(0,0,0,0.05);
 }
 
 /* Utilitaires Soft UI */
 .shadow-sm {
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04) !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1) !important; /* Ombre plus marquée */
 }
 
 .rounded-4 {

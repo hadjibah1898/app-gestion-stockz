@@ -64,7 +64,7 @@
     left: 1rem;
     top: 50%;
     transform: translateY(-50%);
-    color: #adb5bd;
+    color: #495057; /* Icône plus sombre pour un meilleur contraste */
     font-size: 1.2rem;
     z-index: 3;
 }
@@ -74,7 +74,7 @@
     border-radius: 10px;
     height: 48px;
     background-color: var(--bs-tertiary-bg); /* Utilise la variable bootstrap */
-    border: 1px solid var(--bs-border-color);
+    border: 2px solid var(--bs-border-color); /* Bordure plus épaisse */
     transition: all 0.2s ease;
 }
 

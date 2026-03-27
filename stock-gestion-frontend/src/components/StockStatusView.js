@@ -41,13 +41,14 @@ const StockStatusView = () => {
     const fetchData = useCallback(async () => {
             try {
                 setLoading(true);
+                // Ajout du chargement des catégories (gérer l'erreur si l'API n'existe pas encore)
                 const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
                     articleAPI.getAll(),
                     boutiqueAPI.getAll(),
                     fournisseurAPI.getAll()
                 ]);
 
-                const articles = articlesRes.data;
+                const articles = articlesRes.data.data || [];
                 const allBoutiques = boutiquesRes.data.sort((a, b) => a.nom.localeCompare(b.nom));
                 const allFournisseurs = fournisseursRes.data;
 
@@ -88,10 +89,9 @@ const StockStatusView = () => {
         if (filterStatus === 'all') return articles;
         
         return articles.filter(article => {
-            const status = getStatusBadge(article.quantite).props.children;
-            if (filterStatus === 'rupture') return status === 'Rupture de Stock';
-            if (filterStatus === 'reapprovisionnement') return status === 'Réapprovisionnement';
-            if (filterStatus === 'en-stock') return status === 'En Stock';
+            if (filterStatus === 'rupture') return article.quantite <= 0;
+            if (filterStatus === 'reapprovisionnement') return article.quantite > 0 && article.quantite <= 10;
+            if (filterStatus === 'en-stock') return article.quantite > 10;
             return true;
         });
     };
@@ -222,7 +222,7 @@ const StockStatusView = () => {
                             </Form.Group>
                         </Col>
                         {/* Le filtre par fournisseur n'est visible que si la boutique centrale est sélectionnée */}
-                        {filterBoutique === centralShopId && (
+                        {filterBoutique === centralShopId ? (
                             <Col md={4}>
                                 <Form.Group>
                                     <Form.Label className="small fw-bold">Filtrer par fournisseur</Form.Label>
@@ -235,7 +235,7 @@ const StockStatusView = () => {
                                     </Form.Select>
                                 </Form.Group>
                             </Col>
-                        )}
+                        ) : null}
                         <Col md={filterBoutique === centralShopId ? 4 : 6}>
                             <Form.Group>
                                 <Form.Label className="small fw-bold">Filtrer par état du stock</Form.Label>
@@ -259,7 +259,7 @@ const StockStatusView = () => {
                     const isSingleView = filterBoutique !== 'all';
                     const isCentral = boutique.type === 'Centrale';
                     let filteredBoutiqueArticles = filterArticlesByStatus(boutiqueArticles);
-                    // Le filtre par fournisseur ne s'applique que sur la boutique centrale
+                    
                     if (filterFournisseur !== 'all' && boutique._id === centralShopId) {
                         filteredBoutiqueArticles = filteredBoutiqueArticles.filter(a => a.fournisseur?._id === filterFournisseur);
                     }

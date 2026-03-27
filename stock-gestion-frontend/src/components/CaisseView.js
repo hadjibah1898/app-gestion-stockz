@@ -10,10 +10,12 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Form, Spinner, Alert, Row, Col, InputGroup, Modal, Tabs, Tab, Table, Badge } from 'react-bootstrap';
+import { useLocation } from 'react-router-dom';
 import { caisseAPI, clientAPI } from '../services/api';
 import axios from 'axios';
 import jsPDF from 'jspdf';
 
+import autoTable from 'jspdf-autotable';
 // CSS pour l'animation de clignotement
 const blinkAnimationStyle = `
 .blink-animation {
@@ -36,6 +38,7 @@ if (typeof document !== 'undefined') {
 }
 
 const CaisseView = () => {
+    const location = useLocation(); // Pour détecter si on vient du dashboard avec une action
     const [caisseStatut, setCaisseStatut] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -103,6 +106,15 @@ const CaisseView = () => {
     useEffect(() => {
         fetchStatut();
     }, [fetchStatut]);
+
+    // Effet pour gérer l'ouverture automatique de la modale de clôture depuis le Dashboard
+    useEffect(() => {
+        if (location.state?.openCloseModal && caisseStatut && !loading) {
+            setShowCloseModal(true);
+            // Nettoyer l'état pour éviter la réouverture si on rafraîchit la page
+            window.history.replaceState({}, document.title);
+        }
+    }, [location.state, caisseStatut, loading]);
 
     // Charger les statistiques de la session lorsque la modale s'ouvre
     useEffect(() => {
@@ -440,40 +452,31 @@ const CaisseView = () => {
                         </Form.Group>
                         
                         {/* Résumé des ventes du jour */}
-                        <Table bordered className="mb-3 small">
-                            <tbody>
-                                <tr>
-                                    <td className="text-muted">Fond initial</td>
-                                    <td className="text-end fw-bold">
-                                        {displayValues.fondInitial.toLocaleString()} GNF
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td className="text-muted">Total ventes session</td>
-                                    <td className="text-end fw-bold text-success">
-                                        + {displayValues.totalVentes.toLocaleString()} GNF
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td className="text-muted">Dettes accordées (Crédit)</td>
-                                    <td className="text-end fw-bold text-warning">
-                                        - {displayValues.totalDettes.toLocaleString()} GNF
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td className="text-muted">Total Dépenses</td>
-                                    <td className="text-end fw-bold text-danger">
-                                        - {displayValues.totalDepenses.toLocaleString()} GNF
-                                    </td>
-                                </tr>
-                                <tr style={{border: '2px solid var(--bs-danger)'}}>
-                                    <td className="fw-bold text-danger">Solde théorique attendu</td>
-                                    <td className="text-end fw-bold fs-5 text-danger">
-                                        {displayValues.soldeTheorique.toLocaleString()} GNF
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </Table>
+                        <Card className="mb-3 bg-light border-2">
+                            <Card.Body className="p-3">
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted">Fond initial</span>
+                                    <span className="fw-bold">{displayValues.fondInitial.toLocaleString()} GNF</span>
+                                </div>
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted">Total ventes session</span>
+                                    <span className="fw-bold text-success">+ {displayValues.totalVentes.toLocaleString()} GNF</span>
+                                </div>
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted">Dettes accordées (Crédit)</span>
+                                    <span className="fw-bold text-warning">- {displayValues.totalDettes.toLocaleString()} GNF</span>
+                                </div>
+                                <div className="d-flex justify-content-between">
+                                    <span className="text-muted">Total Dépenses</span>
+                                    <span className="fw-bold text-danger">- {displayValues.totalDepenses.toLocaleString()} GNF</span>
+                                </div>
+                                <hr/>
+                                <div className="d-flex justify-content-between align-items-center">
+                                    <span className="fw-bold text-danger">Total Espèces Attendu</span>
+                                    <span className="fw-bold fs-5 text-danger">{displayValues.soldeTheorique.toLocaleString()} GNF</span>
+                                </div>
+                            </Card.Body>
+                        </Card>
 
                         {afficherJustification && (
                             <Alert variant="danger" className="blink-animation">
@@ -809,6 +812,7 @@ const RapportsTab = ({ onCorrect }) => {
     const [loading, setLoading] = useState(true);
     const [selectedRapport, setSelectedRapport] = useState(null);
     const [showDetailsModal, setShowDetailsModal] = useState(false);
+    const [detailedReportData, setDetailedReportData] = useState(null); // Nouvel état pour les détails du rapport
 
     useEffect(() => {
         caisseAPI.getMesRapports()
@@ -816,6 +820,21 @@ const RapportsTab = ({ onCorrect }) => {
             .catch(err => console.error(err))
             .finally(() => setLoading(false));
     }, []);
+
+    // Effet pour charger les détails du rapport lorsque la modale s'ouvre ou que le rapport sélectionné change
+    useEffect(() => {
+        const fetchDetailedReport = async () => {
+            if (showDetailsModal && selectedRapport) {
+                try {
+                    const res = await caisseAPI.getReportDetails(selectedRapport._id);
+                    setDetailedReportData(res.data);
+                } catch (err) {
+                    console.error("Erreur lors du chargement des détails du rapport:", err);
+                }
+            }
+        };
+        fetchDetailedReport();
+    }, [showDetailsModal, selectedRapport]);
 
     const getStatusBadge = (status) => {
         switch (status) {
@@ -863,10 +882,10 @@ const RapportsTab = ({ onCorrect }) => {
             }
             
             const date = new Date(r.createdAt).toLocaleDateString('fr-FR');
-            const ventes = (r.totalVentes || 0).toLocaleString('fr-FR');
-            const theo = (r.soldeTheorique || 0).toLocaleString('fr-FR');
-            const cloture = (r.montantCloture || 0).toLocaleString('fr-FR');
-            const ecart = (r.ecart || 0).toLocaleString('fr-FR');
+            const ventes = (r.totalVentes || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
+            const theo = (r.soldeTheorique || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
+            const cloture = (r.montantCloture || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
+            const ecart = (r.ecart || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
             const statut = r.statut === 'VALIDE' ? 'Validé' : (r.statut === 'REJETE' ? 'Rejeté' : 'En attente');
             
             doc.text(date, 14, y);
@@ -880,6 +899,105 @@ const RapportsTab = ({ onCorrect }) => {
         });
         
         doc.save(`rapports_caisse_${new Date().toISOString().slice(0,10)}.pdf`);
+    };
+
+    // Nouvelle fonction pour exporter le rapport détaillé en PDF
+    const generateDetailedReportPDF = () => {
+        if (!detailedReportData) return;
+
+        const { rapport, ventes, depenses } = detailedReportData;
+        const doc = new jsPDF();
+        let y = 10;
+
+        // Helper pour formater la monnaie
+        const formatCurrency = (value) => (value || 0).toLocaleString('fr-FR') + ' GNF';
+
+        // En-tête
+        doc.setFontSize(18);
+        doc.text(`Rapport de Caisse Détaillé - ${rapport.boutique.nom}`, 14, y);
+        y += 7;
+        doc.setFontSize(12);
+        doc.text(`Gérant: ${rapport.gerant.nom}`, 14, y);
+        y += 5;
+        doc.text(`Date du rapport: ${new Date(rapport.createdAt).toLocaleDateString('fr-FR')}`, 14, y);
+        y += 10;
+
+        // Résumé du Rapport
+        doc.setFontSize(14);
+        doc.text("Résumé du Rapport", 14, y);
+        y += 5;
+        autoTable(doc, {
+            startY: y,
+            head: [['Description', 'Montant']],
+            body: [
+                ['Fond Initial', formatCurrency(rapport.fondInitial)],
+                ['Total Ventes', formatCurrency(rapport.totalVentes)],
+                ['Total Dépenses Approuvées', formatCurrency(rapport.totalDepensesApprouvees)],
+                ['Solde Théorique', formatCurrency(rapport.soldeTheorique)],
+                ['Montant Clôturé', formatCurrency(rapport.montantCloture)],
+                ['Écart', formatCurrency(rapport.ecart)],
+                ['Statut', rapport.statut],
+                ['Commentaires Gérant', rapport.commentairesGérant || 'N/A'],
+                ['Commentaires Admin', rapport.commentairesAdmin || 'N/A']
+            ],
+            theme: 'grid',
+            styles: { fontSize: 10, cellPadding: 2 },
+            headStyles: { fillColor: [41, 128, 185], textColor: 255 },
+            columnStyles: { 1: { halign: 'right' } }
+        });
+        y = doc.lastAutoTable.finalY + 10;
+
+        // Ventes
+        if (ventes && ventes.length > 0) {
+            if (y > doc.internal.pageSize.height - 40) { // Vérifier le saut de page
+                doc.addPage();
+                y = 10;
+            }
+            doc.setFontSize(14);
+            doc.text("Détail des Ventes", 14, y);
+            y += 5;
+            autoTable(doc, {
+                startY: y,
+                head: [['Article', 'Code', 'Quantité', 'Prix Unitaire', 'Prix Total']],
+                body: ventes.map(v => [
+                    v.article?.nom || 'N/A',
+                    v.article?.code || 'N/A',
+                    v.quantite,
+                    formatCurrency(v.prixTotal / v.quantite),
+                    formatCurrency(v.prixTotal)
+                ]),
+                theme: 'striped',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [60, 179, 113], textColor: 255 },
+                columnStyles: {
+                    2: { halign: 'center' },
+                    3: { halign: 'right' },
+                    4: { halign: 'right' }
+                }
+            });
+            y = doc.lastAutoTable.finalY + 10;
+        }
+
+        // Dépenses
+        if (depenses && depenses.length > 0) {
+            if (y > doc.internal.pageSize.height - 40) { // Vérifier le saut de page
+                doc.addPage();
+                y = 10;
+            }
+            doc.setFontSize(14);
+            doc.text("Détail des Dépenses", 14, y);
+            y += 5;
+            autoTable(doc, {
+                startY: y,
+                head: [['Motif', 'Montant', 'Date']],
+                body: depenses.map(d => [d.motif, formatCurrency(d.montant), new Date(d.createdAt).toLocaleDateString('fr-FR')]),
+                theme: 'striped',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [220, 53, 69], textColor: 255 },
+                columnStyles: { 1: { halign: 'right' }, 2: { halign: 'center' } }
+            });
+        }
+        doc.save(`rapport_caisse_detaille_${rapport._id}.pdf`);
     };
 
     return (
@@ -897,7 +1015,7 @@ const RapportsTab = ({ onCorrect }) => {
                         <tr>
                             <th>Date</th>
                             <th>Total Ventes</th>
-                            <th>Solde Théorique</th>
+                            <th>Solde EXACT</th>
                             <th>Montant Clôturé</th>
                             <th>Écart</th>
                             <th>Statut</th>
@@ -958,7 +1076,7 @@ const RapportsTab = ({ onCorrect }) => {
                                             <span className="fw-bold">{selectedRapport.totalVentes.toLocaleString()} GNF</span>
                                         </div>
                                         <div className="d-flex justify-content-between mb-2">
-                                            <span>Solde Théorique :</span>
+                                            <span>Solde EXACT :</span>
                                             <span className="fw-bold">{selectedRapport.soldeTheorique.toLocaleString()} GNF</span>
                                         </div>
                                         <div className="d-flex justify-content-between border-top pt-2 mt-2">
@@ -1007,6 +1125,12 @@ const RapportsTab = ({ onCorrect }) => {
                         </Button>
                     )}
                     <Button variant="secondary" onClick={() => setShowDetailsModal(false)}>Fermer</Button>
+                    {selectedRapport && detailedReportData && (
+                        <Button variant="primary" onClick={generateDetailedReportPDF}>
+                            <iconify-icon icon="solar:file-text-bold" className="me-2"></iconify-icon>
+                            Exporter PDF Détaillé
+                        </Button>
+                    )}
                 </Modal.Footer>
             </Modal>
         </Card>

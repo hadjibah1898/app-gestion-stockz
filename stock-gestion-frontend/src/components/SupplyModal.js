@@ -1,26 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, } from 'react-bootstrap';
+import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, Spinner, Badge } from 'react-bootstrap';
 import { fournisseurAPI, articleAPI } from '../services/api';
-import NewProductForSupplyModal from './common/NewProductForSupplyModal';
 
 const SupplyModal = ({ show, onHide, onSuccess }) => {
     const [fournisseurs, setFournisseurs] = useState([]);
     const [articles, setArticles] = useState([]);
     const [supplyData, setSupplyData] = useState({ fournisseurId: '', items: [] });
-    const [newItem, setNewItem] = useState({ articleId: null, nom: '', code: '', type: '', quantite: 10, prixAchat: 0, prixVente: 0 });
+    const [newItem, setNewItem] = useState({ nom: '', quantite: 10, prixAchat: 0, prixVente: 0, image: '', code: '', type: 'Divers', datePeremption: '' });
     const [error, setError] = useState('');
-
-    const [showAddProductModal, setShowAddProductModal] = useState(false);
-    const [newProductName, setNewProductName] = useState('');
-    const [addProductLoading, setAddProductLoading] = useState(false);
-    const [addProductMessage, setAddProductMessage] = useState({type: '', text: ''});
-    const [showNewProductModal, setShowNewProductModal] = useState(false);
+    const [submitLoading, setSubmitLoading] = useState(false);
 
     useEffect(() => {
         if (show) {
             loadData();
             setSupplyData({ fournisseurId: '', items: [] });
-            setNewItem({ articleId: null, nom: '', code: '', type: '', quantite: 10, prixAchat: 0, prixVente: 0 });
+            setNewItem({ nom: '', quantite: 10, prixAchat: 0, prixVente: 0, image: '', code: '', type: 'Divers', datePeremption: '' });
             setError('');
         }
     }, [show]);
@@ -32,11 +26,66 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                 articleAPI.getAll()
             ]);
             setFournisseurs(fournisseursRes.data);
-            setArticles(articlesRes.data);
+            setArticles(articlesRes.data.data || []);
         } catch (err) {
             setError("Erreur lors du chargement des données.");
         }
     };
+
+    const handleImageChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 800;
+                    const MAX_HEIGHT = 800;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Compression en JPEG à 70% de qualité
+                    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                    setNewItem(prev => ({ ...prev, image: compressedBase64 }));
+                };
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleProductSelect = (productName) => {
+        const art = articles.find(a => a.nom.toLowerCase() === productName.toLowerCase());
+        setNewItem({
+            ...newItem,
+            nom: productName,
+            // Si l'article existe, on pré-remplit ses données pour faciliter la mise à jour
+            prixAchat: art ? art.prixAchat : 0,
+            prixVente: art ? art.prixVente : 0,
+            code: art ? art.code : '',
+            type: art ? art.type : 'Divers',
+            image: art ? art.image : '',
+            datePeremption: art ? (art.datePeremption ? art.datePeremption.split('T')[0] : '') : ''
+        });
+    };
+
 
     const addItemToSupply = () => {
         // Correction : Utilisation de Number() pour éviter les bugs de parseInt
@@ -81,7 +130,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
             setSupplyData({ ...supplyData, items: [...supplyData.items, itemToAdd] });
         }
 
-        setNewItem({ articleId: null, nom: '', code: '', type: '', quantite: 10, prixAchat: 0, prixVente: 0 });
+        setNewItem({ nom: '', quantite: 10, prixAchat: 0, prixVente: 0, image: '', code: '', type: 'Divers', datePeremption: '' });
     };
 
     const removeItemFromSupply = (index) => {
@@ -90,61 +139,21 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
         setSupplyData({ ...supplyData, items: newItems });
     };
 
-    const handleAddProductToSupplier = async (e) => {
-        e.preventDefault();
-        if (!newProductName) {
-            setAddProductMessage({ type: 'warning', text: 'Le nom du produit ne peut pas être vide.' });
-            return;
-        }
-        setAddProductLoading(true);
-        
-        const supplier = fournisseurs.find(f => f._id === supplyData.fournisseurId);
-        if (!supplier) {
-            setAddProductMessage({ type: 'danger', text: 'Fournisseur non trouvé.' });
-            setAddProductLoading(false);
-            return;
-        }
-    
-        if (supplier.produitsProposes.find(p => p.toLowerCase() === newProductName.toLowerCase())) {
-            setAddProductMessage({ type: 'info', text: 'Ce produit existe déjà pour ce fournisseur.' });
-            setAddProductLoading(false);
-            return;
-        }
-    
-        const updatedProduits = [...supplier.produitsProposes, newProductName];
-        const payload = { ...supplier, produitsProposes: updatedProduits };
-        
-        try {
-            await fournisseurAPI.update(supplier._id, payload);
-            setShowAddProductModal(false);
-            setNewProductName('');
-            await loadData();
-            onSuccess(`Produit "${newProductName}" ajouté au fournisseur ${supplier.nom}.`);
-        } catch (err) {
-            setAddProductMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors de l'ajout." });
-        } finally {
-            setAddProductLoading(false);
-        }
-    };
-
-    const handleAddNewProductToSupply = (productData) => {
-        setSupplyData(prev => ({
-            ...prev,
-            items: [...prev.items, productData]
-        }));
-    };
-
     const submitSupply = async () => {
         if (!supplyData.fournisseurId) {
             setError("Veuillez sélectionner un fournisseur.");
             return;
         }
+        setSubmitLoading(true);
+        setError('');
         try {
             await fournisseurAPI.approvisionner({ fournisseurId: supplyData.fournisseurId, items: supplyData.items });
             onSuccess("Approvisionnement réussi !");
             onHide();
         } catch (err) {
             setError(err.response?.data?.message || "Erreur approvisionnement");
+        } finally {
+            setSubmitLoading(false);
         }
     };
 
@@ -152,7 +161,6 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
     const existingArticle = newItem.nom ? articles.find(a => a.nom === newItem.nom) : null;
 
     return (
-        <>
             <Modal show={show} onHide={onHide} size="xl">
                 <Modal.Header closeButton>
                     <Modal.Title>Approvisionner le <span className="text-primary">Dépôt Principal</span></Modal.Title>
@@ -174,62 +182,68 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
 
                     {supplyData.fournisseurId && (
                         <div className="p-3 bg-light rounded mb-3">
-                            <Row className="g-2 align-items-center">
-                                <Col md={4}>
+                            <Row className="g-3">
+                                <Col md={12} lg={5}>
                                     <Form.Label>Article</Form.Label>
                                     <InputGroup>
-                                        <Form.Select
-                                            value={newItem.nom} 
-                                            onChange={e => {
-                                                const nom = e.target.value;
-                                                const art = articles.find(a => a.nom === nom);
-                                                setNewItem({
-                                                    ...newItem, 
-                                                    articleId: art ? art._id : null,
-                                                    nom: nom,
-                                                    code: art ? art.code : '',
-                                                    type: art ? art.type : 'Divers',
-                                                    prixAchat: art ? art.prixAchat : 0,
-                                                    prixVente: art ? art.prixVente : 0
-                                                });
-                                            }} 
-                                        >
-                                            <option value="">Sélectionner article...</option>
-                                            {selectedFournisseur?.produitsProposes?.map((p, i) => (
-                                                <option key={i} value={p}>{p}</option>
-                                            ))}
-                                        </Form.Select>
-                                        <Button variant="outline-secondary" onClick={() => setShowAddProductModal(true)}>
-                                            +
-                                        </Button>
+                                        <Form.Control
+                                            list="product-list"
+                                            placeholder="Taper ou sélectionner un produit..."
+                                            value={newItem.nom}
+                                            onChange={e => handleProductSelect(e.target.value)}
+                                        />
+                                        <datalist id="product-list">
+                                            {selectedFournisseur?.produitsProposes?.map((p, i) => <option key={i} value={p} />)}
+                                        </datalist>
                                     </InputGroup>
                                 </Col>
-                                <Col md={8} className="d-flex align-items-end">
-                                    <Button variant="success" onClick={() => setShowNewProductModal(true)} className="w-100">
-                                        Créer un nouveau produit non catalogué
-                                    </Button>
-                                </Col>
-                            </Row>
-                            <Row className="g-2 align-items-end mt-2">
-                                <Col md={3}>
+                                <Col md={4} lg={2}>
                                     <Form.Label>Qté</Form.Label>
                                     <Form.Control type="number" value={newItem.quantite} onChange={e => setNewItem({...newItem, quantite: e.target.value})} />
                                 </Col>
-                                <Col md={3}>
+                                <Col md={4} lg={2}>
                                     <Form.Label>P. Achat</Form.Label>
                                     <Form.Control type="number" value={newItem.prixAchat} onChange={e => setNewItem({...newItem, prixAchat: e.target.value})} />
+                                    {existingArticle && <Form.Text className="text-muted">Actuel: {existingArticle.prixAchat.toLocaleString()} GNF</Form.Text>}
                                 </Col>
-                                <Col md={3}>
+                                <Col md={4} lg={3}>
                                     <Form.Label>P. Vente</Form.Label>
                                     <Form.Control type="number" value={newItem.prixVente} onChange={e => setNewItem({...newItem, prixVente: e.target.value})} />
+                                    {existingArticle && <Form.Text className="text-muted">Actuel: {existingArticle.prixVente.toLocaleString()} GNF</Form.Text>}
                                 </Col>
-                                <Col md={3}>
+                                <Col md={4} lg={3}>
+                                    <Form.Label>Code Article</Form.Label>
+                                    <Form.Control type="text" placeholder="REF-001" value={newItem.code} onChange={e => setNewItem({...newItem, code: e.target.value})} />
+                                </Col>
+                                <Col md={4} lg={3}>
+                                    <Form.Label>Type</Form.Label>
+                                    <Form.Control type="text" placeholder="Boisson, Ciment..." value={newItem.type} onChange={e => setNewItem({...newItem, type: e.target.value})} />
+                                </Col>
+                                <Col md={4} lg={3}>
+                                    <Form.Label>Date Péremption</Form.Label>
+                                    <Form.Control type="date" value={newItem.datePeremption} onChange={e => setNewItem({...newItem, datePeremption: e.target.value})} />
+                                </Col>
+                                <Col md={12} lg={3}>
+                                    <Form.Label><iconify-icon icon="solar:camera-bold" className="me-1"></iconify-icon> Image (Optionnel)</Form.Label>
+                                    <Form.Control type="file" accept="image/*" capture="environment" onChange={handleImageChange} size="sm" />
+                                </Col>
+                            </Row>
+                            <Row className="mt-3">
+                                <Col md={9}>
+                                    {newItem.image && (
+                                        <div className="d-flex align-items-center gap-2">
+                                            <img src={newItem.image} alt="Aperçu" className="rounded shadow-sm" style={{maxHeight: '50px'}} />
+                                            <Button variant="link" size="sm" className="text-danger p-0" onClick={() => setNewItem(prev => ({...prev, image: ''}))}>Retirer</Button>
+                                        </div>
+                                    )}
+                                </Col>
+                                <Col md={3} className="d-flex align-items-end">
                                     <Button variant="primary" className="w-100" onClick={addItemToSupply}>Ajouter au lot</Button>
                                 </Col>
                             </Row>
                             {existingArticle && (
-                                <div className="mt-2 small text-muted">
-                                    Stock actuel: <strong>{existingArticle.quantite}</strong> | Ancien P.A: <strong>{existingArticle.prixAchat}</strong>
+                                <div className="mt-3 p-2 bg-white rounded border border-2 small">
+                                    <strong>Info Article Existant :</strong> Stock actuel: <Badge bg="info">{existingArticle.quantite}</Badge>
                                 </div>
                             )}
                         </div>
@@ -237,7 +251,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
 
                     <Table striped bordered hover size="sm">
                         <thead>
-                            <tr>
+                            <tr className="text-center">
                                 <th>Article</th><th>Qté</th><th>P. Achat</th><th>P. Vente</th><th>Total</th><th>Action</th>
                             </tr>
                         </thead>
@@ -245,44 +259,24 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                             {supplyData.items.map((item, idx) => (
                                 <tr key={idx}>
                                     <td>{item.nom}</td>
-                                    <td>{item.quantite}</td>
-                                    <td>{Number(item.prixAchat).toLocaleString()}</td>
-                                    <td>{Number(item.prixVente).toLocaleString()}</td>
+                                    <td className="text-center">{item.quantite}</td>
+                                    <td className="text-end">{Number(item.prixAchat).toLocaleString()} GNF</td>
+                                    <td className="text-end">{Number(item.prixVente).toLocaleString()} GNF</td>
                                     <td className="fw-bold">{(item.quantite * item.prixAchat).toLocaleString()} GNF</td>
-                                    <td><Button variant="link" className="text-danger p-0" onClick={() => removeItemFromSupply(idx)}>Suppr.</Button></td>
+                                    <td className="text-center"><Button variant="link" className="text-danger p-0" onClick={() => removeItemFromSupply(idx)}>Suppr.</Button></td>
                                 </tr>
                             ))}
                         </tbody>
                     </Table>
                 </Modal.Body>
                 <Modal.Footer>
-                    <Button variant="secondary" onClick={onHide}>Annuler</Button>
-                    <Button variant="success" onClick={submitSupply} disabled={supplyData.items.length === 0}>Valider</Button>
+                    <Button variant="secondary" onClick={onHide} disabled={submitLoading}>Annuler</Button>
+                    <Button variant="success" onClick={submitSupply} disabled={supplyData.items.length === 0 || submitLoading}>
+                        {submitLoading ? <Spinner as="span" size="sm" /> : 'Valider l\'Approvisionnement'}
+                    </Button>
                 </Modal.Footer>
             </Modal>
-
-            {/* Modal ajout produit au catalogue fournisseur */}
-            <Modal show={showAddProductModal} onHide={() => setShowAddProductModal(false)} centered>
-                <Modal.Header closeButton><Modal.Title>Nouveau produit catalogue</Modal.Title></Modal.Header>
-                <Form onSubmit={handleAddProductToSupplier}>
-                    <Modal.Body>
-                        {addProductMessage.text && <Alert variant={addProductMessage.type}>{addProductMessage.text}</Alert>}
-                        <Form.Control placeholder="Nom du produit" value={newProductName} onChange={(e) => setNewProductName(e.target.value)} required />
-                    </Modal.Body>
-                    <Modal.Footer>
-                        <Button variant="primary" type="submit" disabled={addProductLoading}>Ajouter</Button>
-                    </Modal.Footer>
-                </Form>
-            </Modal>
-
-            <NewProductForSupplyModal 
-                show={showNewProductModal}
-                onHide={() => setShowNewProductModal(false)}
-                onAddProduct={handleAddNewProductToSupply}
-            />
-        </>
     );
 };
 
 export default SupplyModal;
-

@@ -3,6 +3,9 @@ import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
+/**
+ * Configuration de l'instance Axios
+ */
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -10,8 +13,18 @@ const api = axios.create({
   },
 });
 
+/**
+ * Fonctions utilitaires
+ */
+const clearAuthSession = () => {
+  const items = ['token', 'userRole', 'userName', 'mustChangePassword'];
+  items.forEach(item => localStorage.removeItem(item));
+  window.location.href = '/login';
+};
 
-// Interceptor pour ajouter le token à chaque requête
+/**
+ * Interceptor : Ajout du Token JWT
+ */
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -20,27 +33,25 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Interceptor pour gérer les réponses (ex: token expiré)
+/**
+ * Interceptor : Gestion des erreurs globales (401)
+ */
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // Token expiré ou invalide : on nettoie et on redirige
-      localStorage.removeItem('token');
-      localStorage.removeItem('userRole');
-      localStorage.removeItem('userName');
-      localStorage.removeItem('mustChangePassword');
-      // Redirection forcée vers le login
-      window.location.href = '/login';
+      clearAuthSession();
     }
     return Promise.reject(error);
   }
 );
+
+/**
+ * SERVICES API
+ */
 
 export const authAPI = {
   login: (email, password) => api.post('auth/login', { email, password }),
@@ -70,7 +81,7 @@ export const boutiqueAPI = {
 };
 
 export const articleAPI = {
-  getAll: () => api.get('articles'),
+  getAll: (params) => api.get('articles', { params }),
   create: (data) => api.post('articles', data),
   update: (id, data) => api.put(`articles/${id}`, data),
   delete: (id) => api.delete(`articles/${id}`),
@@ -88,11 +99,6 @@ export const fournisseurAPI = {
   approvisionner: (data) => api.post('fournisseurs/approvisionner', data),
 };
 
-export const mouvementAPI = {
-  getAll: (params) => api.get('mouvements', { params }),
-  cancel: (id) => api.post(`mouvements/${id}/cancel`),
-};
-
 export const venteAPI = {
   create: (data) => api.post('ventes', data),
   getHistorique: (params) => api.get('ventes/historique', { params }),
@@ -101,12 +107,8 @@ export const venteAPI = {
   getPendingSales: () => api.get('ventes/pending'),
   validateRemise: (id) => api.post(`ventes/${id}/validate-remise`),
   rejectRemise: (id) => api.post(`ventes/${id}/reject-remise`),
-  genererTicket: (id) => axios.get(`/api/ventes/${id}/ticket`),
-  telechargerTicket: (filename) => axios.get(`/api/ventes/ticket/download/${filename}`, { responseType: 'blob' }),
-};
-
-export const dashboardAPI = {
-  getStats: (params) => api.get('dashboard/stats', { params }),
+  genererTicket: (id) => api.get(`ventes/${id}/ticket`),
+  telechargerTicket: (filename) => api.get(`ventes/ticket/download/${filename}`, { responseType: 'blob' }),
 };
 
 export const clientAPI = {
@@ -115,8 +117,8 @@ export const clientAPI = {
   update: (id, data) => api.put(`clients/${id}`, data),
   delete: (id) => api.delete(`clients/${id}`),
   payDette: (id, data) => api.post(`clients/${id}/pay-dette`, data),
-  getDebtHistory: () => api.get('clients/debt-history'),
   getDebts: () => api.get('clients/debts'),
+  getDebtHistory: () => api.get('clients/debt-history'),
   getPendingDebtPayments: () => api.get('clients/debt-payments/pending'),
   validateDebtPayment: (id) => api.put(`clients/debt-payments/${id}/validate`),
   getDebtEvolution: () => api.get('clients/debt-evolution'),
@@ -129,14 +131,21 @@ export const caisseAPI = {
   creerDepense: (data) => api.post('caisse/depenses', data),
   getMesDepenses: () => api.get('caisse/depenses/me'),
   getMesRapports: () => api.get('caisse/rapports/me'),
-  // Admin routes
   listerRapports: (params) => api.get('caisse/rapports', { params }),
+  getReportDetails: (id) => api.get(`caisse/rapports/${id}/details`),
   validerRapport: (id, data) => api.put(`caisse/rapports/${id}/valider`, data),
   rejeterRapport: (id, data) => api.put(`caisse/rapports/${id}/rejeter`, data),
-  getReportDetails: (id) => api.get(`caisse/rapports/${id}/details`),
   getCaisseAdmin: () => api.get('caisse/admin'),
-  // Nouvelle route pour obtenir les statistiques de la session en cours
   getStatistiquesSession: () => api.get('caisse/statistiques-session'),
+};
+
+export const mouvementAPI = {
+  getAll: (params) => api.get('mouvements', { params }),
+  cancel: (id) => api.post(`mouvements/${id}/cancel`),
+};
+
+export const dashboardAPI = {
+  getStats: (params) => api.get('dashboard/stats', { params }),
 };
 
 export const auditAPI = {
