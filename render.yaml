@@ -12,3 +12,9 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

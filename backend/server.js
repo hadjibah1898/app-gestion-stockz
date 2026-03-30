@@ -48,7 +48,13 @@ app.use((req, res, next) => {
     );
     next();
 });
-app.use(cors());
+
+const corsOptions = {
+  origin: process.env.FRONTEND_URL, // L'URL de Vercel que nous avons ajoutée au render.yaml
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(morgan('dev')); 
