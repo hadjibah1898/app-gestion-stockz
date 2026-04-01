@@ -7,6 +7,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Spinner, Alert, Table, Badge, Form, Row, Col, Button, Modal } from 'react-bootstrap';
 import { articleAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
+import XLSX from 'xlsx-js-style';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import logo from '../assets/logo.png';
 import IntelligentSupplyModal from './common/IntelligentSupplyModal';
 
 const formatCurrency = (value) => {
@@ -192,6 +196,90 @@ const StockStatusView = () => {
         setShowSupplyModal(true);
     };
 
+    const handleExportExcel = () => {
+        const dataToExport = allArticles.map(a => ({
+            'Boutique': a.boutique?.nom || 'N/A',
+            'Code': a.code || '-',
+            'Produit': a.nom,
+            'Fournisseur': a.fournisseur?.nom || 'N/A',
+            'Quantité': a.quantite,
+            'Prix Achat (GNF)': a.prixAchat,
+            'Prix Vente (GNF)': a.prixVente,
+            'Marge Unitaire (GNF)': a.prixVente - a.prixAchat,
+            'Valeur Stock Achat (GNF)': a.quantite * a.prixAchat,
+            'Statut': a.quantite <= 0 ? 'Rupture' : (a.quantite <= 10 ? 'Faible' : 'OK')
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Etat_Stocks");
+        XLSX.writeFile(workbook, `etat_global_stocks_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
+    const handleExportPDF = () => {
+        const doc = new jsPDF({ orientation: 'landscape' });
+        
+        // En-tête
+        try { doc.addImage(logo, 'PNG', 14, 8, 40, 15); } catch (e) {}
+        
+        doc.setFontSize(18);
+        doc.setTextColor(41, 128, 185);
+        doc.text("État Global des Stocks", 60, 16);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 60, 22);
+
+        // Statistiques globales
+        const totalValue = allArticles.reduce((sum, a) => sum + (a.quantite * a.prixAchat), 0);
+        doc.setFontSize(11);
+        doc.setTextColor(0);
+        doc.text(`Valeur Totale du Stock (Achat) : ${formatCurrency(totalValue)}`, 14, 35);
+
+        const tableColumn = ["Boutique", "Produit", "Code", "Fournisseur", "Qté", "P. Achat", "P. Vente", "Valeur Stock", "Statut"];
+        const tableRows = allArticles.map(a => [
+            a.boutique?.nom || 'N/A',
+            a.nom,
+            a.code || '-',
+            a.fournisseur?.nom || 'N/A',
+            a.quantite,
+            formatCurrency(a.prixAchat),
+            formatCurrency(a.prixVente),
+            formatCurrency(a.quantite * a.prixAchat),
+            a.quantite <= 0 ? 'Rupture' : (a.quantite <= 10 ? 'Faible' : 'En Stock')
+        ]);
+
+        autoTable(doc, {
+            head: [tableColumn],
+            body: tableRows,
+            startY: 40,
+            theme: 'grid',
+            styles: { fontSize: 8, cellPadding: 2 },
+            headStyles: { fillColor: [41, 128, 185], halign: 'center' },
+            columnStyles: {
+                4: { halign: 'center' },
+                5: { halign: 'right' },
+                6: { halign: 'right' },
+                7: { halign: 'right', fontStyle: 'bold' },
+                8: { halign: 'center' }
+            }
+        });
+
+        // Footer
+        const pageCount = doc.internal.getNumberOfPages();
+        for(let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            const pageSize = doc.internal.pageSize;
+            const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+            doc.text(`StockDash - Inventaire`, 14, pageHeight - 10);
+            doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+        }
+
+        doc.save(`etat_stocks_${new Date().toISOString().split('T')[0]}.pdf`);
+    };
+
     if (loading) return <div className="p-4 text-center"><Spinner animation="border" /></div>;
     if (error) return <div className="p-4"><Alert variant="danger">{error}</Alert></div>;
 
@@ -199,6 +287,16 @@ const StockStatusView = () => {
         <div className="p-4">
             <div className="d-flex justify-content-between align-items-center mb-4 gap-3">
                 <h3 className="fw-bold mb-0">État des Stocks par Boutique</h3>
+                <div className="d-flex gap-2">
+                    <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
+                        <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+                        Exporter Excel
+                    </Button>
+                    <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
+                        <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
+                        Exporter PDF
+                    </Button>
+                </div>
                 {success && <Alert variant="success" className="mb-0 py-2 flex-shrink-0">{success}</Alert>}
             </div>
 

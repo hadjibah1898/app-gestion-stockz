@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Button, Form,  Alert, Spinner, Badge, Card, Tab, Tabs,  } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { clientAPI } from '../services/api';
+import XLSX from 'xlsx-js-style';
 import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
 
 const ClientsView = () => {
@@ -98,6 +99,24 @@ const ClientsView = () => {
     } catch (err) {
       setError(err.response?.data?.message || "Erreur d'enregistrement");
     }
+  };
+
+  const handleExportExcel = () => {
+    const dataToExport = filteredClients.map(c => ({
+      'Nom': c.nom,
+      'Email': c.email || '-',
+      'Téléphone': c.telephone || '-',
+      'Type': c.type,
+      'Total Achats (GNF)': c.totalAchats || 0,
+      'Dette Actuelle (GNF)': c.dette || 0,
+      'Commission Due (Ouvriers)': c.commission || 0,
+      'Date Création': new Date(c.createdAt).toLocaleDateString()
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Clients");
+    XLSX.writeFile(workbook, `export_clients_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   // --- Filtrage et Tri ---
@@ -210,12 +229,18 @@ const ClientsView = () => {
     <div className="p-4">
       <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
         <h3 className="fw-bold mb-0">Gestion des Clients & Ouvriers</h3>
-        {userRole === 'Gérant' && (
-          <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
-            <iconify-icon icon="solar:user-plus-bold" className="me-2 align-middle"></iconify-icon>
-            Nouveau Client
+        <div className="d-flex gap-2">
+          <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
+            <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+            Exporter Excel
           </Button>
-        )}
+          {userRole === 'Gérant' && (
+            <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
+              <iconify-icon icon="solar:user-plus-bold" className="me-2 align-middle"></iconify-icon>
+              Nouveau Client
+            </Button>
+          )}
+        </div>
       </div>
 
       {successMessage && <Alert variant="success">{successMessage}</Alert>}

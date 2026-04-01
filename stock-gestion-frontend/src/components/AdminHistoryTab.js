@@ -17,7 +17,6 @@ const AdminHistoryTab = ({
     handleImageClick,
     setSaleToCancel,
     setShowCancelModal,
-    handleGenerateTicket,
     setError
 }) => {
     return (
@@ -97,16 +96,6 @@ const AdminHistoryTab = ({
                                         }
                                         return (
                                             <div className="d-flex gap-2 justify-content-end">
-                                                <Button
-                                                    variant="outline-primary"
-                                                    size="sm"
-                                                    className="rounded-pill px-3"
-                                                    onClick={() => handleGenerateTicket(vente._id, setError)}
-                                                    title="Générer et télécharger le ticket PDF"
-                                                >
-                                                    <iconify-icon icon="solar:printer-bold" className="me-1 align-middle"></iconify-icon>
-                                                    Ticket
-                                                </Button>
                                                 <Button
                                                     variant="outline-danger"
                                                     size="sm"

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Badge, Card, Form, Modal, Spinner, Tab, Tabs, Alert, Pagination } from 'react-bootstrap';
 import { clientAPI } from '../services/api';
+import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -291,6 +292,24 @@ const DebtManagementView = () => {
 
         doc.save(`validation_recu_${payment.clientName.replace(/\s+/g, '_')}.pdf`);
     };
+
+    const handleExportExcel = () => {
+        const dataToExport = dettes.map(d => ({
+            'Client': d.nom,
+            'Téléphone': d.telephone || '-',
+            'Dette Comptable (GNF)': d.dette,
+            'En Attente (GNF)': paiementsEnAttenteMap[d._id] || 0,
+            'Reste à Payer Net (GNF)': d.dette - (paiementsEnAttenteMap[d._id] || 0),
+            'Échéance': d.echeanceDette ? new Date(d.echeanceDette).toLocaleDateString() : '-',
+            'Statut': new Date(d.echeanceDette) < new Date() ? 'En retard' : 'OK'
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Dettes_Clients");
+        XLSX.writeFile(workbook, `etat_creances_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     const getStatusBadge = (date) => {
         if (!date) return <Badge bg="secondary">Non définie</Badge>;
         const echeance = new Date(date);
@@ -311,10 +330,16 @@ const DebtManagementView = () => {
                     <iconify-icon icon="solar:wallet-money-bold-duotone" className="me-2 text-primary"></iconify-icon>
                     {isAdmin ? "Contrôle des Créances" : "Gestion des Dettes"}
                 </h3>
-                <Button variant="outline-primary" onClick={loadData} disabled={loading}>
-                    <iconify-icon icon="solar:refresh-bold" className="me-2"></iconify-icon>
-                    Actualiser
-                </Button>
+                <div className="d-flex gap-2">
+                    <Button variant="outline-success" onClick={handleExportExcel} disabled={loading}>
+                        <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2"></iconify-icon>
+                        Excel
+                    </Button>
+                    <Button variant="outline-primary" onClick={loadData} disabled={loading}>
+                        <iconify-icon icon="solar:refresh-bold" className="me-2"></iconify-icon>
+                        Actualiser
+                    </Button>
+                </div>
             </div>
 
             {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}

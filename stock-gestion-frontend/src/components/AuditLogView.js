@@ -3,6 +3,7 @@ import { Card, Spinner, Alert, Form, Row, Col, Badge, Pagination, Table, Button 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { auditAPI, authAPI } from '../services/api';
+import XLSX from 'xlsx-js-style';
 
 const AuditLogView = () => {
     const [logs, setLogs] = useState([]);
@@ -136,14 +137,48 @@ const AuditLogView = () => {
         }
     };
 
+    const handleExportExcel = async () => {
+        try {
+            setLoading(true);
+            const params = { ...filters, limit: 0 };
+            const res = await auditAPI.getLogs(params);
+            const allLogs = res.data.logs;
+
+            const dataToExport = allLogs.map(log => ({
+                'Date': new Date(log.createdAt).toLocaleString('fr-FR'),
+                'Utilisateur': log.userName,
+                'Action': auditActionLabels[log.action] || log.action,
+                'Entité': log.entity,
+                'ID Entité': log.entityId,
+                'Statut': log.status === 'SUCCESS' ? 'Succès' : 'Échec',
+                'Adresse IP': log.ipAddress
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "AuditLogs");
+            XLSX.writeFile(workbook, `journal_audit_${new Date().toISOString().split('T')[0]}.xlsx`);
+        } catch (err) {
+            setError("Erreur lors de l'export Excel.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="p-4">
             <div className="d-flex justify-content-between align-items-center mb-4">
                 <h3 className="fw-bold mb-0">Journal d'Audit des Actions</h3>
-                <Button variant="outline-danger" onClick={handleExportPDF} disabled={exporting}>
-                    {exporting ? <Spinner as="span" size="sm" /> : <iconify-icon icon="solar:file-pdf-bold" className="me-2"></iconify-icon>}
-                    Exporter PDF
-                </Button>
+                <div className="d-flex gap-2">
+                    <Button variant="outline-success" onClick={handleExportExcel}>
+                        <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+                        Excel
+                    </Button>
+                    <Button variant="outline-danger" onClick={handleExportPDF} disabled={exporting}>
+                        {exporting ? <Spinner as="span" size="sm" /> : <iconify-icon icon="solar:file-pdf-bold" className="me-2 align-middle"></iconify-icon>}
+                        PDF
+                    </Button>
+                </div>
             </div>
             {error && <Alert variant="danger">{error}</Alert>}
 

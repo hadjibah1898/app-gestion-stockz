@@ -1,7 +1,7 @@
 const venteService = require('../services/venteService');
 const Client = require('../models/Client');
 const Vente = require('../models/Vente');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 
 const logFilePath = path.join(__dirname, '../logs/ventes.log');
@@ -22,6 +22,10 @@ exports.effectuerVente = async (req, res) => {
         );
         res.status(201).json(resultats);
     } catch (error) {
+        // Si l'erreur provient d'un manque de stock ou d'une validation métier
+        if (error.message.includes('insuffisant') || error.message.includes('introuvable') || error.message.includes('supérieure')) {
+            return res.status(400).json({ message: error.message });
+        }
         res.status(500).json({ message: error.message });
     }
 };
@@ -48,9 +52,10 @@ exports.annulerVente = async (req, res) => {
 
 exports.getLogs = async (req, res) => {
     try {
-        const data = fs.readFileSync(logFilePath, 'utf8');
+        // Utilisation de la version asynchrone pour ne pas bloquer l'Event Loop
+        const data = await fs.readFile(logFilePath, 'utf8');
         res.status(200).json({ logs: data.split('\n').reverse() });
     } catch (error) {
-        res.status(500).json({ message: "Erreur logs" });
+        res.status(500).json({ message: "Erreur lors de la lecture des logs." });
     }
 };

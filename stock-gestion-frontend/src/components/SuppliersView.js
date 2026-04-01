@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import { fournisseurAPI } from '../services/api';
+import XLSX from 'xlsx-js-style';
 import TableComponent from './common/Table';
 
 const SuppliersView = () => {
@@ -107,6 +108,20 @@ const SuppliersView = () => {
     }
   };
 
+  const handleExportExcel = () => {
+    const dataToExport = fournisseurs.map(f => ({
+      'Nom': f.nom,
+      'Téléphone': f.telephone,
+      'Email': f.email || '-',
+      'Produits Proposés': f.produitsProposes?.join(', ') || '-'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Fournisseurs");
+    XLSX.writeFile(workbook, `export_fournisseurs_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   // Le filtrage se fait maintenant côté serveur, on peut retirer le filtre côté client.
   const filteredFournisseurs = fournisseurs;
 
@@ -152,10 +167,16 @@ const SuppliersView = () => {
     <div className="p-4">
       <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
         <h3 className="fw-bold mb-0">Gestion des Fournisseurs</h3> 
-        <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
-          <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
-          Ajouter un Fournisseur
-        </Button>
+        <div className="d-flex gap-2">
+          <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
+            <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+            Exporter Excel
+          </Button>
+          <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
+            <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
+            Ajouter un Fournisseur
+          </Button>
+        </div>
       </div>
 
       {successMessage && <Alert variant="success">{successMessage}</Alert>}

@@ -10,11 +10,10 @@ const { logAction } = require('./auditLogService');
 
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
 exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null) => {
-    const resultats = [];
-    const articlesVendusPourMouvement = [];
-    const articlesStockModifies = []; // Pour le rollback manuel
-
     try {
+        const itemsVendus = [];
+        const articlesPourMvt = [];
+
         for (const item of items) {
             // Correction pour correspondre aux données envoyées par le frontend (`article`, `quantite`, `remiseTemp`)
             const { article: articleId, quantite, remiseTemp } = item;
@@ -23,8 +22,8 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
             const article = await Article.findOneAndUpdate(
                 { _id: articleId, quantite: { $gte: quantite } },
                 { $inc: { quantite: -quantite } },
-                { new: true } // Retourne le document mis à jour
-            ).populate('boutique');
+                { new: true } 
+            ).populate({ path: 'boutique' });
 
             if (!article) {
                 const exists = await Article.findById(articleId);
@@ -34,8 +33,6 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                     throw new Error(`Stock insuffisant pour l'article "${exists.nom}". Disponible: ${exists.quantite}, demandé: ${quantite}.`);
                 }
             }
-            // Garder une trace pour le rollback
-            articlesStockModifies.push({ articleId, quantite });
             
             // 2. Créer l'enregistrement de la vente
             // Calcul du prix unitaire avec Promo ou Remise
@@ -82,11 +79,11 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                 notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
             }
             
-            resultats.push(savedVente);
-            articlesVendusPourMouvement.push({ articleId: article._id, nomArticle: article.nom, quantite: quantite, prixAchatUnitaire: article.prixAchat });
+            itemsVendus.push(savedVente);
+            articlesPourMvt.push({ articleId: article._id, nomArticle: article.nom, quantite: quantite, prixAchatUnitaire: article.prixAchat });
         }
 
-        const totalVentePanier = resultats.reduce((acc, v) => acc + v.prixTotal, 0);
+        const totalVentePanier = itemsVendus.reduce((acc, v) => acc + v.prixTotal, 0);
 
         // 3. Gestion de la dette et mise à jour du client
         if (clientId) {
@@ -124,8 +121,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                         soldeAnterieur: soldeAnterieur,
                         nouveauSolde: nouveauSolde,
                         operateur: userId,
-                        // On pourrait lier la première vente du panier pour référence
-                        venteAssociee: resultats.length > 0 ? resultats[0]._id : null 
+                        venteAssociee: itemsVendus.length > 0 ? itemsVendus[0]._id : null 
                     });
 
                     // Alerter les admins qu'une dette a été accordée
@@ -140,8 +136,8 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
         }
 
         // 4. Enregistrer un seul mouvement pour tout le panier
-        if (articlesVendusPourMouvement.length > 0) {
-            let details = `Vente de ${articlesVendusPourMouvement.length} article(s) pour un total de ${totalVentePanier.toLocaleString('fr-FR')} GNF.`;
+        if (articlesPourMvt.length > 0) {
+            let details = `Vente de ${articlesPourMvt.length} article(s) pour un total de ${totalVentePanier.toLocaleString('fr-FR')} GNF.`;
 
             if (hasRemise) {
                 const remises = items
@@ -162,35 +158,14 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
             await Mouvement.create([{
                 type: 'Vente',
                 boutiqueSource: boutiqueId,
-                articles: articlesVendusPourMouvement,
+                articles: articlesPourMvt,
                 operateur: userId,
                 details: details
             }]);
         }
 
-        return resultats
-
+        return itemsVendus;
     } catch (error) {
-        // ROLLBACK MANUEL en cas d'erreur
-        console.error("❌ Erreur durant le traitement du panier, rollback manuel en cours...", error.message);
-
-        // 1. Annuler les ventes créées
-        if (resultats.length > 0) {
-            const venteIds = resultats.map(v => v._id);
-            await Vente.deleteMany({ _id: { $in: venteIds } });
-        }
-
-        // 2. Restaurer le stock des articles
-        if (articlesStockModifies.length > 0) {
-            const bulkOps = articlesStockModifies.map(item => ({
-                updateOne: {
-                    filter: { _id: item.articleId },
-                    update: { $inc: { quantite: item.quantite } }
-                }
-            }));
-            await Article.bulkWrite(bulkOps);
-        }
-
         throw error;
     }
 };

@@ -4,6 +4,7 @@ import { Card, Button, Table, Badge, Tabs, Tab, Spinner, Alert, Modal, Form, Row
 import { useSearchParams } from 'react-router-dom';
 import { caisseAPI, authAPI } from '../services/api';
 import jsPDF from 'jspdf';
+import XLSX from 'xlsx-js-style';
 import logo from '../assets/logo.png';
 import autoTable from 'jspdf-autotable';
 
@@ -228,7 +229,7 @@ const AdminCaisseView = () => {
             // Ajouter le solde actuel de la caisse centrale
             doc.setFontSize(12);
             doc.setTextColor(0);
-            const finalY = doc.autoTable.previous ? doc.autoTable.previous.finalY : 100;
+            const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY : 100;
             doc.text(`Solde Actuel Caisse Centrale: ${formatCurrency(caisseAdmin.soldeActuel)}`, 14, finalY + 10);
         } 
         // Tableau pour les rapports de caisse
@@ -236,23 +237,8 @@ const AdminCaisseView = () => {
             const tableColumn = ["Date", "Gérant", "Boutique", "Solde Théorique", "Montant Reçu", "Écart"];
             const tableRows = [];
 
-            // Filtrer les rapports selon les filtres actuels (date et gérant)
-            const filteredRapports = rapports.filter(report => {
-                const reportDate = new Date(report.createdAt);
-                const start = dateFilter.startDate ? new Date(dateFilter.startDate) : null;
-                const end = dateFilter.endDate ? new Date(dateFilter.endDate) : null;
-                if (end) end.setHours(23, 59, 59, 999);
-
-                const dateMatch = (!start || reportDate >= start) && (!end || reportDate <= end);
-                
-                let gerantMatch = true;
-                if (filterGerant) {
-                    gerantMatch = report.gerant?._id === filterGerant;
-                }
-                return dateMatch && gerantMatch;
-            });
-
-            filteredRapports.forEach(report => {
+            // On utilise directement 'rapports' car ils sont déjà filtrés par fetchData()
+            rapports.forEach(report => {
                 const reportData = [
                     new Date(report.createdAt).toLocaleDateString('fr-FR'),
                     report.gerant?.nom || 'N/A',
@@ -263,6 +249,18 @@ const AdminCaisseView = () => {
                 ];
                 tableRows.push(reportData);
             });
+
+            // Ajouter une ligne de totalisation pour l'analyse comptable
+            const totalTheo = rapports.reduce((acc, r) => acc + (r.soldeTheorique || 0), 0);
+            const totalRecu = rapports.reduce((acc, r) => acc + (r.montantCloture || 0), 0);
+            const totalEcart = rapports.reduce((acc, r) => acc + (r.ecart || 0), 0);
+
+            tableRows.push([
+                { content: 'TOTAL GÉNÉRAL', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold', fillColor: [240, 240, 240] } },
+                { content: formatCurrencyPdf(totalTheo), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+                { content: formatCurrencyPdf(totalRecu), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+                { content: formatCurrencyPdf(totalEcart), styles: { fontStyle: 'bold', fillColor: [240, 240, 240], textColor: totalEcart < 0 ? [200, 0, 0] : [0, 150, 0] } }
+            ]);
 
             autoTable(doc, {
                 head: [tableColumn],
@@ -291,6 +289,94 @@ const AdminCaisseView = () => {
         }
 
         doc.save(`historique_encaissements_${new Date().toISOString().split('T')[0]}.pdf`);
+    };
+
+    const handleExportExcel = () => {
+        let dataToExport = [];
+        let fileName = "";
+        let sheetName = "";
+
+        if (key === 'caisse-centrale' && caisseAdmin) {
+            fileName = `export_caisse_centrale_${new Date().toISOString().split('T')[0]}.xlsx`;
+            sheetName = "Caisse Centrale";
+            
+            const sortedHistory = [...filteredHistory].reverse();
+            dataToExport = sortedHistory.map(entry => ({
+                'Date': new Date(entry.dateValidation).toLocaleDateString('fr-FR'),
+                'Source': entry.boutique || 'N/A',
+                'Gérant': entry.gerant || 'N/A',
+                'Montant (GNF)': entry.montant
+            }));
+
+            // Ajout de la ligne de total pour la Caisse Centrale
+            dataToExport.push({
+                'Date': 'TOTAL GÉNÉRAL',
+                'Source': '',
+                'Gérant': '',
+                'Montant (GNF)': totalEncaissementsPeriode
+            });
+        } else {
+            fileName = `export_rapports_caisse_${new Date().toISOString().split('T')[0]}.xlsx`;
+            sheetName = "Rapports";
+
+            dataToExport = rapports.map(r => ({
+                'Date': new Date(r.createdAt).toLocaleDateString('fr-FR'),
+                'Gérant': r.gerant?.nom || 'N/A',
+                'Boutique': r.boutique?.nom || 'N/A',
+                'Solde Théorique (GNF)': r.soldeTheorique,
+                'Montant Reçu (GNF)': r.montantCloture,
+                'Écart (GNF)': r.ecart,
+                'Statut': r.statut
+            }));
+
+            // Calcul des totaux pour les rapports de caisse
+            const totalTheo = rapports.reduce((acc, r) => acc + (r.soldeTheorique || 0), 0);
+            const totalRecu = rapports.reduce((acc, r) => acc + (r.montantCloture || 0), 0);
+            const totalEcart = rapports.reduce((acc, r) => acc + (r.ecart || 0), 0);
+
+            dataToExport.push({
+                'Date': 'TOTAL GÉNÉRAL',
+                'Gérant': '',
+                'Boutique': '',
+                'Solde Théorique (GNF)': totalTheo,
+                'Montant Reçu (GNF)': totalRecu,
+                'Écart (GNF)': totalEcart,
+                'Statut': ''
+            });
+        }
+
+        const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+
+        // 1. Définir la largeur des colonnes pour éviter que le texte ne soit coupé
+        const wscols = [
+            { wch: 15 }, // Date
+            { wch: 25 }, // Source / Gérant
+            { wch: 25 }, // Gérant / Boutique
+            { wch: 20 }, // Montant
+            { wch: 20 }, // Reçu
+            { wch: 15 }, // Écart
+            { wch: 15 }  // Statut
+        ];
+        worksheet['!cols'] = wscols;
+
+        // 2. Appliquer le style à la dernière ligne (TOTAL GÉNÉRAL)
+        const range = XLSX.utils.decode_range(worksheet['!ref']);
+        const lastRowIndex = range.e.r; // Index de la dernière ligne
+
+        for (let col = range.s.c; col <= range.e.c; col++) {
+            const cellRef = XLSX.utils.encode_cell({ r: lastRowIndex, c: col });
+            if (worksheet[cellRef]) {
+                worksheet[cellRef].s = {
+                    font: { bold: true, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: "2980B9" } }, // Bleu primaire (comme votre UI)
+                    alignment: { horizontal: "right" }
+                };
+            }
+        }
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+        XLSX.writeFile(workbook, fileName);
     };
 
     // --- Utilitaires d'affichage ---
@@ -378,10 +464,16 @@ const AdminCaisseView = () => {
                             title="Date fin"
                         />
                     </div>
-                    <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill shadow-sm">
-                        <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
-                        Exporter
-                    </Button>
+                    <div className="d-flex gap-2">
+                        <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill shadow-sm">
+                            <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+                            Excel
+                        </Button>
+                        <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill shadow-sm">
+                            <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
+                            PDF
+                        </Button>
+                    </div>
                     <Button variant="outline-primary" onClick={fetchData} className="rounded-pill shadow-sm ms-2">
                         <iconify-icon icon="solar:refresh-bold" className="me-2 align-middle"></iconify-icon>
                         Actualiser
@@ -585,9 +677,15 @@ const AdminCaisseView = () => {
                             En validant ce rapport, le montant théorique de <strong>{selectedReport && formatCurrency(selectedReport.soldeTheorique)}</strong> sera ajouté à la Caisse Centrale.
                         </Alert>
                         {selectedReport && selectedReport.ecart !== 0 && (
-                            <Alert variant="warning">
-                                <strong>Attention :</strong> Il y a un écart de {formatCurrency(selectedReport.ecart)} dans ce rapport.
-                                <div className="small mt-1" style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto' }}>Commentaire gérant : {selectedReport.commentairesGérant || "Aucun"}</div>
+                            <Alert variant="danger" className="border-3 border-danger shadow-sm">
+                                <div className="d-flex align-items-center mb-2">
+                                    <iconify-icon icon="solar:danger-triangle-bold" style={{ fontSize: '24px' }} className="me-2"></iconify-icon>
+                                    <strong className="fs-5">ALERTE ÉCART : {formatCurrency(selectedReport.ecart)}</strong>
+                                </div>
+                                <div className="p-2 bg-white rounded border small text-dark">
+                                    <strong>Justification du gérant :</strong><br/>
+                                    {selectedReport.commentairesGérant || "Aucune explication fournie."}
+                                </div>
                             </Alert>
                         )}
                         <Form.Group>

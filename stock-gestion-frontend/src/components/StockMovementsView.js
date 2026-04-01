@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Spinner, Alert, Form, Row, Col, Badge, Button, Modal, Pagination, OverlayTrigger, Tooltip, Table } from 'react-bootstrap';
 import { mouvementAPI, boutiqueAPI } from '../services/api';
+import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -117,6 +118,24 @@ const StockMovementsView = () => {
         doc.save("mouvements_stock.pdf");
     };
 
+    const handleExportExcel = () => {
+        const dataToExport = mouvements.map(mvt => ({
+            'Date': new Date(mvt.createdAt).toLocaleString('fr-FR'),
+            'Type': mvt.type,
+            'Origine': mvt.fournisseur?.nom || mvt.boutiqueSource?.nom || 'N/A',
+            'Destination': mvt.boutiqueDestination?.nom || (mvt.type === 'Vente' ? 'Client' : 'N/A'),
+            'Articles': mvt.articles.map(a => `${a.nomArticle} (${a.quantite})`).join(', '),
+            'Opérateur': mvt.operateur?.nom || 'Système',
+            'Détails': mvt.details || '-',
+            'Statut': mvt.isCancelled ? 'Annulé' : 'Validé'
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Mouvements_Stock");
+        XLSX.writeFile(workbook, `export_mouvements_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     const getTypeBadge = (type) => {
         switch (type) {
             case 'Approvisionnement': return 'success';
@@ -212,10 +231,16 @@ const StockMovementsView = () => {
         <div className="p-4">
             <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
                 <h3 className="fw-bold mb-0">Mouvements de Stock</h3> 
-                <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
-                    <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
-                    Exporter PDF
-                </Button>
+                <div className="d-flex gap-2">
+                    <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
+                        <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+                        Exporter Excel
+                    </Button>
+                    <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
+                        <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
+                        Exporter PDF
+                    </Button>
+                </div>
             </div>
             {error && <Alert variant="danger">{error}</Alert>}
             {successMessage && <Alert variant="success">{successMessage}</Alert>}

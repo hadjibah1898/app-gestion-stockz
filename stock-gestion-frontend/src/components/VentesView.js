@@ -13,6 +13,7 @@ import { useSearchParams } from 'react-router-dom';
 import { articleAPI, venteAPI, clientAPI } from '../services/api';
 import { Html5QrcodeScanner } from "html5-qrcode";
 import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
+import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import logo from '../assets/logo.png';
@@ -505,6 +506,60 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     doc.save(`historique_ventes_${new Date().toISOString().slice(0,10)}.pdf`);
   };
 
+  // Génération de l'export Excel (Toutes les données filtrées)
+  const handleExportExcel = async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      // On récupère TOUTES les ventes (limit: 0) en respectant les filtres de date actuels
+      const params = {
+        limit: 0,
+        showCancelledOnly: showCancelledOnly
+      };
+      if (dateFilter.start) params.startDate = dateFilter.start;
+      if (dateFilter.end) {
+          const end = new Date(dateFilter.end);
+          end.setHours(23, 59, 59, 999);
+          params.endDate = end.toISOString();
+      }
+
+      const res = await venteAPI.getHistorique(params);
+      const allSales = res.data.ventes || [];
+
+      if (allSales.length === 0) {
+        setError("Aucune donnée à exporter.");
+        return;
+      }
+
+      // Préparation des données pour Excel
+      const dataToExport = allSales.map(v => ({
+        'Date': new Date(v.createdAt).toLocaleString('fr-FR'),
+        'Article': v.article?.nom || 'N/A',
+        'Code Réf': v.article?.code || 'N/A',
+        'Quantité': v.quantite,
+        'Prix Total (GNF)': v.prixTotal,
+        'Vendeur': v.gerant?.nom || 'N/A',
+        'Boutique': v.boutique?.nom || 'N/A',
+        'Client': v.client?.nom || 'Passage',
+        'Statut': v.isCancelled ? 'Annulée' : 'Validée',
+        'Remise (GNF)': v.remiseAppliquee || 0
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Ventes");
+      XLSX.writeFile(workbook, `export_ventes_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      
+      setSuccessMessage("Fichier Excel généré avec succès !");
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError("Erreur lors de la génération du fichier Excel.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handlePrintReceipt = () => {
     if (currentReceiptData) {
       generateReceiptPDF(currentReceiptData);
@@ -512,20 +567,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     handleCloseReceiptModal();
   };
 
-  const handleGenerateTicket = async (venteId, setError) => {
-    try {
-      const res = await venteAPI.genererTicket(venteId);
-      const downloadUrl = res.data.downloadUrl;
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = `ticket_${venteId}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la génération du ticket.");
-    }
-  };
   const handleCloseReceiptModal = () => {
     setShowReceiptModal(false);
     setTimeout(() => barcodeInputRef.current?.focus(), 100);
@@ -681,6 +722,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
                 className="rounded-pill shadow-sm w-auto"
                 title="Date de fin"
             />
+            <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
+                <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+                Exporter Excel
+            </Button>
             <Button variant="outline-secondary" onClick={() => generateHistoryPDF(historique, logo)} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                 Exporter PDF
@@ -704,7 +749,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
             handleImageClick={handleImageClick}
             setSaleToCancel={setSaleToCancel}
             setShowCancelModal={setShowCancelModal}
-            handleGenerateTicket={handleGenerateTicket}
             setError={setError}
           />
         </>

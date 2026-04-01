@@ -9,6 +9,7 @@ import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Toolt
 import TableComponent from './common/Table';
 import { articleAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
 import IntelligentSupplyModal from './common/IntelligentSupplyModal'; // Importer la nouvelle modale
+import XLSX from 'xlsx-js-style';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -412,6 +413,42 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     doc.save(fileName);
   };
 
+  const handleExportExcel = async () => {
+    try {
+      setLoading(true);
+      // Récupération de tous les articles sans pagination
+      const params = { limit: 0, search: searchTerm, boutique: filterBoutique, fournisseur: filterFournisseur };
+      const res = await articleAPI.getAll(params);
+      const allData = res.data.data || res.data || [];
+
+      const dataToExport = allData.map(a => ({
+        'Code': a.code || '-',
+        'Nom': a.nom,
+        'Type': a.type || 'Divers',
+        'Boutique': a.boutique?.nom || 'N/A',
+        'Fournisseur': a.fournisseur?.nom || 'N/A',
+        'Prix Achat (GNF)': a.prixAchat,
+        'Prix Vente (GNF)': a.prixVente,
+        'Quantité': a.quantite,
+        'Péremption': a.datePeremption ? new Date(a.datePeremption).toLocaleDateString() : '-',
+        'Valeur Stock (Achat)': a.prixAchat * a.quantite,
+        'Statut Promo': a.promoActive ? `Oui (-${a.promo}%)` : 'Non'
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Articles");
+      XLSX.writeFile(workbook, `export_articles_${new Date().toISOString().split('T')[0]}.xlsx`);
+      
+      setSuccessMessage("Fichier Excel généré avec succès !");
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError("Erreur lors de la génération du fichier Excel.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAutoPromoSubmit = async (e) => {
     e.preventDefault();
     setAutoPromoLoading(true);
@@ -628,6 +665,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                     Promo Péremption
                 </Button>
             )}
+            <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
+                <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
+                Exporter Excel
+            </Button>
             <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                 Exporter PDF
