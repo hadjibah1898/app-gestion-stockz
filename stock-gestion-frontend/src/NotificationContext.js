@@ -32,7 +32,7 @@ export const NotificationProvider = ({ children }) => {
                 ? await authAPI.getAllNotifications() 
                 : await authAPI.getNotifications();
             
-            const fetchedNotifications = res.data || [];
+            const fetchedNotifications = res.data || []; 
 
             if (!isInitialFetch) {
                 const currentNotifications = notificationsRef.current;
