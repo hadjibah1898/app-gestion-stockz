@@ -1,3 +1,4 @@
+// backend/models/RapportCaisse.js (Exemple de ce qu'il doit contenir)
 const mongoose = require('mongoose');
 
 const rapportCaisseSchema = new mongoose.Schema({
@@ -58,7 +59,11 @@ const rapportCaisseSchema = new mongoose.Schema({
     },
     commentairesAdmin: {
         type: String,
-    }
+    },
+     totalDettes: {
+        type: Number,
+        default: 0
+    },
 }, { timestamps: true });
 
 rapportCaisseSchema.index({ gerant: 1, statut: 1 });

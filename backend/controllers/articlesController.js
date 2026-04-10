@@ -100,7 +100,7 @@ exports.addArticle = async (req, res) => {
 //  Ajoute l'export pour la suppression 
 exports.deleteArticle = async (req, res) => {
     try {
-        const article = await articleService.listerArticles({ _id: req.params.id });
+        const { data: articlesFound } = await articleService.listerArticles({ _id: req.params.id });
         await articleService.supprimerArticle(req.params.id);
 
         await logAction({
@@ -109,7 +109,7 @@ exports.deleteArticle = async (req, res) => {
             action: 'DELETE_ARTICLE',
             entity: 'Article',
             entityId: req.params.id,
-            details: { deletedArticle: article[0] },
+            details: { deletedArticle: articlesFound[0] },
             status: 'SUCCESS'
         });
         res.status(200).json({ message: "Article supprimé avec succès" });
@@ -146,6 +146,7 @@ exports.transferArticles = async (req, res) => {
             return res.status(400).json({ message: "Les boutiques source et destination sont requises." });
         }
         const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details);
+        const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
 
         await logAction({
             req,
@@ -156,7 +157,7 @@ exports.transferArticles = async (req, res) => {
             status: 'SUCCESS'
         });
 
-        res.status(200).json({ message: `${result.modifiedCount} articles transférés avec succès.` });
+        res.status(200).json({ message: "Articles transférés avec succès.", movement });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -171,6 +172,7 @@ exports.restockFromCentral = async (req, res) => {
     try {
         const { targetId, articles, details } = req.body;
         const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, details);
+        const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
 
         await logAction({
             req,
@@ -181,7 +183,7 @@ exports.restockFromCentral = async (req, res) => {
             status: 'SUCCESS'
         });
 
-        res.status(200).json({ message: `${result.modifiedCount} articles réapprovisionnés avec succès.` });
+        res.status(200).json({ message: "Articles réapprovisionnés avec succès.", movement });
     } catch (error) {
         res.status(error.statusCode || 500).json({ message: error.message });
     }

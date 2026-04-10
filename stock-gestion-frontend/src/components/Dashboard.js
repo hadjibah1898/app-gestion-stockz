@@ -13,6 +13,7 @@ import autoTable from 'jspdf-autotable';
 import './Dashboard.css';
 import logo from '../assets/logo.png'; // Assurez-vous que le chemin vers votre logo est correct
 import { boutiqueAPI } from '../services/api'; // Import boutiqueAPI
+import { getOfflineVentesCount, syncVentes } from '../utils/offlineSync';
 
 // Helper to format currency
 const formatCurrency = (value) => {
@@ -92,6 +93,7 @@ const Dashboard = () => {
   const [timeRange, setTimeRange] = useState('monthly'); // 1. Ajouter l'état pour le filtre
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // Nombre d'articles par page
+  const [offlineCount, setOfflineCount] = useState(0);
   
   // États pour le transfert rapide
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -130,6 +132,9 @@ const Dashboard = () => {
         const lowStockItems = fetchedArticles.filter(a => a.quantite <= 10);
         setLowStockArticles(lowStockItems);
         
+        const count = await getOfflineVentesCount();
+        setOfflineCount(count);
+        
       } catch (err) {
         setToast({ show: true, message: err.response?.data?.message || "Erreur lors du chargement des statistiques du tableau de bord.", variant: 'danger' });
         // Use some fallback data so the page doesn't crash
@@ -148,6 +153,42 @@ const Dashboard = () => {
 
     fetchStats();
   }, [timeRange, refreshTrigger]); // Redéclencher si le filtre change OU si une action est effectuée
+
+  const playSuccessSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const now = audioCtx.currentTime;
+
+      const playTone = (freq, startOffset, duration) => {
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(freq, now + startOffset);
+        gainNode.gain.setValueAtTime(0.1, now + startOffset);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + startOffset + duration);
+        oscillator.start(now + startOffset);
+        oscillator.stop(now + startOffset + duration);
+      };
+
+      playTone(800, 0, 0.1);
+      playTone(1200, 0.15, 0.2);
+    } catch (e) {
+      console.error("Audio error", e);
+    }
+  };
+
+  const handleSyncManual = async () => {
+    const result = await syncVentes();
+    if (result.success > 0) {
+      setToast({ show: true, message: `${result.success} ventes synchronisées !`, variant: 'success' });
+      playSuccessSound();
+      setRefreshTrigger(prev => prev + 1);
+    }
+    const count = await getOfflineVentesCount();
+    setOfflineCount(count);
+  };
 
   // Couleurs dynamiques selon le thème
   const textColor = theme === 'dark' ? '#cdd9e5' : '#373d3f';
@@ -462,6 +503,19 @@ const Dashboard = () => {
           <Toast.Body className={toast.variant === 'danger' ? 'text-white' : ''}>{toast.message}</Toast.Body>
         </Toast>
       </ToastContainer>
+
+      {/* Alerte de synchronisation offline */}
+      {offlineCount > 0 && (
+        <Alert variant="warning" className="d-flex justify-content-between align-items-center shadow-sm rounded-4 border-0 mb-4">
+          <div>
+            <iconify-icon icon="solar:cloud-upload-bold-duotone" className="me-2 align-middle fs-4"></iconify-icon>
+            <strong>Mode Hors-ligne :</strong> Il y a {offlineCount} vente(s) en attente de synchronisation.
+          </div>
+          <Button variant="warning" size="sm" className="rounded-pill fw-bold" onClick={handleSyncManual} disabled={!navigator.onLine}>
+            Synchroniser maintenant
+          </Button>
+        </Alert>
+      )}
 
       {/* A. La Bannière de Bienvenue */}
       <Card className="welcome-banner border-0 mb-4 text-white overflow-hidden">

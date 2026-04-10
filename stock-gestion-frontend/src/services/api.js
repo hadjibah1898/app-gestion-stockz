@@ -89,6 +89,7 @@ export const articleAPI = {
   restock: (data) => api.post('articles/restock', data),
   demanderRemise: (id, data) => api.post(`articles/${id}/demander-remise`, data),
   applyAutoPromo: (data) => api.post('articles/auto-promo', data),
+  updateMany: (data) => api.put('articles/update-many', data),
 };
 
 export const fournisseurAPI = {
@@ -122,6 +123,7 @@ export const clientAPI = {
   getPendingDebtPayments: () => api.get('clients/debt-payments/pending'),
   validateDebtPayment: (id) => api.put(`clients/debt-payments/${id}/validate`),
   getDebtEvolution: () => api.get('clients/debt-evolution'),
+  payerCommission: (data) => api.post('clients/pay-commission', data),
 };
 
 export const caisseAPI = {
@@ -137,6 +139,7 @@ export const caisseAPI = {
   rejeterRapport: (id, data) => api.put(`caisse/rapports/${id}/rejeter`, data),
   getCaisseAdmin: () => api.get('caisse/admin'),
   getStatistiquesSession: () => api.get('caisse/statistiques-session'),
+  corrigerRapport: (data) => api.put('caisse/correction', data),
 };
 
 export const mouvementAPI = {

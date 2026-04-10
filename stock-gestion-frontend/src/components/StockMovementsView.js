@@ -8,8 +8,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Spinner, Alert, Form, Row, Col, Badge, Button, Modal, Pagination, OverlayTrigger, Tooltip, Table } from 'react-bootstrap';
 import { mouvementAPI, boutiqueAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { generateMovementsSummary } from '../utils/pdfUtils';
 
 const StockMovementsView = () => {
     const [mouvements, setMouvements] = useState([]);
@@ -23,6 +22,13 @@ const StockMovementsView = () => {
     const itemsPerPage = 10;
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [movementToCancel, setMovementToCancel] = useState(null);
+    const [selectedIds, setSelectedIds] = useState([]);
+
+    // Logique de pagination déplacée ici pour être utilisée par les colonnes
+    const indexOfLastItem = currentPage * itemsPerPage;
+    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+    const currentMouvements = mouvements.slice(indexOfFirstItem, indexOfLastItem);
+    const totalPages = Math.ceil(mouvements.length / itemsPerPage);
 
     const fetchMouvements = useCallback(async () => {
         try {
@@ -44,9 +50,34 @@ const StockMovementsView = () => {
         fetchMouvements();
     }, [fetchMouvements]);
 
+    // Réinitialiser la sélection lors du changement de page ou de filtre
+    useEffect(() => {
+        setSelectedIds([]);
+    }, [currentPage, filters]);
+
+
     const handleFilterChange = (e) => {
         setFilters({ ...filters, [e.target.name]: e.target.value });
         setCurrentPage(1); // Revenir à la première page lors d'un filtrage
+    };
+
+    const handleSelectAll = (checked) => {
+        if (checked) {
+            setSelectedIds(currentMouvements.map(m => m._id));
+        } else {
+            setSelectedIds([]);
+        }
+    };
+
+    const handleSelectOne = (id) => {
+        setSelectedIds(prev => 
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
+    const handlePrintSelected = () => {
+        const selectedMouvements = mouvements.filter(m => selectedIds.includes(m._id));
+        generateMovementsSummary(selectedMouvements);
     };
 
     const handleCancelClick = (movement) => {
@@ -68,54 +99,7 @@ const StockMovementsView = () => {
     };
 
     const handleExportPDF = () => {
-        const doc = new jsPDF();
-        
-        // En-tête
-        doc.setFillColor(41, 128, 185);
-        doc.rect(0, 0, 210, 25, 'F');
-        doc.setFontSize(18);
-        doc.setTextColor(255, 255, 255);
-        doc.text("Mouvements de Stock", 14, 16);
-        doc.setFontSize(10);
-        doc.setTextColor(220, 220, 220);
-        doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')}`, 14, 22);
-
-        const tableColumn = ["Date", "Type", "Origine", "Destination", "Articles", "Opérateur"];
-        const tableRows = [];
-
-        mouvements.forEach(mvt => {
-            const date = new Date(mvt.createdAt).toLocaleString('fr-FR');
-            const origine = mvt.fournisseur?.nom || mvt.boutiqueSource?.nom || 'N/A';
-            const destination = mvt.boutiqueDestination?.nom || (mvt.type === 'Vente' ? 'Client' : 'N/A');
-            const articles = mvt.articles.map(a => `${a.nomArticle} (${a.quantite})`).join(', ');
-            const operateur = mvt.operateur?.nom || 'Système';
-
-            tableRows.push([date, mvt.type, origine, destination, articles, operateur]);
-        });
-
-        autoTable(doc, {
-            head: [tableColumn],
-            body: tableRows,
-            startY: 35,
-            theme: 'grid',
-            styles: { fontSize: 8, cellPadding: 2 },
-            headStyles: { fillColor: [41, 128, 185] },
-            alternateRowStyles: { fillColor: [248, 249, 250] }
-        });
-
-        // Footer
-        const pageCount = doc.internal.getNumberOfPages();
-        for(let i = 1; i <= pageCount; i++) {
-            doc.setPage(i);
-            doc.setFontSize(8);
-            doc.setTextColor(150);
-            const pageSize = doc.internal.pageSize;
-            const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
-            doc.text(`StockDash - Mouvements`, 14, pageHeight - 10);
-            doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
-        }
-
-        doc.save("mouvements_stock.pdf");
+        generateMovementsSummary(mouvements);
     };
 
     const handleExportExcel = () => {
@@ -148,6 +132,23 @@ const StockMovementsView = () => {
     };
 
     const columns = [
+        {
+            key: 'select',
+            label: (
+                <Form.Check 
+                    type="checkbox" 
+                    onChange={(e) => handleSelectAll(e.target.checked)} 
+                    checked={currentMouvements.length > 0 && selectedIds.length === currentMouvements.length}
+                />
+            ),
+            render: (_, item) => (
+                <Form.Check 
+                    type="checkbox" 
+                    checked={selectedIds.includes(item._id)} 
+                    onChange={() => handleSelectOne(item._id)} 
+                />
+            )
+        },
         {
             key: 'createdAt',
             label: 'Date',
@@ -219,12 +220,6 @@ const StockMovementsView = () => {
         }
     ];
 
-    // Logique de pagination
-    const indexOfLastItem = currentPage * itemsPerPage;
-    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-    const currentMouvements = mouvements.slice(indexOfFirstItem, indexOfLastItem);
-    const totalPages = Math.ceil(mouvements.length / itemsPerPage);
-
     if (loading) return <Spinner animation="border" />;
 
     return (
@@ -232,6 +227,12 @@ const StockMovementsView = () => {
             <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
                 <h3 className="fw-bold mb-0">Mouvements de Stock</h3> 
                 <div className="d-flex gap-2">
+                    {selectedIds.length > 0 && (
+                        <Button variant="primary" onClick={handlePrintSelected} className="rounded-pill px-4 shadow-sm">
+                            <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
+                            Imprimer la sélection ({selectedIds.length})
+                        </Button>
+                    )}
                     <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
                         <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
                         Exporter Excel

@@ -80,6 +80,7 @@ exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture,
         boutique: ouverture.boutique._id,
         fondInitial: ouverture.fondInitial,
         totalVentes,
+        totalDettes,
         totalDepensesApprouvees: totalDepenses, // Renommé pour garder la cohérence du modèle Rapport
         soldeTheorique,
         montantCloture,
@@ -194,11 +195,15 @@ exports.creerDepense = async ({ montant, motif, justificatif, ouvertureCaisseId,
     const ventes = await Vente.find({ ouvertureCaisse: ouvertureCaisseId, isCancelled: false });
     const totalVentes = ventes.reduce((acc, v) => acc + v.prixTotal, 0);
 
+    const venteIds = ventes.map(v => v._id);
+    const dettes = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' });
+    const totalDettes = dettes.reduce((acc, d) => acc + d.montant, 0);
+
     const depensesAnterieures = await Depense.find({ ouvertureCaisse: ouvertureCaisseId });
     const totalDepensesAnterieures = depensesAnterieures.reduce((acc, d) => acc + d.montant, 0);
 
-    // 2. Vérifier si les fonds sont suffisants
-    const cashDisponible = (ouverture.fondInitial + totalVentes) - totalDepensesAnterieures;
+    // 2. Vérifier si les fonds sont suffisants (Argent réel = Fond + Ventes Cash - Dépenses)
+    const cashDisponible = (ouverture.fondInitial + totalVentes - totalDettes) - totalDepensesAnterieures;
 
     if (montantDepense > cashDisponible) {
         throw new Error(`Dépense refusée. Fonds insuffisants en caisse. Disponible: ${cashDisponible.toLocaleString()} GNF, Dépense: ${montantDepense.toLocaleString()} GNF.`);

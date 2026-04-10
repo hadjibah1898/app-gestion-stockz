@@ -33,12 +33,8 @@ const articleSchema = new mongoose.Schema({
     code: {
         type: String,
         trim: true,
-        default: ''
-    },
-    type: {
-        type: String,
-        trim: true,
-        default: 'Divers'
+        unique: true,
+        sparse: true
     },
     // Champ pour la promotion (admin)
     promo: {
@@ -69,10 +65,17 @@ const articleSchema = new mongoose.Schema({
     datePeremption: {
         required :false, 
         type: Date,
-    
+    },
+    categorie: {
+        type: String,
+        trim: true,
+        default: 'Divers'
     }
 }, {
     timestamps: true
 });
+
+// Index unique composé : empêche le même nom dans la même boutique
+articleSchema.index({ nom: 1, boutique: 1 }, { unique: true });
 
 module.exports = mongoose.model('Article', articleSchema);

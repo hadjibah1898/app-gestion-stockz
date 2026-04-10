@@ -163,14 +163,16 @@ exports.approvisionnerCentrale = async (req, res) => {
         await fournisseur.save();
 
         // Enregistrer le mouvement de stock
-        await Mouvement.create({
+        const movement = await Mouvement.create({
             type: 'Approvisionnement',
             fournisseur: fournisseur._id,
             boutiqueDestination: depotPrincipal._id,
-            articles: items.map(i => ({ nomArticle: i.nom, quantite: i.quantite })),
+            articles: items.map(i => ({ nomArticle: i.nom, quantite: i.quantite, prixAchatUnitaire: i.prixAchat })),
             operateur: req.user.id,
             details: `Depuis fournisseur ${fournisseur.nom}`
         });
+
+        const populatedMovement = await Mouvement.findById(movement._id).populate('fournisseur boutiqueDestination operateur');
 
         await logAction({
             req,
@@ -184,7 +186,8 @@ exports.approvisionnerCentrale = async (req, res) => {
 
         res.status(200).json({ 
             message: `Approvisionnement réussi vers ${depotPrincipal.nom}.`,
-            details: `${articlesCrees} nouveaux articles, ${articlesMisAJour} mis à jour.`
+            details: `${articlesCrees} nouveaux articles, ${articlesMisAJour} mis à jour.`,
+            movement: populatedMovement
         });
 
     } catch (error) {

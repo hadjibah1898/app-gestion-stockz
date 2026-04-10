@@ -12,7 +12,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Form, Spinner, Alert, Row, Col, InputGroup, Modal, Tabs, Tab, Table, Badge } from 'react-bootstrap';
 import { useLocation } from 'react-router-dom';
 import { caisseAPI, clientAPI } from '../services/api';
-import axios from 'axios';
 import jsPDF from 'jspdf';
 
 import autoTable from 'jspdf-autotable';
@@ -229,8 +228,7 @@ const CaisseView = () => {
         try {
             if (isCorrection) {
                 // En mode correction, on appelle la route spécifique
-                const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-                await axios.put(`${API_URL}/caisse/correction`, {
+                await caisseAPI.corrigerRapport({
                     montantCloture: montantClotureNum,
                     commentairesGérant: commentaires
                 });
@@ -546,6 +544,11 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false);
     const [commissionError, setCommissionError] = useState('');
     
+    // Calcul du cash disponible réel (Fond + Ventes Cash - Dépenses déjà faites)
+    const availableCash = caisseStatut 
+        ? (caisseStatut.fondInitial + (caisseStatut.session?.totalEncaisse || 0) - (caisseStatut.session?.totalDepenses || 0))
+        : 0;
+
     const fetchDepenses = useCallback(() => {
         // Si aucune session de caisse n'est ouverte, on n'affiche aucune dépense.
         if (!caisseStatut) {
@@ -602,6 +605,13 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
         e.preventDefault();
         setSubmitLoading(true);
         setError('');
+
+        if (parseFloat(newExpense.montant) > availableCash) {
+            setError(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
+            setSubmitLoading(false);
+            return;
+        }
+
         try {
             await caisseAPI.creerDepense(newExpense);
             fetchDepenses(); // Rafraîchir la liste
@@ -620,6 +630,13 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
         setCommissionSubmitLoading(true);
         setCommissionError('');
         const selectedWorker = workers.find(w => w._id === selectedWorkerId);
+
+        if (parseFloat(paymentAmount) > availableCash) {
+            setCommissionError(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
+            setCommissionSubmitLoading(false);
+            return;
+        }
+
         if (!selectedWorker) {
             setCommissionError("Veuillez sélectionner un ouvrier.");
             setCommissionSubmitLoading(false);
@@ -640,12 +657,8 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
         }
 
         try {
-            // UTILISATION DE LA ROUTE SÉCURISÉE ATOMIQUE
-            // Appelle le endpoint qui gère à la fois la déduction client et la création de dépense
-            // FIX: Utilisation explicite de l'URL du backend (port 5000) pour éviter les erreurs 404 sur le port 3000
-            const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-            
-            await axios.post(`${API_URL}/clients/pay-commission`, {
+            // Utilisation du service clientAPI déjà configuré avec l'URL de production
+            await clientAPI.payerCommission({
                 workerId: selectedWorker._id,
                 montant: amountToPay,
             });
@@ -669,11 +682,11 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
             <Card.Header className="bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h5 className="fw-bold mb-0">Mes Dépenses</h5>
                 <div className="d-flex gap-2">
-                    <Button variant="info" size="sm" onClick={handleOpenCommissionModal} className="text-white">
+                        <Button variant="info" size="sm" onClick={handleOpenCommissionModal} className="text-white" disabled={!caisseStatut}>
                         <iconify-icon icon="solar:money-bag-bold" className="me-2 align-middle"></iconify-icon>
                         Payer Commission
                     </Button>
-                    <Button variant="primary" size="sm" onClick={handleOpenCreateModal}>
+                        <Button variant="primary" size="sm" onClick={handleOpenCreateModal} disabled={!caisseStatut}>
                         <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
                         Nouvelle Dépense
                     </Button>
@@ -733,9 +746,14 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                                     min="1"
                                     value={newExpense.montant} 
                                     onChange={e => setNewExpense({...newExpense, montant: e.target.value})} 
+                                    isInvalid={parseFloat(newExpense.montant) > availableCash}
                                 />
                                 <InputGroup.Text>GNF</InputGroup.Text>
+                                <Form.Control.Feedback type="invalid">
+                                    Le montant dépasse le cash disponible ({availableCash.toLocaleString()} GNF).
+                                </Form.Control.Feedback>
                             </InputGroup>
+                            <Form.Text className="text-muted">Cash disponible : <span className="fw-bold text-success">{availableCash.toLocaleString()} GNF</span></Form.Text>
                         </Form.Group>
                     </Modal.Body>
                     <Modal.Footer>
@@ -785,10 +803,15 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                                                 max={selectedWorkerForInfo.commission}
                                                 value={paymentAmount}
                                                 onChange={e => setPaymentAmount(e.target.value)}
+                                                isInvalid={parseFloat(paymentAmount) > availableCash}
                                                 placeholder={`Max: ${selectedWorkerForInfo.commission.toLocaleString()}`}
                                             />
                                             <InputGroup.Text>GNF</InputGroup.Text>
+                                            <Form.Control.Feedback type="invalid">
+                                                Le montant dépasse le cash disponible ({availableCash.toLocaleString()} GNF).
+                                            </Form.Control.Feedback>
                                         </InputGroup>
+                                        <Form.Text className="text-muted">Cash disponible : <span className="fw-bold text-success">{availableCash.toLocaleString()} GNF</span></Form.Text>
                                     </Form.Group>
                                 )}
                             </>
@@ -1015,6 +1038,7 @@ const RapportsTab = ({ onCorrect }) => {
                         <tr>
                             <th>Date</th>
                             <th>Total Ventes</th>
+                            <th>Dettes accordées</th>
                             <th>Solde EXACT</th>
                             <th>Montant Clôturé</th>
                             <th>Écart</th>
@@ -1024,12 +1048,13 @@ const RapportsTab = ({ onCorrect }) => {
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan="6" className="text-center"><Spinner size="sm" /></td></tr>
+                            <tr><td colSpan="8" className="text-center"><Spinner size="sm" /></td></tr>
                         ) : rapports.length > 0 ? (
                             rapports.map(r => (
                                 <tr key={r._id}>
                                     <td>{new Date(r.createdAt).toLocaleDateString()}</td>
                                     <td>{r.totalVentes.toLocaleString()} GNF</td>
+                                    <td>{(r.totalDettes || 0).toLocaleString()} GNF</td>
                                     <td>{r.soldeTheorique.toLocaleString()} GNF</td>
                                     <td>{r.montantCloture.toLocaleString()} GNF</td>
                                     <td>
@@ -1053,7 +1078,7 @@ const RapportsTab = ({ onCorrect }) => {
                                 </tr>
                             ))
                         ) : (
-                            <tr><td colSpan="6" className="text-center text-muted">Aucun rapport trouvé.</td></tr>
+                            <tr><td colSpan="8" className="text-center text-muted">Aucun rapport trouvé.</td></tr>
                         )}
                     </tbody>
                 </Table>

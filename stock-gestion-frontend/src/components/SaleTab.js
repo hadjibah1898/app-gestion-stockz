@@ -6,15 +6,18 @@
  * Il reçoit toutes les données (articles, clients, panier) et les fonctions de manipulation (ajouter, retirer, valider) via ses props
  * depuis le composant parent `VentesView`.
  */
-import React from 'react';
-import { Row, Col, Card, Form, InputGroup, Button, Table, Badge, Alert, Spinner } from 'react-bootstrap';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Row, Col, Card, Form, InputGroup, Button, Badge, Alert, Spinner, Modal, OverlayTrigger, Tooltip, Offcanvas } from 'react-bootstrap';
+import { PlusIcon, MinusIcon } from './ModernIcons';
 
 const SaleTab = ({
     panier,
+    setPanier,
     clients,
     articles,
     selectedClientId,
     setSelectedClientId,
+    availableCategories, // Récupérer la prop des catégories dynamiques
     setShowClientModal,
     barcodeInputRef,
     barcode,
@@ -23,9 +26,11 @@ const SaleTab = ({
     selectedArticle,
     setSelectedArticle,
     quantite,
-    setQuantite,
-    remisePanier,
-    setRemisePanier,
+    setQuantite, // Renamed prop
+    itemRemiseInput, // Renamed prop
+    itemRemiseType, // Nouveau prop
+    setItemRemiseType, // Nouveau prop
+    setItemRemiseInput, // Renamed prop
     ajouterAuPanier,
     getEffectivePrice,
     handleImageClick,
@@ -37,275 +42,690 @@ const SaleTab = ({
     calculerTotal,
     effectuerVente,
     historique,
-    isSubmitting // Ajout de la prop
+    isSubmitting,
+    brouillons,
+    mettreEnBrouillon,
+    chargerBrouillon,
+    setBrouillons,
+    showMobilePanier,
+    setShowMobilePanier
 }) => {
-    return (
-        <Row>
-            <Col md={8}>
-                <Card className="mb-4 border-0 shadow-sm rounded-4">
-                    <Card.Header className="bg-white py-3">
-                        <div className="d-flex justify-content-between align-items-center">
-                            <h5 className="mb-0 fw-bold">Panier de vente</h5>
-                            <div className="d-flex gap-2">
-                                <Button variant="outline-primary" size="sm" onClick={() => setShowClientModal(true)} title="Nouveau Client">
-                                    <iconify-icon icon="solar:user-plus-bold" className="me-1"></iconify-icon>
-                                    Nouveau Client
-                                </Button>
-                            </div>
-                        </div>
-                    </Card.Header>
-                    <Card.Body>
-                        <Form.Group className="mb-4">
-                            <Form.Label className="fw-bold">Client (Optionnel)</Form.Label>
-                            <InputGroup>
-                                <InputGroup.Text><iconify-icon icon="solar:user-circle-bold"></iconify-icon></InputGroup.Text>
-                                <Form.Select
-                                    value={selectedClientId}
-                                    onChange={(e) => setSelectedClientId(e.target.value)}
-                                    className="rounded-pill"
-                                >
-                                    <option value="">Client de passage (Anonyme)</option>
-                                    {clients.map(client => (
-                                        <option key={client._id} value={client._id}>{client.nom} {client.type === 'Ouvrier' ? '(Ouvrier)' : ''}</option>
-                                    ))}
-                                </Form.Select>
-                            </InputGroup>
-                        </Form.Group>
+    // Recherche et filtre catégorie
+    const [search, setSearch] = useState('');
+    const [activeCategory, setActiveCategory] = useState('all');
+    const [showHistoryModal, setShowHistoryModal] = useState(false);
+    const [showDraftsModal, setShowDraftsModal] = useState(false);
+    const [cartAnimationTrigger, setCartAnimationTrigger] = useState(false); // État pour déclencher l'animation du panier
+    const [expandedTicket, setExpandedTicket] = useState(null);
+    const [showViderModal, setShowViderModal] = useState(false);
 
-                        <Form onSubmit={handleBarcodeScan} className="mb-4">
-                            <Form.Group>
-                                <Form.Label className="fw-bold">Scanner un code-barres</Form.Label>
-                                <InputGroup>
-                                    <InputGroup.Text><iconify-icon icon="solar:barcode-scanner-bold-duotone"></iconify-icon></InputGroup.Text>
-                                    <Form.Control
-                                        ref={barcodeInputRef}
-                                        type="text"
-                                        name="barcode"
-                                        id="barcode"
-                                        placeholder="Scannez ou saisissez un code..."
-                                        value={barcode}
-                                        onChange={(e) => setBarcode(e.target.value)}
-                                        autoFocus
-                                        className="rounded-pill"
-                                    />
-                                    <Button type="submit" variant="primary" className="rounded-pill px-4">
-                                        <iconify-icon icon="solar:add-circle-bold" className="me-2"></iconify-icon>
-                                        Ajouter
-                                    </Button>
-                                </InputGroup>
-                            </Form.Group>
-                        </Form>
-                        <div className="text-center text-muted my-3 small fw-bold">OU</div>
-                        <Form className="mb-4" onSubmit={(e) => { e.preventDefault(); ajouterAuPanier(); }}>
-                            <Row className="g-3">
-                                <Col md={5}>
-                                    <Form.Group>
-                                        <Form.Label className="fw-bold">Article</Form.Label>
-                                        <Form.Select
-                                            value={selectedArticle}
-                                            onChange={(e) => setSelectedArticle(e.target.value)}
-                                            name="selectedArticle"
-                                            id="selectedArticle"
-                                            className="rounded-pill"
-                                        >
-                                            <option value="">Sélectionner un article</option>
-                                            {articles.map(article => (
-                                                <option key={article._id} value={article._id}>
-                                                    {article.code ? `[${article.code}] ` : ''}{article.nom} - {getEffectivePrice(article).toLocaleString()} GNF
-                                                    {getEffectivePrice(article) < article.prixVente && (
-                                                        ` (Promo)`
-                                                    )}
-                                                    (Stock: {article.quantite})
-                                                </option>
-                                            ))}
-                                        </Form.Select>
-                                    </Form.Group>
-                                </Col>
-                                <Col md={2}>
-                                    <Form.Group>
-                                        <Form.Label className="fw-bold">Quantité</Form.Label>
-                                        <Form.Control
-                                            type="number"
-                                            min="1"
-                                            value={quantite}
-                                            onChange={(e) => setQuantite(e.target.value)}
-                                            name="quantite"
-                                            id="quantite"
-                                            className="rounded-pill"
-                                        />
-                                    </Form.Group>
-                                </Col>
-                                <Col md={2}>
-                                    <Form.Group>
-                                        <Form.Label className="fw-bold">Remise (GNF)</Form.Label>
-                                        <Form.Control
-                                            type="number"
-                                            min="0"
-                                            value={remisePanier}
-                                            onChange={(e) => setRemisePanier(e.target.value)}
-                                            name="remisePanier"
-                                            id="remisePanier"
-                                            placeholder="0"
-                                            className="rounded-pill"
-                                        />
-                                    </Form.Group>
-                                </Col>
-                                <Col md={3} className="d-flex align-items-end">
-                                    <Button
-                                        variant="primary"
-                                        onClick={ajouterAuPanier}
-                                        disabled={!selectedArticle}
-                                        className="w-100 rounded-pill py-2"
-                                    >
-                                        <iconify-icon icon="solar:cart-plus-bold" className="me-2"></iconify-icon>
-                                        Ajouter au panier
-                                    </Button>
-                                </Col>
-                            </Row>
-                        </Form>
+    // États pour les modales de remise (individuelle et pré-ajout)
+    const [showItemDiscountModal, setShowItemDiscountModal] = useState(false);
+    const [discountModalItem, setDiscountModalItem] = useState(null);
+    const [modalRemiseValue, setModalRemiseValue] = useState('');
+    const [modalRemiseType, setModalRemiseType] = useState('montant');
+    const [showNextItemDiscountModal, setShowNextItemDiscountModal] = useState(false);
 
-                        {panier.length > 0 ? (
-                            <>
-                                <Table hover responsive className="align-middle mb-0">
-                                    <thead className="bg-light">
-                                        <tr>
-                                            <th className="ps-4 py-3 border-0 text-secondary small text-uppercase">Article</th>
-                                            <th className="py-3 border-0 text-secondary small text-uppercase">Prix unitaire</th>
-                                            <th className="py-3 border-0 text-secondary small text-uppercase text-center">Quantité</th>
-                                            <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                                            <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {panier.map(item => (
-                                            <tr key={item.article._id}>
-                                                <td className="ps-4">
-                                                    <div className="d-flex align-items-center">
-                                                        {item.article.image ? (
-                                                            <img src={item.article.image} alt="" className="rounded shadow-sm me-3" style={{ width: '40px', height: '40px', objectFit: 'cover', cursor: 'pointer' }} onClick={() => handleImageClick(item.article.image)} />
-                                                        ) : (
-                                                            <div className="bg-light rounded d-flex align-items-center justify-content-center me-3" style={{ width: '40px', height: '40px' }}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
-                                                        )}
-                                                        <div>
-                                                            <div className="fw-bold">{item.article.nom}</div>
-                                                            {item.article.code && <div className="small text-muted">{item.article.code}</div>}
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    {getEffectivePrice(item.article, item.remiseTemp) < item.article.prixVente ? (
-                                                        <>
-                                                            <span className="text-decoration-line-through text-muted me-2">{item.article.prixVente.toLocaleString()}</span>
-                                                            <span className="text-danger fw-bold">{getEffectivePrice(item.article, item.remiseTemp).toLocaleString()} GNF</span>
-                                                            {item.remiseTemp && <span className="badge bg-warning ms-2">Remise {item.remiseTemp.toLocaleString()} GNF</span>}
-                                                        </>
-                                                    ) : (
-                                                        `${item.article.prixVente.toLocaleString()} GNF`
-                                                    )}
-                                                </td>
-                                                <td className="text-center"><Badge bg="light" text="dark" className="border">{item.quantite}</Badge></td>
-                                                <td className="text-end fw-bold text-primary">{item.prixTotal.toLocaleString()} GNF</td>
-                                                <td className="pe-4 text-end">
-                                                    <Button
-                                                        variant="outline-danger"
-                                                        size="sm"
-                                                        onClick={() => retirerDuPanier(item.article._id)}
-                                                    >
-                                                        <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
-                                                        Retirer
-                                                    </Button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </Table>
-                                {selectedClientId && (
-                                    <Row className="justify-content-end mt-3">
-                                        <Col md={5}>
-                                            <Form.Group className="mb-3">
-                                                <Form.Label className="fw-bold">Montant Payé (Optionnel)</Form.Label>
-                                                <InputGroup>
-                                                    <Form.Control
-                                                        type="number"
-                                                        placeholder={`Total : ${calculerTotal().toLocaleString()} GNF`}
-                                                        value={montantPaye}
-                                                        onChange={(e) => setMontantPaye(e.target.value)}
-                                                        min="0"
-                                                        className="rounded-pill"
-                                                    />
-                                                    <InputGroup.Text>GNF</InputGroup.Text>
-                                                </InputGroup>
-                                                <Form.Text className="text-muted">
-                                                    Si le montant est inférieur au total, la différence sera ajoutée à la dette du client.
-                                                </Form.Text>
-                                            </Form.Group>
-                                        </Col>
-                                        {montantPaye !== '' && parseFloat(montantPaye) < calculerTotal() && (
-                                            <Col md={5}>
-                                                <Form.Group className="mb-3">
-                                                    <Form.Label className="fw-bold text-danger">Échéance de la dette</Form.Label>
-                                                    <Form.Control
-                                                        type="date"
-                                                        value={echeanceDette}
-                                                        onChange={(e) => setEcheanceDette(e.target.value)}
-                                                        required
-                                                        className="rounded-pill"
-                                                    />
-                                                </Form.Group>
-                                            </Col>
-                                        )}
-                                    </Row>
-                                )}
-                                <div className="d-flex justify-content-between align-items-center mt-3">
-                                    <h2 className="fw-bold text-primary">Total: {calculerTotal().toLocaleString()} GNF</h2>
-                                    <Button variant="success" size="lg" onClick={effectuerVente} disabled={isSubmitting}>
-                                        {isSubmitting ? (
-                                            <>
-                                                <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
-                                                <span className="ms-2">Validation...</span>
-                                            </>
-                                        ) : 'Valider la vente'}
-                                    </Button>
-                                </div>
-                            </>
-                        ) : (
-                            <Alert variant="info">
-                                Le panier est vide. Ajoutez des articles pour effectuer une vente.
-                            </Alert>
+    // Regroupement de l'historique par transaction (basé sur le timestamp et le client)
+    const groupedTickets = useMemo(() => {
+        const groups = {};
+        historique.filter(v => !v.isCancelled).forEach(vente => {
+            // Création d'une clé unique basée sur la date (à la seconde près) et le client
+            // Cela permet de regrouper les articles validés simultanément
+            const dateObj = new Date(vente.createdAt);
+            const timeKey = Math.floor(dateObj.getTime() / 1000); // timestamp en secondes
+            const key = `${timeKey}-${vente.client?._id || 'passage'}`;
+            
+            if (!groups[key]) {
+                groups[key] = {
+                    id: key,
+                    date: vente.createdAt,
+                    client: vente.client?.nom || 'Passage',
+                    items: [],
+                    totalTicket: 0
+                };
+            }
+            groups[key].items.push(vente);
+            groups[key].totalTicket += vente.prixTotal;
+        });
+        return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [historique]);
+
+    // Articles filtrés
+    // Effet pour réinitialiser l'animation du panier
+    useEffect(() => {
+        if (cartAnimationTrigger) {
+            const timer = setTimeout(() => {
+                setCartAnimationTrigger(false);
+            }, 500); // Durée de l'animation
+            return () => clearTimeout(timer);
+        }
+    }, [cartAnimationTrigger]);
+
+    // Fonctions pour gérer les remises via modale
+    const openItemDiscountModal = (e, item) => {
+        e.stopPropagation();
+        setDiscountModalItem(item);
+        setModalRemiseValue(item.remiseTemp || '');
+        setModalRemiseType(item.remiseType || 'montant');
+        setShowItemDiscountModal(true);
+    };
+
+    const applyItemDiscount = () => {
+        if (!discountModalItem) return;
+        const val = modalRemiseValue === '' ? 0 : parseFloat(modalRemiseValue);
+        const newUnitPrice = getEffectivePrice(discountModalItem.article, val, modalRemiseType);
+        setPanier(panier.map(p => p.article._id === discountModalItem.article._id ? { ...p, remiseTemp: modalRemiseValue, remiseType: modalRemiseType, prixUnitaire: newUnitPrice, prixTotal: newUnitPrice * p.quantite } : p));
+        setShowItemDiscountModal(false);
+    };
+
+    const filteredArticles = useMemo(() => {
+        let list = articles;
+        if (activeCategory !== 'all') {
+            list = list.filter(a => a.categorie === activeCategory);
+        }
+        if (search.trim()) {
+            const s = search.trim().toLowerCase();
+            list = list.filter(a => a.nom.toLowerCase().includes(s) || (a.code && a.code.toLowerCase().includes(s)));
+        }
+        return list;
+    }, [articles, search, activeCategory]);
+
+    // Sélection rapide d'article (pour ajout au panier)
+    const [quickQty, setQuickQty] = useState({});
+
+    const renderPanierCard = (isMobile = false) => (
+        <Card className={`border-0 shadow-sm ${!isMobile ? 'rounded-4 mb-4 sticky-md-top' : 'h-100'} ${cartAnimationTrigger ? 'cart-pulse' : ''}`} style={!isMobile ? { top: '1rem', zIndex: 10 } : {}}>
+            <Card.Header className="bg-white py-2 py-sm-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <h5 className="mb-0 fw-bold d-flex align-items-center">
+                    Panier
+                    <Badge bg="primary" pill className="ms-2">{panier.reduce((acc, item) => acc + item.quantite, 0)}</Badge>
+                </h5>
+                <div className="d-flex flex-wrap gap-1 gap-sm-2">
+                    <Button variant="outline-warning" size="sm" className="rounded-pill d-flex align-items-center position-relative" onClick={() => setShowDraftsModal(true)} title="Brouillons (Ventes en attente)">
+                        <iconify-icon icon="solar:notes-bold-duotone" style={{ fontSize: '18px' }}></iconify-icon>
+                        {brouillons && brouillons.length > 0 && (
+                            <Badge bg="danger" pill className="position-absolute top-0 start-100 translate-middle border border-light" style={{ fontSize: '0.6em', padding: '0.3em 0.5em' }}>
+                                {brouillons.length}
+                            </Badge>
                         )}
-                    </Card.Body>
-                </Card>
-            </Col>
-
-            <Col md={4}>
-                <Card className="border-0 shadow-sm rounded-4">
-                    <Card.Header>Historique récent</Card.Header>
-                    <Card.Body>
-                        {historique.filter(v => !v.isCancelled).slice(0, 5).map(vente => (
-                            <div key={vente._id} className="d-flex gap-3 mb-3 pb-3 border-bottom">
-                                {vente.article?.image && <img src={vente.article?.image} alt="" className="rounded" style={{ width: '45px', height: '45px', objectFit: 'cover', cursor: 'pointer' }} onClick={() => handleImageClick(vente.article?.image)} />}
-                                <div className="flex-grow-1">
-                                    <div className="d-flex justify-content-between">
-                                        <div>
-                                            <div className="fw-bold">{vente.article?.nom || 'Article supprimé'}</div>
-                                            {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
+                    </Button>
+                    <Button variant="outline-primary" size="sm" className="rounded-pill d-flex align-items-center position-relative" onClick={() => setShowHistoryModal(true)} title="Historique récent">
+                        <iconify-icon icon="solar:history-bold-duotone" style={{ fontSize: '18px' }}></iconify-icon>
+                    </Button>
+                    {panier.length > 0 && (
+                        <Button variant="danger" size="sm" className="rounded-pill fw-bold" onClick={() => setShowViderModal(true)} title="Vider le panier">
+                            <iconify-icon icon="solar:trash-bin-trash-bold" className="align-middle"></iconify-icon> Vider
+                        </Button>
+                    )}
+                </div>
+            </Card.Header>
+            <Card.Body className="p-2 p-sm-3">
+                {panier.length > 0 ? (
+                    <>
+                        <div className="cart-list mb-3 px-1" style={{ maxHeight: isMobile ? 'calc(100vh - 350px)' : '40vh', overflowY: 'auto', overflowX: 'hidden' }}>
+                            {panier.map(item => (
+                                <div key={item.article._id} className={`d-flex align-items-start py-3 border-bottom gap-2 ${selectedArticle === item.article._id ? 'border border-3 border-primary bg-primary bg-opacity-10' : ''}`} style={{ cursor: 'pointer', borderRadius: selectedArticle === item.article._id ? 12 : 0 }} onClick={() => setSelectedArticle(item.article._id)}>
+                                    {item.article.image ? (
+                                        <img src={item.article.image} alt="" className="rounded shadow-sm me-2" style={{ width: '40px', height: '40px', objectFit: 'cover' }} />
+                                    ) : (
+                                        <div className="bg-light rounded d-flex align-items-center justify-content-center me-2" style={{ width: '40px', height: '40px' }}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
+                                    )}
+                                    <div className="flex-grow-1" style={{ minWidth: 0 }}>
+                                        <div className="d-flex align-items-center justify-content-between">
+                                            <div className="fw-bold small text-truncate">{item.article.nom}</div>
+                                            {item.remiseTemp > 0 && (
+                                                <Badge bg="warning" text="dark" className="ms-2" style={{ fontSize: '0.65rem' }}>
+                                                    Remise: -{parseFloat(item.remiseTemp).toLocaleString()} {item.remiseType === 'pourcentage' ? '%' : 'GNF'}
+                                                </Badge>
                                             )}
                                         </div>
-                                        <Badge bg="success" text="white">{vente.prixTotal.toLocaleString()} GNF</Badge>
+                                        <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
+                                            <Button variant={item.quantite > 1 ? "primary" : "outline-secondary"} size="sm" className="rounded-circle shadow-sm border-0 d-flex align-items-center justify-content-center" style={{ width: 28, height: 28 }} onClick={e => { e.stopPropagation(); if (item.quantite > 1) setPanier(panier.map(p => p.article._id === item.article._id ? { ...p, quantite: p.quantite - 1, prixTotal: p.prixUnitaire * (p.quantite - 1) } : p)); }}>
+                                                <MinusIcon size={18} color={item.quantite > 1 ? '#fff' : '#6c757d'} />
+                                            </Button>
+                                            <span className="fw-bold mx-1">{item.quantite}</span>
+                                            <Button variant={item.quantite < item.article.quantite ? "primary" : "outline-secondary"} size="sm" className="rounded-circle shadow-sm border-0 d-flex align-items-center justify-content-center" style={{ width: 28, height: 28 }} onClick={e => { e.stopPropagation(); if (item.quantite < item.article.quantite) setPanier(panier.map(p => p.article._id === item.article._id ? { ...p, quantite: p.quantite + 1, prixTotal: p.prixUnitaire * (p.quantite + 1) } : p)); }}>
+                                                <PlusIcon size={18} color={item.quantite < item.article.quantite ? '#fff' : '#6c757d'} />
+                                            </Button>
+                                            <Button 
+                                                variant={item.remiseTemp > 0 ? "warning" : "outline-secondary"} 
+                                                size="sm" 
+                                                className="rounded-pill d-flex align-items-center px-3"
+                                                onClick={(e) => openItemDiscountModal(e, item)}
+                                            >
+                                                <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
+                                                {item.remiseTemp > 0 ? `${parseFloat(item.remiseTemp).toLocaleString()} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
+                                            </Button>
+                                        </div>
                                     </div>
-                                    <div className="text-muted small mt-1">
-                                        Quantité: {vente.quantite} | Date: {new Date(vente.createdAt).toLocaleDateString()}
+                                    <div className="text-end d-flex flex-column justify-content-between h-100" style={{ minWidth: '80px' }}>
+                                        <div className="fw-bold text-primary small">{item.prixTotal.toLocaleString()}</div>
+                                        <Button variant="outline-danger" size="sm" className="rounded-pill mt-2" onClick={() => retirerDuPanier(item.article._id)}><iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon></Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="bg-light p-3 rounded-4 mb-3">
+                            {/* Client */}
+                            <div className="mb-3">
+                                <div className="d-flex justify-content-between align-items-center mb-1">
+                                    <label className="small fw-bold text-muted">Client</label>
+                                    <Button variant="link" size="sm" className="p-0 text-decoration-none" onClick={() => setShowClientModal(true)}>+ Nouveau</Button>
+                                </div>
+                                <Form.Select size="sm" value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)} className="rounded-pill">
+                                    <option value="">Client de passage</option>
+                                    {clients.map(client => <option key={client._id} value={client._id}>{client.nom}</option>)}
+                                </Form.Select>
+                            </div>
+
+                            {/* Sélection Manuelle Rapide (cachée sur mobile car trop chargée dans le volet) */}
+                            {!isMobile && (
+                                <div className="p-3 bg-white rounded-4 border">
+                                    <Form.Select size="sm" value={selectedArticle} onChange={e => setSelectedArticle(e.target.value)} className="border-0 mb-2">
+                                        <option value="">Sélection manuelle...</option>
+                                        {articles.map(article => <option key={article._id} value={article._id}>{article.nom} ({article.quantite})</option>)}
+                                    </Form.Select>
+                                    {selectedArticle && (
+                                        <div className="d-flex gap-2">
+                                            <Form.Control size="sm" type="number" value={quantite} onChange={e => setQuantite(e.target.value)} className="rounded-pill" />
+                                            <Button 
+                                                variant={itemRemiseInput > 0 ? "warning" : "outline-secondary"} 
+                                                size="sm" 
+                                                className="rounded-pill px-3"
+                                                onClick={() => setShowNextItemDiscountModal(true)}
+                                            >
+                                                <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
+                                                {itemRemiseInput > 0 ? `${itemRemiseInput}${itemRemiseType === 'pourcentage' ? '%' : ' GNF'}` : 'Remise'}
+                                            </Button>
+                                            <Button variant="primary" size="sm" className="rounded-pill px-3" onClick={() => {
+                                                setCartAnimationTrigger(true); // Déclenche l'animation
+                                                ajouterAuPanier();
+                                            }}><iconify-icon icon="solar:add-circle-bold"></iconify-icon></Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {selectedClientId && (
+                            <Form.Group className="mt-2">
+                                <Form.Label className="fw-bold">Montant Payé</Form.Label>
+                                <InputGroup><Form.Control type="number" placeholder={`Total : ${calculerTotal().toLocaleString()} GNF`} value={montantPaye} onChange={e => setMontantPaye(e.target.value)} className="rounded-pill" /><InputGroup.Text>GNF</InputGroup.Text></InputGroup>
+                            </Form.Group>
+                        )}
+                        
+                        {montantPaye !== '' && parseFloat(montantPaye) < calculerTotal() && (
+                            <Form.Group className="mt-2">
+                                <Form.Label className="fw-bold text-danger">Échéance dette</Form.Label>
+                                <Form.Control 
+                                    type="date" 
+                                    value={echeanceDette} 
+                                    onChange={e => setEcheanceDette(e.target.value)} 
+                                    required 
+                                    className="rounded-pill"
+                                    min={new Date().toISOString().split('T')[0]} // Définit la date minimale à aujourd'hui
+                                />
+                            </Form.Group>
+                        )}
+
+                        <div className="border-top pt-3 mt-3">
+                            <div className="d-flex justify-content-between mb-1">
+                                <span className="text-muted small">Sous-total (Hors remise)</span>
+                                <span className="small">{panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0).toLocaleString()} GNF</span>
+                            </div>
+                            {panier.some(item => item.remiseTemp > 0) && (
+                                <div className="d-flex justify-content-between mb-1">
+                                    <span className="text-muted small">Total des remises</span>
+                                    <span className="text-danger small fw-bold">
+                                        -{(panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0) - calculerTotal()).toLocaleString()} GNF
+                                    </span>
+                                </div>
+                            )}
+                            <div className="d-flex justify-content-between align-items-center mt-2"> 
+                                <span className="fw-bold fs-5">Total TTC</span>
+                                <span className="fw-bold fs-4 text-success">{calculerTotal().toLocaleString()} GNF</span>
+                            </div>
+                        </div>
+
+                        <div className="d-flex gap-2 mt-3">
+                            <Button variant="outline-warning" className="rounded-pill flex-fill" onClick={mettreEnBrouillon} disabled={panier.length === 0}>Brouillon</Button>
+                            <Button variant="success" className="rounded-pill flex-fill" onClick={() => { effectuerVente(); if(isMobile) setShowMobilePanier(false); }} disabled={isSubmitting}>
+                                {isSubmitting ? <Spinner as="span" animation="border" size="sm" /> : 'Valider Espèces'}
+                            </Button>
+                        </div>
+                    </>
+                ) : (
+                    <Alert variant="info">Le panier est vide.</Alert>
+                )}
+            </Card.Body>
+        </Card>
+    );
+
+    return (
+        <Row>
+            {/* Catalogue à gauche, panier à droite */}
+            <Col lg={8} md={7} xs={12}>
+                {/* Filtres et recherche */}
+                <div className="mb-3 d-flex flex-column flex-sm-row flex-wrap gap-2 align-items-sm-center">
+                {/* Bouton "Tous" pour afficher tous les articles */}
+                <Button
+                    key="all"
+                    variant={activeCategory === 'all' ? 'primary' : 'outline-primary'}
+                    className="rounded-pill px-3 d-flex align-items-center gap-2"
+                    onClick={() => setActiveCategory('all')}
+                >
+                    Tous
+                    <Badge bg={activeCategory === 'all' ? 'light' : 'primary'} text={activeCategory === 'all' ? 'dark' : 'white'} pill>
+                        {articles.length}
+                    </Badge>
+                </Button>
+                {/* Boutons pour les catégories dynamiques */}
+                {availableCategories
+                    .sort((a, b) => a.label.localeCompare(b.label)) // Tri alphabétique
+                    .map(cat => {
+                        const count = articles.filter(a => a.categorie === cat.key).length;
+                        const totalStockValue = articles
+                            .filter(a => a.categorie === cat.key)
+                            .reduce((sum, a) => sum + (a.prixAchat * a.quantite), 0);
+
+                        return (
+                            <Button
+                                key={cat.key}
+                                variant={activeCategory === cat.key ? 'primary' : 'outline-primary'}
+                                className="rounded-pill px-3 d-flex align-items-center gap-2"
+                                onClick={() => setActiveCategory(cat.key)}
+                            >
+                                {cat.label}
+                                <OverlayTrigger
+                                    placement="top"
+                                    overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {totalStockValue.toLocaleString()} GNF</Tooltip>}
+                                >
+                                    <Badge 
+                                        bg={activeCategory === cat.key ? 'light' : 'primary'} 
+                                        text={activeCategory === cat.key ? 'dark' : 'white'} pill
+                                    >
+                                        {count}
+                                    </Badge>
+                                </OverlayTrigger>
+                            </Button>
+                        );
+                    })}
+                    <Form.Control
+                        type="search"
+                        placeholder="Rechercher un article..."
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="rounded-pill ms-sm-auto w-100 w-sm-auto"
+                        style={{ minWidth: 200 }}
+                    />
+                </div>
+
+                {/* Grille catalogue agrandie */}
+                <div 
+                    className="pe-2" 
+                    style={{ maxHeight: 'calc(100vh - 180px)', minHeight: '400px', overflowY: 'auto', overflowX: 'hidden' }}
+                >
+                    <Row className="g-2 g-md-3">
+                    {filteredArticles.length === 0 && (
+                        <Col xs={12}><Alert variant="info">Aucun article trouvé</Alert></Col>
+                    )}
+                    {filteredArticles.map(article => (
+                        <Col xs={6} md={4} lg={3} key={article._id}>
+                            <Card className="h-100 shadow-sm border-0">
+                                <div style={{ position: 'relative' }}>
+                                    {article.image ? (
+                                        <Card.Img
+                                            src={article.image}
+                                            alt={article.nom}
+                                            style={{ height: 90, objectFit: 'cover', cursor: 'pointer', borderTopLeftRadius: '1rem', borderTopRightRadius: '1rem' }}
+                                            onClick={() => handleImageClick(article.image)}
+                                        />
+                                    ) : (
+                                        <div className="bg-light d-flex align-items-center justify-content-center" style={{ height: 90, borderTopLeftRadius: '1rem', borderTopRightRadius: '1rem' }}>
+                                            <iconify-icon icon="solar:box-bold" className="text-muted" style={{ fontSize: 32 }}></iconify-icon>
+                                        </div>
+                                    )}
+                                    {article.quantite <= 0 && (
+                                        <Badge bg="danger" style={{ position: 'absolute', top: 8, right: 8 }}>Rupture</Badge>
+                                    )}
+                                </div>
+                                <Card.Body className="py-2 px-2">
+                                    <div className="fw-bold small mb-1">{article.nom}</div>
+                                    <div className="text-muted small mb-1">{article.code}</div>
+                                    <div className="mb-2">
+                                        {getEffectivePrice(article) < article.prixVente ? (
+                                            <>
+                                                <span className="text-decoration-line-through text-muted me-1 small">{article.prixVente.toLocaleString()}</span>
+                                                <span className="text-danger fw-bold">{getEffectivePrice(article).toLocaleString()} GNF</span>
+                                            </>
+                                        ) : (
+                                            <span className="fw-bold text-primary">{article.prixVente.toLocaleString()} GNF</span>
+                                        )}
+                                    </div>
+                                    <InputGroup size="sm" className="mb-2">
+                                        <Form.Control
+                                            type="number"
+                                            min={1}
+                                            max={article.quantite}
+                                            value={quickQty[article._id] || 1}
+                                            onChange={e => setQuickQty(q => ({ ...q, [article._id]: e.target.value }))}
+                                            style={{ width: 60 }}
+                                            disabled={article.quantite <= 0}
+                                        />
+                                        <Button
+                                            variant="success"
+                                            size="sm"
+                                            className="rounded-pill ms-2"
+                                            disabled={article.quantite <= 0}
+                                            onClick={() => {
+                                                setSelectedArticle(article._id);
+                                                setQuantite(quickQty[article._id] ? parseInt(quickQty[article._id]) : 1);
+                                                setItemRemiseInput(''); // Reset item discount input
+                                                setCartAnimationTrigger(true); // Déclenche l'animation
+                                                ajouterAuPanier();
+                                            }}
+                                        >
+                                            <iconify-icon icon="solar:cart-plus-bold" className="me-1"></iconify-icon>
+                                            Ajouter
+                                        </Button>
+                                    </InputGroup>
+                                    <div className="d-flex justify-content-between align-items-center">
+                                        <Badge bg="secondary" pill>{article.categorie}</Badge>
+                                        <span className="small text-muted">Stock: {article.quantite}</span>
+                                    </div>
+                                </Card.Body>
+                            </Card>
+                        </Col>
+                    ))}
+                    </Row>
+                </div>
+            </Col>
+
+            {/* Panier (Desktop) */}
+            <Col lg={4} md={5} className="mt-4 mt-md-0 position-relative d-none d-md-block">
+                {renderPanierCard(false)}
+            </Col>
+
+            {/* Panier (Mobile - Volet coulissant) */}
+            <Offcanvas show={showMobilePanier} onHide={() => setShowMobilePanier(false)} placement="end" className="d-md-none" style={{ width: '90%' }}>
+                <Offcanvas.Header closeButton className="border-bottom">
+                    <Offcanvas.Title className="fw-bold">Mon Panier</Offcanvas.Title>
+                </Offcanvas.Header>
+                <Offcanvas.Body className="p-0 bg-light">
+                    {renderPanierCard(true)}
+                </Offcanvas.Body>
+            </Offcanvas>
+
+            {/* Modale Historique Récent sous forme de tickets */}
+            <Modal show={showHistoryModal} onHide={() => setShowHistoryModal(false)} centered scrollable>
+                <Modal.Header closeButton className="border-0 pb-0">
+                    <Modal.Title className="fw-bold">Tickets Récent (Validés)</Modal.Title>
+                </Modal.Header>
+                <Modal.Body className="pt-3">
+                    {groupedTickets.length > 0 ? (
+                        groupedTickets.slice(0, 10).map(ticket => (
+                            <div 
+                                key={ticket.id} 
+                                className={`mb-3 p-3 rounded-4 border-start border-4 border-success shadow-sm transition-all ${expandedTicket === ticket.id ? 'bg-white border-success' : 'bg-light border-light'}`}
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => setExpandedTicket(expandedTicket === ticket.id ? null : ticket.id)}
+                            >
+                                <div className="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <div className="fw-bold text-dark mb-1 d-flex align-items-center">
+                                            <iconify-icon icon="solar:ticket-bold" className="me-2 text-success"></iconify-icon>
+                                            Client : {ticket.client}
+                                        </div>
+                                        <Badge bg="success-subtle" text="success" pill className="mt-1">
+                                            {ticket.totalTicket.toLocaleString()} GNF
+                                        </Badge>
+                                    </div>
+                                    <div className="text-end">
+                                        <div className="small fw-bold text-primary">
+                                            <iconify-icon icon="solar:calendar-date-bold" className="me-1 align-middle"></iconify-icon>
+                                            {new Date(ticket.date).toLocaleDateString('fr-FR')}
+                                        </div>
+                                        <div className="small text-muted">
+                                            <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
+                                            {new Date(ticket.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                        <div className="mt-2 text-primary small fw-bold d-flex align-items-center justify-content-end">
+                                            {expandedTicket === ticket.id ? 'Masquer' : 'Détails'}
+                                            <iconify-icon 
+                                                icon={expandedTicket === ticket.id ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} 
+                                                className="ms-1"
+                                            ></iconify-icon>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {expandedTicket === ticket.id && (
+                                    <div className="mt-3 pt-3 border-top border-light animate__animated animate__fadeIn">
+                                        <h6 className="small fw-bold text-muted mb-2 text-uppercase">Articles du ticket :</h6>
+                                        <div className="bg-white p-2 rounded-3 border">
+                                            <ul className="list-unstyled mb-0 small text-dark">
+                                                {ticket.items.map(item => (
+                                                    <li key={item._id} className="d-flex justify-content-between py-1 border-bottom border-light last-child-0">
+                                                        <span>
+                                                            <iconify-icon icon="solar:dot-bold" className="me-1 text-muted"></iconify-icon>
+                                                            {item.article?.nom || 'Article supprimé'} 
+                                                            <Badge bg="light" text="dark" className="ms-2">x{item.quantite}</Badge>
+                                                        </span>
+                                                        <span className="fw-bold">{item.prixTotal.toLocaleString()} GNF</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))
+                    ) : (
+                        <div className="text-center py-4 text-muted">
+                            <iconify-icon icon="solar:bill-list-linear" style={{ fontSize: '48px' }} className="mb-2 opacity-50"></iconify-icon>
+                            <p>Aucun ticket récent trouvé.</p>
+                        </div>
+                    )}
+                </Modal.Body>
+                <Modal.Footer className="border-0">
+                    <Button variant="secondary" className="rounded-pill px-4 w-100" onClick={() => setShowHistoryModal(false)}>Fermer</Button>
+                </Modal.Footer>
+            </Modal>
+
+            {/* Modale des Brouillons */}
+            <Modal show={showDraftsModal} onHide={() => setShowDraftsModal(false)} centered scrollable>
+                <Modal.Header closeButton className="border-0 pb-0">
+                    <Modal.Title className="fw-bold">Ventes en attente (Brouillons)</Modal.Title>
+                </Modal.Header>
+                <Modal.Body className="pt-3">
+                    {brouillons && brouillons.length > 0 ? (
+                        brouillons.map(draft => (
+                            <div key={draft.id} className="mb-3 p-3 bg-white rounded-4 border shadow-sm">
+                                <div className="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <div className="fw-bold text-dark">{draft.clientName}</div>
+                                        <Badge bg="warning-subtle" text="warning" pill>{draft.total.toLocaleString()} GNF</Badge>
+                                        <div className="small text-muted mt-1">{draft.panier.length} article(s)</div>
+                                    </div>
+                                    <div className="text-end">
+                                        <div className="small text-muted">
+                                            {new Date(draft.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                        <div className="mt-2 d-flex gap-2">
+                                            <Button variant="outline-danger" size="sm" className="rounded-circle p-1" onClick={() => setBrouillons(brouillons.filter(b => b.id !== draft.id))} title="Supprimer">
+                                                <iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon>
+                                            </Button>
+                                            <Button variant="primary" size="sm" className="rounded-pill px-3" onClick={() => { chargerBrouillon(draft); setShowDraftsModal(false); }}>
+                                                Reprendre
+                                            </Button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        ))}
-                        {historique.length === 0 && (
-                            <Alert variant="info">Aucune vente enregistrée</Alert>
-                        )}
-                    </Card.Body>
-                </Card>
-            </Col>
+                        ))
+                    ) : (
+                        <div className="text-center py-4 text-muted">
+                            <iconify-icon icon="solar:notes-minimalistic-linear" style={{ fontSize: '48px' }} className="mb-2 opacity-50"></iconify-icon>
+                            <p>Aucune vente en attente.</p>
+                        </div>
+                    )}
+                </Modal.Body>
+                <Modal.Footer className="border-0">
+                    <Button variant="secondary" className="rounded-pill px-4 w-100" onClick={() => setShowDraftsModal(false)}>Fermer</Button>
+                </Modal.Footer>
+            </Modal>
+
+            {/* Modale de Confirmation pour vider le panier */}
+            <Modal show={showViderModal} onHide={() => setShowViderModal(false)} centered size="sm">
+                <Modal.Header closeButton className="border-0">
+                    <Modal.Title className="fw-bold h5">Confirmation</Modal.Title>
+                </Modal.Header>
+                <Modal.Body className="text-center py-4">
+                    <div className="mb-3" style={{ fontSize: '56px', color: '#dc3545' }}>
+                        <iconify-icon icon="solar:trash-bin-trash-bold-duotone"></iconify-icon>
+                    </div>
+                    <h6 className="fw-bold mb-2">Vider le panier ?</h6>
+                    <p className="text-muted small mb-0">Cette action est irréversible et retirera tous les articles en cours.</p>
+                </Modal.Body>
+                <Modal.Footer className="justify-content-center border-0 gap-2 pb-4">
+                    <Button variant="light" onClick={() => setShowViderModal(false)} className="rounded-pill px-3 fw-bold btn-sm">
+                        Annuler
+                    </Button>
+                    <Button variant="danger" onClick={() => { 
+                        setPanier([]); 
+                        setShowViderModal(false); 
+                    }} className="rounded-pill px-3 fw-bold shadow-sm btn-sm">
+                        Oui, vider
+                    </Button>
+                </Modal.Footer>
+            </Modal>
+
+            {/* Modale de Saisie de Remise par Article (Panier) */}
+            <Modal show={showItemDiscountModal} onHide={() => setShowItemDiscountModal(false)} centered size="sm">
+                <Modal.Header closeButton className="border-0 pb-0">
+                    <Modal.Title className="fw-bold h5">Remise sur article</Modal.Title>
+                </Modal.Header>
+                <Modal.Body className="py-3">
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                        <span className="fw-bold small text-primary text-truncate" style={{ maxWidth: '60%' }}>{discountModalItem?.article.nom}</span>
+                        <Badge bg="info-subtle" text="info-emphasis" className="border border-info-subtle py-2 px-3">
+                            Prix: {discountModalItem?.article.prixVente.toLocaleString()} GNF
+                        </Badge>
+                    </div>
+                    <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Valeur de la remise</Form.Label>
+                        <InputGroup>
+                            <Form.Control 
+                                type="number" 
+                                value={modalRemiseValue} 
+                                onChange={(e) => setModalRemiseValue(e.target.value)}
+                                placeholder="0"
+                                isInvalid={
+                                    (modalRemiseType === 'montant' && parseFloat(modalRemiseValue) > discountModalItem?.article.prixVente) ||
+                                    (modalRemiseType === 'pourcentage' && parseFloat(modalRemiseValue) > 100) ||
+                                    (parseFloat(modalRemiseValue) > 0 && getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType) < discountModalItem?.article.prixAchat)
+                                }
+                                autoFocus
+                            />
+                            <Form.Select 
+                                value={modalRemiseType} 
+                                onChange={(e) => setModalRemiseType(e.target.value)}
+                                style={{ maxWidth: '85px' }}
+                            >
+                                <option value="montant">GNF</option>
+                                <option value="pourcentage">%</option>
+                            </Form.Select>
+                            <Form.Control.Feedback type="invalid">
+                                {
+                                    modalRemiseType === 'montant' && parseFloat(modalRemiseValue) > discountModalItem?.article.prixVente ? 'Montant supérieur au prix de vente' :
+                                    modalRemiseType === 'pourcentage' && parseFloat(modalRemiseValue) > 100 ? 'Le pourcentage max est 100%' :
+                                    parseFloat(modalRemiseValue) > 0 && getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType) < discountModalItem?.article.prixAchat ?
+                                        `Prix final (${getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${discountModalItem?.article.prixAchat.toLocaleString()} GNF)` : ''
+                                }
+                            </Form.Control.Feedback>
+                        </InputGroup>
+                    </Form.Group>
+                    <Button 
+                        variant="primary" 
+                        onClick={applyItemDiscount} 
+                        className="rounded-pill px-3 fw-bold shadow-sm w-100"
+                        disabled={
+                            (modalRemiseType === 'montant' && parseFloat(modalRemiseValue) > discountModalItem?.article.prixVente) ||
+                            (modalRemiseType === 'pourcentage' && parseFloat(modalRemiseValue) > 100) ||
+                            (parseFloat(modalRemiseValue) > 0 && getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType) < discountModalItem?.article.prixAchat) ||
+                            isNaN(parseFloat(modalRemiseValue)) || parseFloat(modalRemiseValue) < 0
+                        }
+                    >
+                        Appliquer la remise
+                    </Button>
+                </Modal.Body>
+            </Modal>
+
+            {/* Modale de Saisie de Remise pour l'article à ajouter (Formulaire rapide) */}
+            <Modal show={showNextItemDiscountModal} onHide={() => setShowNextItemDiscountModal(false)} centered size="sm">
+                <Modal.Header closeButton className="border-0 pb-0">
+                    <Modal.Title className="fw-bold h5">Définir la remise</Modal.Title>
+                </Modal.Header>
+                <Modal.Body className="py-3">
+                    {selectedArticle && (
+                        <div className="d-flex justify-content-between align-items-center mb-3">
+                            <span className="fw-bold small text-primary text-truncate" style={{ maxWidth: '60%' }}>
+                                {articles.find(a => a._id === selectedArticle)?.nom}
+                            </span>
+                            <Badge bg="info-subtle" text="info-emphasis" className="border border-info-subtle py-2 px-3">
+                                Prix: {articles.find(a => a._id === selectedArticle)?.prixVente.toLocaleString()} GNF
+                            </Badge>
+                        </div>
+                    )}
+                    <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Valeur de la remise</Form.Label>
+                        <InputGroup>
+                            <Form.Control 
+                                type="number" 
+                                value={itemRemiseInput} 
+                                onChange={(e) => setItemRemiseInput(e.target.value)}
+                                placeholder="0"
+                                isInvalid={
+                                    (itemRemiseType === 'montant' && parseFloat(itemRemiseInput) > articles.find(a => a._id === selectedArticle)?.prixVente) ||
+                                    (itemRemiseType === 'pourcentage' && parseFloat(itemRemiseInput) > 100) ||
+                                    (parseFloat(itemRemiseInput) > 0 && getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType) < articles.find(a => a._id === selectedArticle)?.prixAchat)
+                                }
+                                autoFocus
+                            />
+                            <Form.Select 
+                                value={itemRemiseType} 
+                                onChange={(e) => setItemRemiseType(e.target.value)}
+                                style={{ maxWidth: '85px' }}
+                            >
+                                <option value="montant">GNF</option>
+                                <option value="pourcentage">%</option>
+                            </Form.Select>
+                            <Form.Control.Feedback type="invalid">
+                                {
+                                    itemRemiseType === 'montant' && parseFloat(itemRemiseInput) > articles.find(a => a._id === selectedArticle)?.prixVente ? 'Montant supérieur au prix de vente' :
+                                    itemRemiseType === 'pourcentage' && parseFloat(itemRemiseInput) > 100 ? 'Le pourcentage max est 100%' :
+                                    parseFloat(itemRemiseInput) > 0 && getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType) < articles.find(a => a._id === selectedArticle)?.prixAchat ?
+                                        `Prix final (${getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${articles.find(a => a._id === selectedArticle)?.prixAchat.toLocaleString()} GNF)` : ''
+                                }
+                            </Form.Control.Feedback>
+                        </InputGroup>
+                    </Form.Group>
+                    <Button 
+                        variant="primary" 
+                        onClick={() => setShowNextItemDiscountModal(false)} 
+                        className="rounded-pill px-3 fw-bold shadow-sm w-100"
+                        disabled={
+                            (itemRemiseType === 'montant' && parseFloat(itemRemiseInput) > articles.find(a => a._id === selectedArticle)?.prixVente) ||
+                            (itemRemiseType === 'pourcentage' && parseFloat(itemRemiseInput) > 100) ||
+                            (parseFloat(itemRemiseInput) > 0 && getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType) < articles.find(a => a._id === selectedArticle)?.prixAchat) ||
+                            isNaN(parseFloat(itemRemiseInput)) || parseFloat(itemRemiseInput) < 0
+                        }
+                    >
+                        Valider la remise
+                    </Button>
+                </Modal.Body>
+            </Modal>
         </Row>
     );
 };

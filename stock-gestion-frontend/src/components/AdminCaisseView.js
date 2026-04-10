@@ -140,10 +140,10 @@ const AdminCaisseView = () => {
         
         // En-tête du document
         doc.addImage(logo, 'PNG', 14, 8, 40, 15);
-        doc.setFontSize(18);
+        doc.setFontSize(22);
         doc.setTextColor(41, 128, 185);
         doc.setFont("helvetica", "bold");
-        doc.text("HISTORIQUE DES ENCAISSEMENTS", 60, 16);
+        doc.text("RAPPORT FINANCIER DE CAISSE", 60, 18);
         doc.setFontSize(11);
         doc.setTextColor(100);
         let startY = 30;
@@ -243,6 +243,9 @@ const AdminCaisseView = () => {
                     new Date(report.createdAt).toLocaleDateString('fr-FR'),
                     report.gerant?.nom || 'N/A',
                     report.boutique?.nom || 'N/A',
+                    formatCurrencyPdf(report.totalVentes),
+                    formatCurrencyPdf(report.totalDettes),
+                    formatCurrencyPdf(report.totalDepensesApprouvees),
                     formatCurrencyPdf(report.soldeTheorique),
                     formatCurrencyPdf(report.montantCloture),
                     formatCurrencyPdf(report.ecart)
@@ -251,12 +254,18 @@ const AdminCaisseView = () => {
             });
 
             // Ajouter une ligne de totalisation pour l'analyse comptable
+            const totalVentes = rapports.reduce((acc, r) => acc + (r.totalVentes || 0), 0);
+            const totalDettes = rapports.reduce((acc, r) => acc + (r.totalDettes || 0), 0);
+            const totalDepenses = rapports.reduce((acc, r) => acc + (r.totalDepensesApprouvees || 0), 0);
             const totalTheo = rapports.reduce((acc, r) => acc + (r.soldeTheorique || 0), 0);
             const totalRecu = rapports.reduce((acc, r) => acc + (r.montantCloture || 0), 0);
             const totalEcart = rapports.reduce((acc, r) => acc + (r.ecart || 0), 0);
 
             tableRows.push([
                 { content: 'TOTAL GÉNÉRAL', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold', fillColor: [240, 240, 240] } },
+                { content: formatCurrencyPdf(totalVentes), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+                { content: formatCurrencyPdf(totalDettes), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
+                { content: formatCurrencyPdf(totalDepenses), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
                 { content: formatCurrencyPdf(totalTheo), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
                 { content: formatCurrencyPdf(totalRecu), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } },
                 { content: formatCurrencyPdf(totalEcart), styles: { fontStyle: 'bold', fillColor: [240, 240, 240], textColor: totalEcart < 0 ? [200, 0, 0] : [0, 150, 0] } }
@@ -274,16 +283,19 @@ const AdminCaisseView = () => {
                     halign: 'center'
                 },
                 bodyStyles: {
-                    fontSize: 10,
+                    fontSize: 9,
                     valign: 'middle'
                 },
                 columnStyles: {
-                    0: { cellWidth: 30 }, // Date
-                    1: { cellWidth: 45 }, // Gérant
-                    2: { cellWidth: 45 }, // Boutique
-                    3: { halign: 'right', cellWidth: 50 }, // Solde Théorique
-                    4: { halign: 'right', cellWidth: 50 }, // Montant Reçu
-                    5: { halign: 'right', cellWidth: 40 }  // Écart
+                    0: { cellWidth: 22 }, // Date
+                    1: { cellWidth: 30 }, // Gérant
+                    2: { cellWidth: 30 }, // Boutique
+                    3: { halign: 'right', cellWidth: 30 }, // Ventes
+                    4: { halign: 'right', cellWidth: 25 }, // Dettes
+                    5: { halign: 'right', cellWidth: 25 }, // Dépenses
+                    6: { halign: 'right', cellWidth: 35 }, // Solde Théorique
+                    7: { halign: 'right', cellWidth: 35 }, // Montant Reçu
+                    8: { halign: 'right', cellWidth: 20 }  // Écart
                 }
             });
         }
@@ -323,6 +335,9 @@ const AdminCaisseView = () => {
                 'Date': new Date(r.createdAt).toLocaleDateString('fr-FR'),
                 'Gérant': r.gerant?.nom || 'N/A',
                 'Boutique': r.boutique?.nom || 'N/A',
+                'Total Ventes (GNF)': r.totalVentes,
+                'Dettes Accordées (GNF)': r.totalDettes,
+                'Dépenses (GNF)': r.totalDepensesApprouvees,
                 'Solde Théorique (GNF)': r.soldeTheorique,
                 'Montant Reçu (GNF)': r.montantCloture,
                 'Écart (GNF)': r.ecart,
@@ -330,6 +345,9 @@ const AdminCaisseView = () => {
             }));
 
             // Calcul des totaux pour les rapports de caisse
+            const totalVentes = rapports.reduce((acc, r) => acc + (r.totalVentes || 0), 0);
+            const totalDettes = rapports.reduce((acc, r) => acc + (r.totalDettes || 0), 0);
+            const totalDepenses = rapports.reduce((acc, r) => acc + (r.totalDepensesApprouvees || 0), 0);
             const totalTheo = rapports.reduce((acc, r) => acc + (r.soldeTheorique || 0), 0);
             const totalRecu = rapports.reduce((acc, r) => acc + (r.montantCloture || 0), 0);
             const totalEcart = rapports.reduce((acc, r) => acc + (r.ecart || 0), 0);
@@ -338,6 +356,9 @@ const AdminCaisseView = () => {
                 'Date': 'TOTAL GÉNÉRAL',
                 'Gérant': '',
                 'Boutique': '',
+                'Total Ventes (GNF)': totalVentes,
+                'Dettes Accordées (GNF)': totalDettes,
+                'Dépenses (GNF)': totalDepenses,
                 'Solde Théorique (GNF)': totalTheo,
                 'Montant Reçu (GNF)': totalRecu,
                 'Écart (GNF)': totalEcart,
@@ -526,6 +547,7 @@ const AdminCaisseView = () => {
                                         <th className="ps-4 py-3">Date Clôture</th>
                                         <th className="py-3">Gérant / Boutique</th>
                                         <th className="py-3 text-end">Total Ventes</th>
+                                        <th className="py-3 text-end">Dettes accordées</th>
                                         <th className="py-3 text-end">Dépenses</th>
                                         <th className="py-3 text-end">Solde Théorique</th>
                                         <th className="py-3 text-end">Montant Reçu</th>
@@ -553,6 +575,7 @@ const AdminCaisseView = () => {
                                                     <div className="small text-muted">{r.boutique?.nom || 'N/A'}</div>
                                                 </td>
                                                 <td className="text-end text-success">{formatCurrency(r.totalVentes)}</td>
+                                                <td className="text-end text-warning">{formatCurrency(r.totalDettes || 0)}</td>
                                                 <td className="text-end text-danger">{formatCurrency(r.totalDepensesApprouvees)}</td>
                                                 <td className="text-end fw-bold">{formatCurrency(r.soldeTheorique)}</td>
                                                 <td className="text-end fw-bold text-primary">{formatCurrency(r.montantCloture)}</td>
@@ -736,9 +759,10 @@ const AdminCaisseView = () => {
                                         </Card.Body>
                                     </Card>
                                 </Col>
-                                <Col md={4}><Card bg="primary-subtle"><Card.Body><Card.Title as="h6">Solde Théorique</Card.Title><Card.Text className="fw-bold fs-5">{formatCurrency(reportDetails.rapport.soldeTheorique)}</Card.Text></Card.Body></Card></Col>
-                                <Col md={4}><Card bg="success-subtle"><Card.Body><Card.Title as="h6">Montant Reçu</Card.Title><Card.Text className="fw-bold fs-5">{formatCurrency(reportDetails.rapport.montantCloture)}</Card.Text></Card.Body></Card></Col>
-                                <Col md={4}><Card bg={reportDetails.rapport.ecart === 0 ? 'light' : 'danger-subtle'}><Card.Body><Card.Title as="h6">Écart</Card.Title><Card.Text className="fw-bold fs-5">{formatCurrency(reportDetails.rapport.ecart)}</Card.Text></Card.Body></Card></Col>
+                                <Col md={3}><Card bg="light"><Card.Body><Card.Title as="h6" className="small">Ventes (Cash+Crédit)</Card.Title><Card.Text className="fw-bold">{formatCurrency(reportDetails.rapport.totalVentes)}</Card.Text></Card.Body></Card></Col>
+                                <Col md={3}><Card bg="warning-subtle"><Card.Body><Card.Title as="h6" className="small">Dettes Accordées</Card.Title><Card.Text className="fw-bold text-warning-emphasis">{formatCurrency(reportDetails.rapport.totalDettes)}</Card.Text></Card.Body></Card></Col>
+                                <Col md={3}><Card bg="primary-subtle"><Card.Body><Card.Title as="h6" className="small">Espèces Attendu</Card.Title><Card.Text className="fw-bold text-primary">{formatCurrency(reportDetails.rapport.soldeTheorique)}</Card.Text></Card.Body></Card></Col>
+                                <Col md={3}><Card bg="success-subtle"><Card.Body><Card.Title as="h6" className="small">Montant Reçu</Card.Title><Card.Text className="fw-bold text-success">{formatCurrency(reportDetails.rapport.montantCloture)}</Card.Text></Card.Body></Card></Col>
                             </Row>
 
                             <Tabs defaultActiveKey="ventes" id="report-details-tabs" className="nav-tabs-custom">

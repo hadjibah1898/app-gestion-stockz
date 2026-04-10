@@ -11,12 +11,20 @@ const { logAction } = require('./auditLogService');
 // Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
 exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null) => {
     try {
+        // SÉCURITÉ : Vérifier que la session de caisse appartient bien au gérant et est ouverte
+        const sessionActive = await mongoose.model('OuvertureCaisse').findOne({ 
+            _id: ouvertureCaisseId, 
+            gerant: userId, 
+            statut: 'OUVERTE' 
+        });
+        if (!sessionActive) throw new Error("Session de caisse invalide ou fermée.");
+
         const itemsVendus = [];
         const articlesPourMvt = [];
 
         for (const item of items) {
             // Correction pour correspondre aux données envoyées par le frontend (`article`, `quantite`, `remiseTemp`)
-            const { article: articleId, quantite, remiseTemp } = item;
+            const { article: articleId, quantite, remiseTemp, remiseType } = item; // Récupérer remiseType
 
             // 1. Déduire le stock de manière atomique (pour une seule opération)
             const article = await Article.findOneAndUpdate(
@@ -47,16 +55,28 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                 }
             } 
             // Priorité 2 : Remise temporaire du panier (en GNF)
-            else if (remiseTemp && remiseTemp > 0) {
-                // Validation backend: la remise ne peut pas être supérieure au prix
-                if (remiseTemp > prixUnitaire) {
-                    throw new Error(`La remise (${remiseTemp}) pour l'article "${article.nom}" ne peut pas être supérieure à son prix (${prixUnitaire}).`);
+            else if (remiseTemp && remiseTemp > 0) { // Si une remise temporaire est appliquée
+                if (remiseType === 'pourcentage') {
+                    if (remiseTemp > 100) {
+                        throw new Error(`La remise en pourcentage (${remiseTemp}%) pour l'article "${article.nom}" ne peut pas dépasser 100%.`);
+                    }
+                    prixUnitaire = prixUnitaire * (1 - remiseTemp / 100);
+                } else { // remiseType === 'montant'
+                    // Validation backend: la remise ne peut pas être supérieure au prix
+                    if (remiseTemp > prixUnitaire) {
+                        throw new Error(`La remise (${remiseTemp}) pour l'article "${article.nom}" ne peut pas être supérieure à son prix (${prixUnitaire}).`);
+                    }
+                    prixUnitaire = prixUnitaire - remiseTemp;
                 }
-                prixUnitaire = prixUnitaire - remiseTemp;
             }
             // Priorité 3 : Remise permanente sur l'article
             else if (article.remise > 0) { 
                 prixUnitaire = prixUnitaire * (1 - article.remise / 100);
+            }
+
+            // Validation de sécurité : Empêcher la vente à perte à cause des remises
+            if (prixUnitaire < article.prixAchat) {
+                throw new Error(`Vente refusée pour l'article "${article.nom}" : Le prix remisé (${prixUnitaire.toLocaleString('fr-FR')} GNF) est inférieur au prix d'achat (${article.prixAchat.toLocaleString('fr-FR')} GNF).`);
             }
 
             const prixTotal = prixUnitaire * quantite;
@@ -68,6 +88,7 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
                 boutique: boutiqueId,
                 statut: 'finalisee',
                 remiseAppliquee: remiseTemp || 0,
+                remiseType: remiseType || 'montant', // Enregistrer le type de remise
                 ouvertureCaisse: ouvertureCaisseId, // Association de la vente à la session de caisse
                 client: clientId // Ajout de l'ID client à chaque vente
             });
@@ -84,6 +105,12 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
         }
 
         const totalVentePanier = itemsVendus.reduce((acc, v) => acc + v.prixTotal, 0);
+
+        // SÉCURITÉ : Validation de la cohérence du paiement après recalcul backend
+        const isDette = montantPaye !== null && montantPaye < totalVentePanier;
+        if (isDette && (!clientId || !echeanceDette)) {
+            throw new Error("Un client et une échéance sont obligatoires pour une vente à crédit.");
+        }
 
         // 3. Gestion de la dette et mise à jour du client
         if (clientId) {
@@ -137,14 +164,23 @@ exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, cli
 
         // 4. Enregistrer un seul mouvement pour tout le panier
         if (articlesPourMvt.length > 0) {
-            let details = `Vente de ${articlesPourMvt.length} article(s) pour un total de ${totalVentePanier.toLocaleString('fr-FR')} GNF.`;
+            const resteAPayer = totalVentePanier - (montantPaye !== null ? montantPaye : totalVentePanier);
+            const refVente = itemsVendus[0]?._id.toString().slice(-6).toUpperCase();
+            
+            let details = `🛒 Vente #${refVente} : ${articlesPourMvt.length} article(s) | Total : ${totalVentePanier.toLocaleString('fr-FR')} GNF`;
+            
+            if (resteAPayer > 0) {
+                details += ` | Encaissé : ${montantPaye.toLocaleString('fr-FR')} GNF | Dette : ${resteAPayer.toLocaleString('fr-FR')} GNF`;
+            } else {
+                details += ` | Règlement : Comptant`;
+            }
 
             if (hasRemise) {
                 const remises = items
                     .filter(item => item.remiseTemp > 0)
-                    .map(item => `${item.remiseTemp.toLocaleString('fr-FR')} GNF`);
+                    .map(item => `${item.remiseTemp.toLocaleString('fr-FR')}${item.remiseType === 'pourcentage' ? '%' : ' GNF'}`);
                 
-                details += ` Remise(s) appliquée(s): ${[...new Set(remises)].join(', ')}.`;
+                details += ` | 🏷️ Remise(s): ${[...new Set(remises)].join(', ')}`;
 
                 // Alerter les admins qu'une remise a été appliquée
                 const gerant = await User.findById(userId);
@@ -268,14 +304,17 @@ exports.annulerVente = async (venteId, user, req) => {
             entityId: vente._id,
             details: {
                 article: article.nom,
-                prixTotal: vente.prixTotal
+                quantite: vente.quantite,
+                prixTotal: vente.prixTotal,
+                motif: "Annulation manuelle",
+                boutique: vente.boutique
             },
             status: 'SUCCESS'
         });
         // Enregistrer un mouvement d'annulation pour la traçabilité
         await Mouvement.create([{
             type: 'Annulation Vente',
-            details: `Annulation de la vente #${vente._id}. Retour de ${vente.quantite} unité(s) en stock.`,
+            details: `🔄 Annulation Vente #${vente._id.toString().slice(-6).toUpperCase()} | Article: ${article.nom} | Qté restaurée: ${vente.quantite} | Montant annulé: ${vente.prixTotal.toLocaleString('fr-FR')} GNF`,
             boutiqueSource: vente.boutique, // Le stock revient ici
             articles: [{ articleId: article._id, nomArticle: article.nom, quantite: vente.quantite, prixAchatUnitaire: article.prixAchat }],
             operateur: user.id,
