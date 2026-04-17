@@ -7,7 +7,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
-import { boutiqueAPI, articleAPI } from '../services/api';
+import ErrorBoundary from './common/ErrorBoundary';
+import { boutiqueAPI, articleAPI, userAPI } from '../services/api'; 
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Circle } from 'react-leaflet';
 import RestockModal from './RestockModal'; // Importer la nouvelle modale
 import 'leaflet/dist/leaflet.css';
@@ -57,12 +58,14 @@ const ShopsView = () => {
     adresse: '',
     active: true,
     type: 'Secondaire',
+    vendeurs: [],
     latitude: 9.6412,
     longitude: -13.5784
   });
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // Nombre de boutiques par page
   const [searchTerm, setSearchTerm] = useState(''); // État pour la recherche
+  const [allGerants, setAllGerants] = useState([]); // Pour la liste de sélection
 
   // États pour le transfert de stock
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -93,6 +96,7 @@ const ShopsView = () => {
 
   useEffect(() => {
     fetchBoutiques();
+    fetchGerants();
   }, []);
 
   const fetchBoutiques = async () => {
@@ -107,6 +111,17 @@ const ShopsView = () => {
       setError(err.response?.data?.message || 'Erreur de chargement');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchGerants = async () => {
+    try {
+      const res = await userAPI.getAll();
+      // On gère le cas où les données sont enveloppées dans un objet .data
+      const users = Array.isArray(res.data) ? res.data : (res.data.data || []);
+      setAllGerants(users.filter(u => u.role === 'Gérant'));
+    } catch (err) {
+      console.error("Erreur lors de la récupération des gérants", err);
     }
   };
 
@@ -126,7 +141,8 @@ const ShopsView = () => {
         setLoadingArticles(true);
         articleAPI.getAll().then(res => {
             // Filtrer les articles de la boutique source
-            const shopArticles = res.data.filter(a => (a.boutique?._id || a.boutique) === transferData.sourceId);
+            const articlesData = res.data.data || [];
+            const shopArticles = articlesData.filter(a => (a.boutique?._id || a.boutique) === transferData.sourceId);
             setSourceArticles(shopArticles);
             setSelectedArticles([]); // Réinitialiser la sélection
             setTransferQuantities({});
@@ -140,10 +156,29 @@ const ShopsView = () => {
 
   const handleShowModal = (boutique = null) => {
     if (boutique) {
-      setCurrentBoutique(boutique);
+      // Gestion robuste pour récupérer les gérants (anciens et nouveaux formats)
+      let vendeursIds = [];
+      if (Array.isArray(boutique.vendeurs)) {
+        vendeursIds = boutique.vendeurs.map(v => typeof v === 'object' ? v._id : v);
+      } else if (boutique.vendeurs) {
+        vendeursIds = [typeof boutique.vendeurs === 'object' ? boutique.vendeurs._id : boutique.vendeurs];
+      } else if (boutique.vendeur) {
+        // Fallback pour l'ancien champ singulier
+        vendeursIds = [typeof boutique.vendeur === 'object' ? boutique.vendeur._id : boutique.vendeur];
+      }
+
+      setCurrentBoutique({ ...boutique, vendeurs: vendeursIds });
       setEditMode(true);
     } else {
-      setCurrentBoutique({ nom: '', adresse: '', active: true, type: 'Secondaire', latitude: 9.6412, longitude: -13.5784 });
+      setCurrentBoutique({ 
+        nom: '', 
+        adresse: '', 
+        active: true, 
+        type: 'Secondaire', 
+        vendeurs: [],
+        latitude: 9.6412, 
+        longitude: -13.5784 
+      });
       setEditMode(false);
     }
     setShowModal(true);
@@ -157,8 +192,29 @@ const ShopsView = () => {
     const { name, value, type, checked } = e.target;
     setCurrentBoutique({
       ...currentBoutique,
-      [name]: type === 'checkbox' ? checked : value
+      // Conversion en nombre pour les champs de géolocalisation
+      [name]: type === 'checkbox' ? checked : (type === 'number' ? (value === "" ? "" : parseFloat(value)) : value)
     });
+  };
+
+  // Vérifie si un gérant est déjà assigné à une autre boutique
+  const isGerantTaken = (gerantId) => {
+    return boutiques.some(b => 
+      b._id !== currentBoutique._id && 
+      (b.vendeurs?.some(v => (v._id || v) === gerantId))
+    );
+  };
+
+  // Gestionnaire spécifique pour les gérants (Tableau d'IDs)
+  const handleGerantToggle = (gerantId) => {
+    const currentVendeurs = Array.isArray(currentBoutique.vendeurs) ? [...currentBoutique.vendeurs] : [];
+    const index = currentVendeurs.indexOf(gerantId);
+    if (index > -1) {
+        currentVendeurs.splice(index, 1);
+    } else {
+        currentVendeurs.push(gerantId);
+    }
+    setCurrentBoutique({ ...currentBoutique, vendeurs: currentVendeurs });
   };
 
   const handleSubmit = async (e) => {
@@ -166,18 +222,27 @@ const ShopsView = () => {
     setError('');
     setSuccessMessage('');
     try {
+      // Nettoyage final avant envoi : on retire l'ID et on s'assure que les vendeurs sont un tableau propre
+      const boutiquePayload = {
+        ...currentBoutique,
+        vendeurs: currentBoutique.vendeurs.filter(id => id !== '')
+      };
+      
+      // Extraction des champs pour nettoyer le payload (on retire _id et articleCount)
+      const { _id, articleCount, createdAt, updatedAt, __v, ...cleanPayload } = boutiquePayload;
+
       if (editMode) {
-        await boutiqueAPI.update(currentBoutique._id, currentBoutique);
+        await boutiqueAPI.update(_id, cleanPayload);
         setSuccessMessage('Boutique modifiée avec succès !');
       } else {
-        await boutiqueAPI.create(currentBoutique);
+        await boutiqueAPI.create(cleanPayload);
         setSuccessMessage('Boutique créée avec succès !');
       }
       fetchBoutiques();
       handleCloseModal();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur d\'enregistrement');
+      setError(err.response?.data?.message || err.response?.data?.error || 'Erreur d\'enregistrement');
     }
   };
 
@@ -281,6 +346,29 @@ const ShopsView = () => {
       )
     },
     { 
+      key: 'vendeurs',
+      label: 'Gérants Assignés',
+      render: (vendeurs, boutique) => {
+        // Si vendeurs est vide, on utilise l'ancien champ 'vendeur' comme fallback
+        const displayList = (vendeurs && vendeurs.length > 0) 
+          ? vendeurs 
+          : (boutique.vendeur ? [boutique.vendeur] : []);
+
+        return (
+          <div className="d-flex flex-wrap gap-1">
+            {displayList.length > 0 ? (
+              displayList.map((v, i) => (
+                <Badge key={i} bg="light" text="dark" className="border fw-normal">
+                  <iconify-icon icon="solar:user-bold" className="me-1 small"></iconify-icon>
+                  {typeof v === 'object' ? (v.nom || 'Gérant') : 'Gérant (Ancienne donnée)'}
+                </Badge>
+              ))
+            ) : <span className="text-muted small italic">Aucun</span>}
+          </div>
+        );
+      }
+    },
+    { 
       key: 'actions',
       label: 'Actions',
       render: (_, boutique) => (
@@ -370,6 +458,7 @@ const ShopsView = () => {
   if (loading) return <Spinner animation="border" />;
 
   return (
+    <ErrorBoundary>
     <div className="p-4">
       <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
         <h3 className="fw-bold mb-0 text-body">Gestion des Boutiques</h3>
@@ -549,6 +638,40 @@ const ShopsView = () => {
                 <option value="Secondaire">Secondaire</option>
                 <option value="Centrale">Dépôt Principal</option>
               </Form.Select>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-bold">Assigner des Gérants</Form.Label>
+              <div className="border rounded p-2" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                {allGerants.length > 0 ? (
+                    allGerants.map(gerant => {
+                        const isTaken = isGerantTaken(gerant._id);
+                        const boutiqueName = isTaken ? boutiques.find(b => b.vendeurs?.some(v => (v._id || v) === gerant._id))?.nom : '';
+                        
+                        return (
+                            <Form.Check 
+                                key={gerant._id}
+                                type="checkbox"
+                                id={`gerant-${gerant._id}`}
+                                label={
+                                    <span>
+                                        {gerant.nom} {isTaken && <small className="text-danger ms-1">(Déjà à : {boutiqueName})</small>}
+                                    </span>
+                                }
+                                checked={currentBoutique.vendeurs.includes(gerant._id)}
+                                onChange={() => handleGerantToggle(gerant._id)}
+                                disabled={isTaken}
+                                className="mb-1"
+                            />
+                        );
+                    })
+                ) : (
+                    <small className="text-muted italic">Aucun gérant trouvé dans le système.</small>
+                )}
+              </div>
+              <Form.Text className="text-muted">
+                {currentBoutique.vendeurs.length} gérant(s) sélectionné(s)
+              </Form.Text>
             </Form.Group>
             
             <div className="row">
@@ -739,7 +862,9 @@ const ShopsView = () => {
         </Modal.Footer>
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 };
+
 
 export default ShopsView;

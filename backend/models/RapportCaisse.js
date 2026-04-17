@@ -1,4 +1,3 @@
-// backend/models/RapportCaisse.js (Exemple de ce qu'il doit contenir)
 const mongoose = require('mongoose');
 
 const rapportCaisseSchema = new mongoose.Schema({
@@ -6,7 +5,7 @@ const rapportCaisseSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'OuvertureCaisse',
         required: true,
-        unique: true,
+        unique: true, // Un seul rapport par session de caisse
     },
     gerant: {
         type: mongoose.Schema.Types.ObjectId,
@@ -22,24 +21,40 @@ const rapportCaisseSchema = new mongoose.Schema({
         type: Number,
         required: true,
     },
-    totalVentes: { // Total des ventes enregistrées
-        type: Number,
+    totalVentes: { 
+        type: Number, // Uniquement les ventes Cash/Mobile Money encaissées
+        required: true,
+        default: 0
+    },
+    totalDettes: { 
+        type: Number, // Crédits accordés aux clients durant la session
+        required: true,
+        default: 0
+    },
+    totalRecouvrement: { 
+        type: Number, // Somme des dettes payées par les clients (DebtPayment)
+        required: true,
+        default: 0
+    },
+    totalDepensesApprouvees: { 
+        type: Number, 
+        required: true,
+        default: 0
+    },
+    /**
+     * FORMULE : 
+     * soldeTheorique = (fondInitial + totalVentes + totalRecouvrements) - totalDepenses
+     */
+    soldeTheorique: { 
+        type: Number, 
         required: true,
     },
-    totalDepensesApprouvees: { // Total des dépenses approuvées
-        type: Number,
+    montantCloture: { 
+        type: Number, // Montant réel en liquide déclaré par le gérant
         required: true,
     },
-    soldeTheorique: { // fondInitial + totalVentes - totalDepensesApprouvees
-        type: Number,
-        required: true,
-    },
-    montantCloture: { // Montant physique compté par le gérant
-        type: Number,
-        required: true,
-    },
-    ecart: { // montantCloture - soldeTheorique
-        type: Number,
+    ecart: { 
+        type: Number, // montantCloture - soldeTheorique
         required: true,
     },
     statut: {
@@ -54,19 +69,13 @@ const rapportCaisseSchema = new mongoose.Schema({
     dateValidation: {
         type: Date,
     },
-    commentairesGérant: {
-        type: String,
-    },
-    commentairesAdmin: {
-        type: String,
-    },
-     totalDettes: {
-        type: Number,
-        default: 0
-    },
+    commentairesGérant: { type: String },
+    commentairesAdmin: { type: String },
 }, { timestamps: true });
 
+// Index pour accélérer les recherches de l'admin
 rapportCaisseSchema.index({ gerant: 1, statut: 1 });
+rapportCaisseSchema.index({ boutique: 1, createdAt: -1 });
 
 const RapportCaisse = mongoose.model('RapportCaisse', rapportCaisseSchema);
 module.exports = RapportCaisse;

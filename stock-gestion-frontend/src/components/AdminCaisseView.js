@@ -1,8 +1,8 @@
 // src/components/AdminCaisseView.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, Button, Table, Badge, Tabs, Tab, Spinner, Alert, Modal, Form, Row, Col, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
-import { caisseAPI, authAPI } from '../services/api';
+import { caisseAPI, authAPI, boutiqueAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import XLSX from 'xlsx-js-style';
 import logo from '../assets/logo.png';
@@ -18,6 +18,7 @@ const AdminCaisseView = () => {
     // Données
     const [managers, setManagers] = useState([]);
     const [rapports, setRapports] = useState([]);
+    const [boutiques, setBoutiques] = useState([]);
     const [caisseAdmin, setCaisseAdmin] = useState(null);
     
     // Filtres
@@ -44,13 +45,15 @@ const AdminCaisseView = () => {
         setError('');
         try {
             // On charge toutes les données nécessaires pour la vue, indépendamment de l'onglet
-            const [usersRes, rapportsRes, caisseAdminRes] = await Promise.all([
+            const [usersRes, rapportsRes, caisseAdminRes, boutiquesRes] = await Promise.all([
                 authAPI.getUsers(),
                 caisseAPI.listerRapports({ ...dateFilter, gerant: filterGerant }),
-                caisseAPI.getCaisseAdmin()
+                caisseAPI.getCaisseAdmin(),
+                boutiqueAPI.getAll()
             ]);
 
             setManagers(usersRes.data.filter(u => u.role === 'Gérant'));
+            setBoutiques(boutiquesRes.data);
             setRapports(rapportsRes.data);
             setCaisseAdmin(caisseAdminRes.data);
             setCurrentPage(1); // Réinitialiser la page lors d'un changement de filtre
@@ -129,12 +132,20 @@ const AdminCaisseView = () => {
         }
     };
 
+    const safeNum = (v) => {
+        if (v === null || v === undefined) return 0;
+        if (typeof v === 'number') return v;
+        if (typeof v === 'object' && v.$numberDecimal) return parseFloat(v.$numberDecimal) || 0;
+        const parsed = parseFloat(v);
+        return isNaN(parsed) ? 0 : parsed;
+    };
+
     const handleExportPDF = () => {
         const doc = new jsPDF({ orientation: 'landscape' });
 
         // Helper pour le formatage de la devise dans le PDF
         const formatCurrencyPdf = (amount) => {
-            const value = (amount || 0).toLocaleString('fr-FR') + ' GNF';
+            const value = safeNum(amount).toLocaleString('fr-FR') + ' GNF';
             return value.replace(/[\u00a0\u202f]/g, ' ');
         };
         
@@ -164,7 +175,8 @@ const AdminCaisseView = () => {
 
             // Filtrer l'historique selon les mêmes critères
             const filteredHistory = caisseAdmin.historique?.filter(entry => {
-                const entryDate = new Date(entry.dateValidation);
+                // Correction : Utilisation de dateTransaction au lieu de dateValidation
+                const entryDate = new Date(entry.dateTransaction || entry.createdAt);
                 const start = dateFilter.startDate ? new Date(dateFilter.startDate) : null;
                 const end = dateFilter.endDate ? new Date(dateFilter.endDate) : null;
                 if (end) end.setHours(23, 59, 59, 999);
@@ -175,7 +187,8 @@ const AdminCaisseView = () => {
                 if (filterGerant) {
                     const selectedManager = managers.find(m => m._id === filterGerant);
                     if (selectedManager) {
-                        gerantMatch = entry.gerant === selectedManager.nom;
+                        // Gère le cas où entry.gerant est un ID ou un nom (compatibilité)
+                        gerantMatch = entry.gerant === filterGerant || entry.gerant === selectedManager.nom;
                     }
                 }
                 return dateMatch && gerantMatch;
@@ -186,16 +199,16 @@ const AdminCaisseView = () => {
 
             sortedHistory.forEach(entry => {
                 const entryData = [
-                    new Date(entry.dateValidation).toLocaleDateString('fr-FR'),
-                    entry.boutique || 'N/A',
-                    entry.gerant || 'N/A',
-                    formatCurrencyPdf(entry.montant)
+                    new Date(entry.dateTransaction || entry.createdAt).toLocaleDateString('fr-FR'),
+                    resolveBoutiqueName(entry.boutique),
+                    resolveGerantName(entry.gerant),
+                    formatCurrencyPdf(safeNum(entry.montant))
                 ];
                 tableRows.push(entryData);
             });
 
             // Ajouter un total en bas du tableau
-            const totalEncaissements = sortedHistory.reduce((acc, entry) => acc + (entry.montant || 0), 0);
+            const totalEncaissements = sortedHistory.reduce((acc, entry) => acc + safeNum(entry.montant), 0);
             tableRows.push(['', '', 'TOTAL GÉNÉRAL', formatCurrencyPdf(totalEncaissements)]);
 
 
@@ -234,7 +247,7 @@ const AdminCaisseView = () => {
         } 
         // Tableau pour les rapports de caisse
         else {
-            const tableColumn = ["Date", "Gérant", "Boutique", "Solde Théorique", "Montant Reçu", "Écart"];
+            const tableColumn = ["Date", "Gérant", "Boutique", "Ventes", "Dettes", "Dépenses", "Théorique", "Montant Reçu", "Écart"];
             const tableRows = [];
 
             // On utilise directement 'rapports' car ils sont déjà filtrés par fetchData()
@@ -243,23 +256,23 @@ const AdminCaisseView = () => {
                     new Date(report.createdAt).toLocaleDateString('fr-FR'),
                     report.gerant?.nom || 'N/A',
                     report.boutique?.nom || 'N/A',
-                    formatCurrencyPdf(report.totalVentes),
-                    formatCurrencyPdf(report.totalDettes),
-                    formatCurrencyPdf(report.totalDepensesApprouvees),
-                    formatCurrencyPdf(report.soldeTheorique),
-                    formatCurrencyPdf(report.montantCloture),
-                    formatCurrencyPdf(report.ecart)
+                    formatCurrencyPdf(safeNum(report.totalVentes)),
+                    formatCurrencyPdf(safeNum(report.totalDettes)),
+                    formatCurrencyPdf(safeNum(report.totalDepensesApprouvees)),
+                    formatCurrencyPdf(safeNum(report.soldeTheorique)),
+                    formatCurrencyPdf(safeNum(report.montantCloture)),
+                    formatCurrencyPdf(safeNum(report.ecart))
                 ];
                 tableRows.push(reportData);
             });
 
             // Ajouter une ligne de totalisation pour l'analyse comptable
-            const totalVentes = rapports.reduce((acc, r) => acc + (r.totalVentes || 0), 0);
-            const totalDettes = rapports.reduce((acc, r) => acc + (r.totalDettes || 0), 0);
-            const totalDepenses = rapports.reduce((acc, r) => acc + (r.totalDepensesApprouvees || 0), 0);
-            const totalTheo = rapports.reduce((acc, r) => acc + (r.soldeTheorique || 0), 0);
-            const totalRecu = rapports.reduce((acc, r) => acc + (r.montantCloture || 0), 0);
-            const totalEcart = rapports.reduce((acc, r) => acc + (r.ecart || 0), 0);
+            const totalVentes = rapports.reduce((acc, r) => acc + safeNum(r.totalVentes), 0);
+            const totalDettes = rapports.reduce((acc, r) => acc + safeNum(r.totalDettes), 0);
+            const totalDepenses = rapports.reduce((acc, r) => acc + safeNum(r.totalDepensesApprouvees), 0);
+            const totalTheo = rapports.reduce((acc, r) => acc + safeNum(r.soldeTheorique), 0);
+            const totalRecu = rapports.reduce((acc, r) => acc + safeNum(r.montantCloture), 0);
+            const totalEcart = rapports.reduce((acc, r) => acc + safeNum(r.ecart), 0);
 
             tableRows.push([
                 { content: 'TOTAL GÉNÉRAL', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold', fillColor: [240, 240, 240] } },
@@ -314,9 +327,9 @@ const AdminCaisseView = () => {
             
             const sortedHistory = [...filteredHistory].reverse();
             dataToExport = sortedHistory.map(entry => ({
-                'Date': new Date(entry.dateValidation).toLocaleDateString('fr-FR'),
-                'Source': entry.boutique || 'N/A',
-                'Gérant': entry.gerant || 'N/A',
+                'Date': new Date(entry.dateTransaction || entry.createdAt).toLocaleDateString('fr-FR'),
+                'Source': resolveBoutiqueName(entry.boutique),
+                'Gérant': resolveGerantName(entry.gerant),
                 'Montant (GNF)': entry.montant
             }));
 
@@ -335,22 +348,22 @@ const AdminCaisseView = () => {
                 'Date': new Date(r.createdAt).toLocaleDateString('fr-FR'),
                 'Gérant': r.gerant?.nom || 'N/A',
                 'Boutique': r.boutique?.nom || 'N/A',
-                'Total Ventes (GNF)': r.totalVentes,
-                'Dettes Accordées (GNF)': r.totalDettes,
-                'Dépenses (GNF)': r.totalDepensesApprouvees,
-                'Solde Théorique (GNF)': r.soldeTheorique,
-                'Montant Reçu (GNF)': r.montantCloture,
-                'Écart (GNF)': r.ecart,
+                'Total Ventes (GNF)': safeNum(r.totalVentes),
+                'Dettes Accordées (GNF)': safeNum(r.totalDettes),
+                'Dépenses (GNF)': safeNum(r.totalDepensesApprouvees),
+                'Solde Théorique (GNF)': safeNum(r.soldeTheorique),
+                'Montant Reçu (GNF)': safeNum(r.montantCloture),
+                'Écart (GNF)': safeNum(r.ecart),
                 'Statut': r.statut
             }));
 
             // Calcul des totaux pour les rapports de caisse
-            const totalVentes = rapports.reduce((acc, r) => acc + (r.totalVentes || 0), 0);
-            const totalDettes = rapports.reduce((acc, r) => acc + (r.totalDettes || 0), 0);
-            const totalDepenses = rapports.reduce((acc, r) => acc + (r.totalDepensesApprouvees || 0), 0);
-            const totalTheo = rapports.reduce((acc, r) => acc + (r.soldeTheorique || 0), 0);
-            const totalRecu = rapports.reduce((acc, r) => acc + (r.montantCloture || 0), 0);
-            const totalEcart = rapports.reduce((acc, r) => acc + (r.ecart || 0), 0);
+            const totalVentes = rapports.reduce((acc, r) => acc + safeNum(r.totalVentes), 0);
+            const totalDettes = rapports.reduce((acc, r) => acc + safeNum(r.totalDettes), 0);
+            const totalDepenses = rapports.reduce((acc, r) => acc + safeNum(r.totalDepensesApprouvees), 0);
+            const totalTheo = rapports.reduce((acc, r) => acc + safeNum(r.soldeTheorique), 0);
+            const totalRecu = rapports.reduce((acc, r) => acc + safeNum(r.montantCloture), 0);
+            const totalEcart = rapports.reduce((acc, r) => acc + safeNum(r.ecart), 0);
 
             dataToExport.push({
                 'Date': 'TOTAL GÉNÉRAL',
@@ -402,9 +415,21 @@ const AdminCaisseView = () => {
 
     // --- Utilitaires d'affichage ---
 
+    const resolveGerantName = (idOrName) => {
+        if (!idOrName) return 'N/A';
+        const manager = managers.find(m => m._id === idOrName);
+        return manager ? manager.nom : idOrName;
+    };
+
+    const resolveBoutiqueName = (idOrName) => {
+        if (!idOrName) return 'N/A';
+        const boutique = boutiques.find(b => b._id === idOrName);
+        return boutique ? boutique.nom : idOrName;
+    };
+
     const formatCurrency = (amount) => {
         // Remplace les espaces insécables par des espaces normaux pour la cohérence
-        return ((amount || 0).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
+        return (safeNum(amount).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
     };
 
     const getStatusBadge = (status) => {
@@ -429,27 +454,44 @@ const AdminCaisseView = () => {
     const totalPages = Math.ceil(rapports.length / itemsPerPage);
 
     // Filtrage de l'historique des encaissements (Caisse Centrale) pour les totaux et l'affichage
-    const filteredHistory = caisseAdmin?.historique?.filter(entry => {
-        const entryDate = new Date(entry.dateValidation);
-        const start = dateFilter.startDate ? new Date(dateFilter.startDate) : null;
-        const end = dateFilter.endDate ? new Date(dateFilter.endDate) : null;
-        if (end) end.setHours(23, 59, 59, 999);
+    const filteredHistory = useMemo(() => {
+        if (!caisseAdmin?.historique) return [];
 
-        const dateMatch = (!start || entryDate >= start) && (!end || entryDate <= end);
-        
-        let gerantMatch = true;
-        if (filterGerant) {
-            const selectedManager = managers.find(m => m._id === filterGerant);
-            if (selectedManager) {
-                gerantMatch = entry.gerant === selectedManager.nom;
+        return caisseAdmin.historique.filter(entry => {
+            const entryDate = new Date(entry.dateTransaction || entry.createdAt);
+            const start = dateFilter.startDate ? new Date(dateFilter.startDate) : null;
+            const end = dateFilter.endDate ? new Date(dateFilter.endDate) : null;
+            
+            if (start) start.setHours(0, 0, 0, 0);
+            if (end) end.setHours(23, 59, 59, 999);
+
+            const dateMatch = (!start || entryDate >= start) && (!end || entryDate <= end);
+            
+            let gerantMatch = true;
+            if (filterGerant) {
+                const entryGerantId = entry.gerant?._id || (typeof entry.gerant === 'string' ? entry.gerant : null);
+                const selectedManager = managers.find(m => m._id === filterGerant);
+                gerantMatch = (entryGerantId === filterGerant) || (entry.gerant === selectedManager?.nom);
             }
-        }
-        return dateMatch && gerantMatch;
-    }) || [];
+            return dateMatch && gerantMatch;
+        });
+    }, [caisseAdmin, dateFilter, filterGerant, managers]);
 
     // Calcul des totaux pour l'affichage
-    const totalEncaissementsPeriode = filteredHistory.reduce((acc, entry) => acc + entry.montant, 0);
-    const totalTheorique = rapports.reduce((acc, r) => acc + r.soldeTheorique, 0);
+    const totalEncaissementsPeriode = useMemo(() => {
+        // On calcule le total à partir des rapports validés présents dans la liste.
+        // Cela garantit que le montant affiché correspond à la somme des rapports visibles dans le tableau.
+        return rapports
+            .filter(r => r.statut === 'VALIDE')
+            .reduce((acc, r) => acc + safeNum(r.montantCloture), 0);
+    }, [rapports]);
+
+    // Calcul du cumul des écarts sur la période
+    const totalEcartsPeriode = useMemo(() => {
+        return rapports.reduce((acc, r) => acc + safeNum(r.ecart), 0);
+    }, [rapports]);
+
+    const totalTheorique = rapports.reduce((acc, r) => acc + safeNum(r.soldeTheorique), 0);
 
     return (
         <div className="p-4">
@@ -504,7 +546,7 @@ const AdminCaisseView = () => {
 
             {/* Cartes de résumé rapide */}
             <Row className="mb-4 g-3">
-                <Col md={6}>
+                <Col md={4}>
                     <Card className="border-0 shadow-sm bg-primary-subtle text-primary h-100">
                         <Card.Body className="d-flex align-items-center justify-content-between">
                             <div>
@@ -515,7 +557,7 @@ const AdminCaisseView = () => {
                         </Card.Body>
                     </Card>
                 </Col>
-                <Col md={6}>
+                <Col md={4}>
                     <Card className="border-0 shadow-sm bg-success-subtle text-success h-100">
                         <Card.Body className="d-flex align-items-center justify-content-between">
                             <div>
@@ -523,6 +565,19 @@ const AdminCaisseView = () => {
                                 <h4 className="fw-bold mb-0">{formatCurrency(totalTheorique)}</h4>
                             </div>
                             <iconify-icon icon="solar:chart-square-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col md={4}>
+                    <Card className={`border-0 shadow-sm h-100 ${totalEcartsPeriode < 0 ? 'bg-danger-subtle text-danger' : totalEcartsPeriode > 0 ? 'bg-warning-subtle text-warning' : 'bg-light text-muted'}`}>
+                        <Card.Body className="d-flex align-items-center justify-content-between">
+                            <div>
+                                <h6 className="mb-1">Somme des Écarts (Période)</h6>
+                                <h4 className="fw-bold mb-0">
+                                    {totalEcartsPeriode > 0 ? '+' : ''}{formatCurrency(totalEcartsPeriode)}
+                                </h4>
+                            </div>
+                            <iconify-icon icon="solar:danger-triangle-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
                         </Card.Body>
                     </Card>
                 </Col>
@@ -547,6 +602,7 @@ const AdminCaisseView = () => {
                                         <th className="ps-4 py-3">Date Clôture</th>
                                         <th className="py-3">Gérant / Boutique</th>
                                         <th className="py-3 text-end">Total Ventes</th>
+                                        <th className="py-3 text-end">Recouvrements</th>
                                         <th className="py-3 text-end">Dettes accordées</th>
                                         <th className="py-3 text-end">Dépenses</th>
                                         <th className="py-3 text-end">Solde Théorique</th>
@@ -575,7 +631,8 @@ const AdminCaisseView = () => {
                                                     <div className="small text-muted">{r.boutique?.nom || 'N/A'}</div>
                                                 </td>
                                                 <td className="text-end text-success">{formatCurrency(r.totalVentes)}</td>
-                                                <td className="text-end text-warning">{formatCurrency(r.totalDettes || 0)}</td>
+                                                <td className="text-end text-info">{formatCurrency(r.totalRecouvrement)}</td>
+                                                <td className="text-end text-warning">{formatCurrency(r.totalDettes)}</td>
                                                 <td className="text-end text-danger">{formatCurrency(r.totalDepensesApprouvees)}</td>
                                                 <td className="text-end fw-bold">{formatCurrency(r.soldeTheorique)}</td>
                                                 <td className="text-end fw-bold text-primary">{formatCurrency(r.montantCloture)}</td>
@@ -661,16 +718,16 @@ const AdminCaisseView = () => {
                                                 [...filteredHistory].reverse().map((entry, idx) => (
                                                     <tr key={idx}>
                                                         <td className="ps-4">
-                                                            {new Date(entry.dateValidation).toLocaleDateString()}
+                                                            {new Date(entry.dateTransaction || entry.createdAt).toLocaleDateString()}
                                                             <div className="small text-muted">Validé par {entry.admin}</div>
                                                         </td>
                                                         <td>
                                                             {entry.description ? (
                                                                 <div className="fw-bold">{entry.description}</div>
                                                             ) : (
-                                                                <div className="fw-bold">Rapport de: {entry.boutique}</div>
+                                                                <div className="fw-bold">Rapport de: {resolveBoutiqueName(entry.boutique)}</div>
                                                             )}
-                                                            <div className="small text-muted">Gérant: {entry.gerant}</div>
+                                                            <div className="small text-muted">Gérant: {resolveGerantName(entry.gerant)}</div>
                                                         </td>
                                                         <td className="text-end pe-4 fw-bold text-success">
                                                             + {formatCurrency(entry.montant)}

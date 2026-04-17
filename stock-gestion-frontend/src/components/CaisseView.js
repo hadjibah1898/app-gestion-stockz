@@ -175,13 +175,11 @@ const CaisseView = () => {
                 if (isCorrection && currentRapportForCorrection) {
                     soldeTheorique = currentRapportForCorrection.soldeTheorique;
                 } else if (caisseStatut) {
-                    const totalDepenses = caisseStatut.session?.totalDepenses || 0;
-                    const totalDettes = caisseStatut.session?.totalDettes || 0;
-                    // LOGIQUE COMPTABLE : Recouvrements exclus
-                    soldeTheorique = (caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - totalDettes - totalDepenses;
+                    const stats = getDisplayValues();
+                    soldeTheorique = stats.soldeTheorique;
                 }
                 
-                const ecartCalcule = montantClotureNum - soldeTheorique;
+                const ecartCalcule = Math.round(montantClotureNum - soldeTheorique);
                 
                 setEcart(ecartCalcule);
                 setAfficherJustification(ecartCalcule !== 0);
@@ -209,9 +207,16 @@ const CaisseView = () => {
         if (isCorrection && currentRapportForCorrection) {
             soldeTheorique = currentRapportForCorrection.soldeTheorique;
         } else if (caisseStatut) {
-            const totalDepenses = caisseStatut.session?.totalDepenses || 0;
-            const totalDettes = caisseStatut.session?.totalDettes || 0;
-            soldeTheorique = (caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - totalDettes - totalDepenses;
+            const source = statistiquesSession || caisseStatut;
+            
+            const stats = {
+                f: source.fondInitial || 0,
+                v: source.totalVentes ?? source.session?.totalVentes ?? 0,
+                d: source.totalDettesAccordees ?? source.session?.totalDettesAccordees ?? source.totalDettes ?? 0,
+                r: source.totalRecouvrement ?? source.session?.totalRecouvrement ?? 0,
+                dep: source.totalDepenses ?? source.session?.totalDepenses ?? 0
+            };
+            soldeTheorique = Math.round(stats.f + (stats.v - stats.d) + stats.r - stats.dep);
         }
         
         const ecartCalcule = montantClotureNum - soldeTheorique;
@@ -229,20 +234,16 @@ const CaisseView = () => {
             if (isCorrection) {
                 // En mode correction, on appelle la route spécifique
                 await caisseAPI.corrigerRapport({
-                    montantCloture: montantClotureNum,
+                    montantCloture: Math.round(montantClotureNum),
                     commentairesGérant: commentaires
                 });
                 setSuccess("Rapport corrigé et renvoyé pour validation.");
             } else {
                 // Mode fermeture standard
                 await caisseAPI.fermer({ 
-                    montantCloture: montantClotureNum, 
-                    // Correction : Assurer que le commentaire est envoyé même s'il n'y a pas d'écart
-                    // Le backend attend probablement 'commentairesGérant' ou 'commentaire'
-                    commentairesGérant: commentaires,
-                    commentaires: commentaires, // Envoi sous les deux clés pour compatibilité
-                    // Si c'est une relance après rejet, on peut avoir besoin de l'ID du rapport précédent, 
-                    // mais généralement 'fermer' crée un nouveau rapport ou met à jour l'actuel.
+                    montantCloture: Math.round(montantClotureNum), 
+                    commentairesGérant: commentaires.trim(),
+                    commentaires: commentaires.trim()
                 });
                 setSuccess("Caisse fermée et rapport généré avec succès.");
             }
@@ -265,25 +266,26 @@ const CaisseView = () => {
     const getDisplayValues = () => {
         if (isCorrection && currentRapportForCorrection) {
             // Cas Correction : On utilise les données figées du rapport
-            // Dettes = (Fond + Ventes - Dépenses) - SoldeThéorique
-            const fondInitial = currentRapportForCorrection.fondInitial || 0;
-            const totalVentes = currentRapportForCorrection.totalVentes || 0;
-            const totalDepenses = currentRapportForCorrection.totalDepensesApprouvees || 0;
-            const soldeTheorique = currentRapportForCorrection.soldeTheorique || 0;
-            // On recalcule le montant des dettes par déduction pour l'affichage
-            const totalDettes = (fondInitial + totalVentes - totalDepenses) - soldeTheorique;
-
-            return { fondInitial, totalVentes, totalDettes, totalDepenses, soldeTheorique };
+            const r = currentRapportForCorrection;
+            return { 
+                fondInitial: r.fondInitial || 0, totalVentes: r.totalVentes || 0, 
+                totalVentesCash: Math.round((r.totalVentes || 0) - (r.totalDettes || 0)),
+                totalDettes: r.totalDettes || 0, totalDepenses: r.totalDepensesApprouvees || 0, 
+                soldeTheorique: r.soldeTheorique || 0, totalRecouvrement: r.totalRecouvrement || 0 
+            };
         } else {
-            // Cas Clôture Normale : On utilise les stats de la session en cours
             const source = statistiquesSession || caisseStatut;
-            const fondInitial = source?.fondInitial || 0;
-            const totalVentes = source?.session?.totalVentes || 0;
-            const totalDettes = source?.session?.totalDettes || 0;
-            const totalDepenses = source?.session?.totalDepenses || 0;
-            const soldeTheorique = (fondInitial + totalVentes - totalDettes) - totalDepenses;
+            const v = source?.totalVentes ?? source?.session?.totalVentes ?? 0;
+            const d = source?.totalDettesAccordees ?? source?.session?.totalDettesAccordees ?? source?.totalDettes ?? 0;
+            const r = source?.totalRecouvrement ?? source?.session?.totalRecouvrement ?? 0;
+            const dep = source?.totalDepenses ?? source?.session?.totalDepenses ?? 0;
+            const f = source?.fondInitial ?? 0;
 
-            return { fondInitial, totalVentes, totalDettes, totalDepenses, soldeTheorique };
+            return { 
+                fondInitial: f, totalVentes: v, totalVentesCash: Math.round(v - d), totalDettes: d, 
+                totalDepenses: dep, totalRecouvrement: r, 
+                soldeTheorique: Math.round(f + (v - d) + r - dep) 
+            };
         }
     };
 
@@ -345,8 +347,8 @@ const CaisseView = () => {
                 <Badge bg="success" pill>Session en cours</Badge>
             </Card.Header>
             <Card.Body className="p-4">
-                <Row className="g-4 text-center">
-                    <Col md={4}>
+                <Row className="g-3 text-center">
+                    <Col md={3}>
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Fond Initial</h6>
@@ -354,7 +356,7 @@ const CaisseView = () => {
                             </Card.Body>
                         </Card>
                     </Col>
-                    <Col md={4}>
+                    <Col md={3}>
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Ventes de la session</h6>
@@ -363,7 +365,16 @@ const CaisseView = () => {
                             </Card.Body>
                         </Card>
                     </Col>
-                    <Col md={4}>
+                    <Col md={3}>
+                        <Card className="bg-light border-0">
+                            <Card.Body>
+                                <h6 className="text-muted">Recouvrements</h6>
+                                <h4 className="fw-bold text-info">{(caisseStatut.totalRecouvrement ?? caisseStatut.session?.totalRecouvrement ?? 0).toLocaleString()} GNF</h4>
+                                <small className="text-muted">Dettes payées</small>
+                            </Card.Body>
+                        </Card>
+                    </Col>
+                    <Col md={3}>
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Dépenses de la session</h6>
@@ -454,31 +465,51 @@ const CaisseView = () => {
                             <Card.Body className="p-3">
                                 <div className="d-flex justify-content-between mb-2">
                                     <span className="text-muted">Fond initial</span>
-                                    <span className="fw-bold">{displayValues.fondInitial.toLocaleString()} GNF</span>
+                                    <span className="fw-bold">{(displayValues.fondInitial || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <div className="d-flex justify-content-between mb-2">
-                                    <span className="text-muted">Total ventes session</span>
-                                    <span className="fw-bold text-success">+ {displayValues.totalVentes.toLocaleString()} GNF</span>
+                                    <span className="text-muted">Ventes au comptant (Cash)</span>
+                                    <span className="fw-bold text-success">+ {(displayValues.totalVentesCash || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <div className="d-flex justify-content-between mb-2">
                                     <span className="text-muted">Dettes accordées (Crédit)</span>
-                                    <span className="fw-bold text-warning">- {displayValues.totalDettes.toLocaleString()} GNF</span>
+                                    <span className="fw-bold text-warning">- {(displayValues.totalDettes || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <div className="d-flex justify-content-between">
                                     <span className="text-muted">Total Dépenses</span>
-                                    <span className="fw-bold text-danger">- {displayValues.totalDepenses.toLocaleString()} GNF</span>
+                                    <span className="fw-bold text-danger">- {(displayValues.totalDepenses || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <hr/>
+                                
+                                {/* Détail nominatif des remboursements */}
+                                {statistiquesSession?.listeRecouvrements?.length > 0 && (
+                                    <div className="mb-3">
+                                        <small className="text-primary fw-bold text-uppercase" style={{ fontSize: '0.7rem' }}>Détail des recouvrements</small>
+                                        <div className="border rounded bg-white mt-1" style={{ maxHeight: '100px', overflowY: 'auto' }}>
+                                            <Table size="sm" className="mb-0 x-small" style={{ fontSize: '0.8rem' }}>
+                                                <tbody>
+                                                    {statistiquesSession.listeRecouvrements.map((p, i) => (
+                                                        <tr key={i}>
+                                                            <td className="ps-2">{p.client?.nom || 'Client'}</td>
+                                                            <td className="text-end pe-2 fw-bold text-info">{(p.montant || 0).toLocaleString()} GNF</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </Table>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="d-flex justify-content-between align-items-center">
                                     <span className="fw-bold text-danger">Total Espèces Attendu</span>
-                                    <span className="fw-bold fs-5 text-danger">{displayValues.soldeTheorique.toLocaleString()} GNF</span>
+                                    <span className="fw-bold fs-5 text-danger">{(displayValues.soldeTheorique || 0).toLocaleString()} GNF</span>
                                 </div>
                             </Card.Body>
                         </Card>
 
                         {afficherJustification && (
                             <Alert variant="danger" className="blink-animation">
-                                <strong>Écart détecté :</strong> {ecart.toLocaleString()} GNF. Veuillez justifier cet écart dans les commentaires ci-dessous.
+                                <strong>Écart détecté :</strong> {(ecart || 0).toLocaleString()} GNF. Veuillez justifier cet écart dans les commentaires ci-dessous.
                             </Alert>
                         )}
                         {afficherJustification && (
@@ -544,9 +575,10 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false);
     const [commissionError, setCommissionError] = useState('');
     
-    // Calcul du cash disponible réel (Fond + Ventes Cash - Dépenses déjà faites)
+    // Utilisation directe du solde calculé par le backend pour éviter les erreurs de clés
     const availableCash = caisseStatut 
-        ? (caisseStatut.fondInitial + (caisseStatut.session?.totalEncaisse || 0) - (caisseStatut.session?.totalDepenses || 0))
+        ? (caisseStatut.session?.cashReelActuel ?? 
+          ((caisseStatut.fondInitial || 0) + (caisseStatut.session?.totalVentes || 0) - (caisseStatut.session?.totalDettesAccordees || 0) + (caisseStatut.session?.totalRecouvrement || 0) - (caisseStatut.session?.totalDepenses || 0)))
         : 0;
 
     const fetchDepenses = useCallback(() => {
@@ -753,7 +785,15 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                                     Le montant dépasse le cash disponible ({availableCash.toLocaleString()} GNF).
                                 </Form.Control.Feedback>
                             </InputGroup>
-                            <Form.Text className="text-muted">Cash disponible : <span className="fw-bold text-success">{availableCash.toLocaleString()} GNF</span></Form.Text>
+                            <div className="mt-2 p-2 bg-light rounded small">
+                                <div className="d-flex justify-content-between">
+                                    <span>Cash disponible :</span>
+                                    <span className="fw-bold text-success">{availableCash.toLocaleString()} GNF</span>
+                                </div>
+                                <div className="text-muted" style={{fontSize: '0.75rem'}}>
+                                    (Calculé sur la base du fond initial, des ventes cash et des recouvrements, moins les dépenses déjà validées)
+                                </div>
+                            </div>
                         </Form.Group>
                     </Modal.Body>
                     <Modal.Footer>
@@ -837,6 +877,13 @@ const RapportsTab = ({ onCorrect }) => {
     const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [detailedReportData, setDetailedReportData] = useState(null); // Nouvel état pour les détails du rapport
 
+    // Helper pour formater la monnaie de manière robuste dans le tableau
+    const formatTableCurrency = (value) => {
+        const num = value?.$numberDecimal ? parseFloat(value.$numberDecimal) : parseFloat(value);
+        const safeValue = isNaN(num) ? 0 : num;
+        return safeValue.toLocaleString('fr-FR') + ' GNF';
+    };
+
     useEffect(() => {
         caisseAPI.getMesRapports()
             .then(res => setRapports(res.data))
@@ -862,6 +909,7 @@ const RapportsTab = ({ onCorrect }) => {
     const getStatusBadge = (status) => {
         switch (status) {
             case 'VALIDE': return <Badge bg="success">Validé</Badge>;
+            case 'VALIDEE': return <Badge bg="success">Validé</Badge>; // Support de l'ancienne version
             case 'REJETE': return <Badge bg="danger">Rejeté</Badge>;
             default: return <Badge bg="warning">En attente</Badge>;
         }
@@ -928,12 +976,19 @@ const RapportsTab = ({ onCorrect }) => {
     const generateDetailedReportPDF = () => {
         if (!detailedReportData) return;
 
-        const { rapport, ventes, depenses } = detailedReportData;
+        const { rapport, ventes, depenses, remboursements, dettesAccordees } = detailedReportData;
         const doc = new jsPDF();
         let y = 10;
 
-        // Helper pour formater la monnaie
-        const formatCurrency = (value) => (value || 0).toLocaleString('fr-FR') + ' GNF';
+        // Helper robuste anti-NaN et anti-Decimal128
+        const formatCurrency = (value) => {
+            const num = value?.$numberDecimal ? parseFloat(value.$numberDecimal) : parseFloat(value);
+            return (isNaN(num) ? 0 : num).toLocaleString('fr-FR') + ' GNF';
+        };
+
+        const v = rapport.totalVentes?.$numberDecimal ? parseFloat( rapport.totalVentes.$numberDecimal) : (parseFloat(rapport.totalVentes) || 0);
+        const d = rapport.totalDettes?.$numberDecimal ? parseFloat( rapport.totalDettes.$numberDecimal) : (parseFloat(rapport.totalDettes) || 0);
+        const totalVentesCash = v - d;
 
         // En-tête
         doc.setFontSize(18);
@@ -956,6 +1011,12 @@ const RapportsTab = ({ onCorrect }) => {
                 ['Fond Initial', formatCurrency(rapport.fondInitial)],
                 ['Total Ventes', formatCurrency(rapport.totalVentes)],
                 ['Total Dépenses Approuvées', formatCurrency(rapport.totalDepensesApprouvees)],
+                ['Recouvrements Dettes', formatCurrency(rapport.totalRecouvrement || 0)],
+                ['Total Ventes (Chiffre d\'Affaires)', formatCurrency(rapport.totalVentes)],
+                ['Dettes accordées (Crédit)', `- ${formatCurrency(rapport.totalDettes)}`],
+                ['Ventes au comptant (Net Cash)', formatCurrency(totalVentesCash)],
+                ['Recouvrements Dettes', `+ ${formatCurrency(rapport.totalRecouvrement || 0)}`],
+                ['Total Dépenses Approuvées', `- ${formatCurrency(rapport.totalDepensesApprouvees)}`],
                 ['Solde Théorique', formatCurrency(rapport.soldeTheorique)],
                 ['Montant Clôturé', formatCurrency(rapport.montantCloture)],
                 ['Écart', formatCurrency(rapport.ecart)],
@@ -968,7 +1029,8 @@ const RapportsTab = ({ onCorrect }) => {
             headStyles: { fillColor: [41, 128, 185], textColor: 255 },
             columnStyles: { 1: { halign: 'right' } }
         });
-        y = doc.lastAutoTable.finalY + 10;
+
+        y = (doc.lastAutoTable?.finalY || y) + 10;
 
         // Ventes
         if (ventes && ventes.length > 0) {
@@ -998,7 +1060,57 @@ const RapportsTab = ({ onCorrect }) => {
                     4: { halign: 'right' }
                 }
             });
-            y = doc.lastAutoTable.finalY + 10;
+            y = (doc.lastAutoTable?.finalY || y) + 10;
+        }
+
+        // Section : Recouvrements de Dettes
+        if (remboursements && remboursements.length > 0) {
+            if (y > doc.internal.pageSize.height - 40) {
+                doc.addPage();
+                y = 10;
+            }
+            doc.setFontSize(14);
+            doc.text("Recouvrements de Dettes", 14, y);
+            y += 5;
+            autoTable(doc, {
+                startY: y,
+                head: [['Client', 'Montant', 'Date']],
+                body: remboursements.map(r => [
+                    r.client?.nom || 'N/A',
+                    formatCurrency(r.montant),
+                    new Date(r.datePaiement || r.createdAt).toLocaleDateString('fr-FR')
+                ]),
+                theme: 'striped',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [0, 123, 255], textColor: 255 }, // Bleu pour l'info
+                columnStyles: { 1: { halign: 'right' }, 2: { halign: 'center' } }
+            });
+            y = (doc.lastAutoTable?.finalY || y) + 10;
+        }
+
+        // Section : Dettes Accordées (Crédit)
+        if (dettesAccordees && dettesAccordees.length > 0) {
+            if (y > doc.internal.pageSize.height - 40) {
+                doc.addPage();
+                y = 10;
+            }
+            doc.setFontSize(14);
+            doc.text("Dettes Accordées (Ventes à Crédit)", 14, y);
+            y += 5;
+            autoTable(doc, {
+                startY: y,
+                head: [['Client', 'Montant', 'Date']],
+                body: dettesAccordees.map(d => [
+                    d.client?.nom || 'N/A',
+                    formatCurrency(d.montant),
+                    new Date(d.createdAt).toLocaleDateString('fr-FR')
+                ]),
+                theme: 'striped',
+                styles: { fontSize: 9, cellPadding: 2 },
+                headStyles: { fillColor: [255, 193, 7], textColor: 0 }, // Jaune pour avertissement/crédit
+                columnStyles: { 1: { halign: 'right' }, 2: { halign: 'center' } }
+            });
+            y = (doc.lastAutoTable?.finalY || y) + 10;
         }
 
         // Dépenses
@@ -1019,6 +1131,9 @@ const RapportsTab = ({ onCorrect }) => {
                 headStyles: { fillColor: [220, 53, 69], textColor: 255 },
                 columnStyles: { 1: { halign: 'right' }, 2: { halign: 'center' } }
             });
+
+        // Sécurisation de la position Y pour éviter le crash "reading 'x'"
+        y = (Number(doc.lastAutoTable?.finalY) || y + 20) + 10;
         }
         doc.save(`rapport_caisse_detaille_${rapport._id}.pdf`);
     };
@@ -1038,7 +1153,7 @@ const RapportsTab = ({ onCorrect }) => {
                         <tr>
                             <th>Date</th>
                             <th>Total Ventes</th>
-                            <th>Dettes accordées</th>
+                            <th>Ventes Crédit (Dette)</th>
                             <th>Solde EXACT</th>
                             <th>Montant Clôturé</th>
                             <th>Écart</th>
@@ -1053,13 +1168,15 @@ const RapportsTab = ({ onCorrect }) => {
                             rapports.map(r => (
                                 <tr key={r._id}>
                                     <td>{new Date(r.createdAt).toLocaleDateString()}</td>
-                                    <td>{r.totalVentes.toLocaleString()} GNF</td>
-                                    <td>{(r.totalDettes || 0).toLocaleString()} GNF</td>
-                                    <td>{r.soldeTheorique.toLocaleString()} GNF</td>
-                                    <td>{r.montantCloture.toLocaleString()} GNF</td>
+                                    <td>{formatTableCurrency(r.totalVentes)}</td>
+                                    <td className="text-warning fw-bold">
+                                        {formatTableCurrency(r.totalDettes)}
+                                    </td>
+                                    <td className="fw-bold">{formatTableCurrency(r.soldeTheorique)}</td>
+                                    <td className="text-primary fw-bold">{formatTableCurrency(r.montantCloture)}</td>
                                     <td>
                                         <Badge bg={r.ecart === 0 ? 'success' : 'danger'}>
-                                            {r.ecart.toLocaleString()} GNF
+                                            {formatTableCurrency(r.ecart)}
                                         </Badge>
                                     </td>
                                     <td>{getStatusBadge(r.statut)}</td>
@@ -1119,6 +1236,30 @@ const RapportsTab = ({ onCorrect }) => {
                                             {selectedRapport.commentairesGérant || <em className="text-muted">Aucun commentaire envoyé.</em>}
                                         </div>
                                     </div>
+
+                                    {detailedReportData && detailedReportData.dettesAccordees?.length > 0 && (
+                                        <div className="mb-3">
+                                            <small className="text-warning fw-bold d-block mb-1">Dettes Accordées (Crédit) :</small>
+                                            <div className="border rounded bg-white" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                                                <Table size="sm" hover className="mb-0" style={{ fontSize: '0.85rem' }}>
+                                                    <thead className="table-warning">
+                                                        <tr>
+                                                            <th>Client</th>
+                                                            <th className="text-end">Montant</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {detailedReportData.dettesAccordees.map((d, i) => (
+                                                            <tr key={i}>
+                                                                <td>{d.client?.nom || 'N/A'}</td>
+                                                                <td className="text-end fw-bold text-danger">{(d.montant || 0).toLocaleString()} GNF</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </Table>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     {selectedRapport.commentairesAdmin && (
                                         <div className="mb-3 animate__animated animate__fadeIn">

@@ -4,32 +4,30 @@ const historiqueCaisseAdminSchema = new mongoose.Schema({
     rapport: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'RapportCaisse',
-        required: false, // Rendu optionnel pour d'autres types d'entrées
+        required: false,
     },
-    description: { // Description de la transaction pour plus de clarté
+    typeMouvement: {
         type: String,
+        enum: ['ENTREE', 'SORTIE'],
+        default: 'ENTREE'
+    },
+    description: { 
+        type: String,
+        required: false // Rendu optionnel pour les anciens enregistrements
     },
     montant: {
         type: Number,
         required: true,
     },
-    dateValidation: {
-        type: Date,
-        required: true,
+    dateTransaction: { 
+        type: Date, 
+        default: Date.now 
     },
-    gerant: {
-        type: String,
-        required: true,
-    },
-    boutique: {
-        type: String,
-        required: true,
-    },
-    admin: {
-        type: String,
-        required: true,
-    }
-}, { _id: false });
+    // Changement en Mixed pour accepter les noms (anciens) et les IDs (nouveaux)
+    gerant: { type: mongoose.Schema.Types.Mixed },
+    boutique: { type: mongoose.Schema.Types.Mixed },
+    admin: { type: mongoose.Schema.Types.Mixed }
+}, { _id: true }); // On garde l'ID pour pouvoir identifier une transaction précise
 
 const caisseAdminSchema = new mongoose.Schema({
     soldeActuel: {
@@ -40,13 +38,35 @@ const caisseAdminSchema = new mongoose.Schema({
     historique: [historiqueCaisseAdminSchema]
 }, { timestamps: true });
 
-// Utilisation d'un singleton pattern pour s'assurer qu'il n'y a qu'une seule caisse admin
+const CAISSE_ADMIN_SINGLETON_ID = new mongoose.Types.ObjectId('60c728b2f9b1c6a7e8d9f0a1');
+
+/**
+ * Pattern Singleton optimisé : 
+ * Garantit qu'un seul document de caisse centrale existe.
+ */
 caisseAdminSchema.statics.getInstance = async function() {
-    let instance = await this.findOne();
+    let instance = await this.findById(CAISSE_ADMIN_SINGLETON_ID);
     if (!instance) {
-        instance = await this.create({});
+        instance = await this.findOneAndUpdate(
+            { _id: CAISSE_ADMIN_SINGLETON_ID }, 
+            { $setOnInsert: { soldeActuel: 0, historique: [] } },
+            { upsert: true, new: true }
+        );
     }
     return instance;
+};
+
+/**
+ * Méthode helper pour ajouter un mouvement proprement
+ */
+caisseAdminSchema.methods.ajouterMouvement = async function(data, options = {}) {
+    if (data.typeMouvement === 'ENTREE') {
+        this.soldeActuel += data.montant;
+    } else {
+        this.soldeActuel -= data.montant;
+    }
+    this.historique.push(data);
+    return this.save(options);
 };
 
 const CaisseAdmin = mongoose.model('CaisseAdmin', caisseAdminSchema);

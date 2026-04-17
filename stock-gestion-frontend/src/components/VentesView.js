@@ -23,6 +23,7 @@ import CancelSaleModal from './CancelSaleModal';
 import ReceiptModal from './ReceiptModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import ScannerModal from './ScannerModal';
+import { playSuccessSound, playBeep } from '../utils/audioUtils';
 import { saveVenteOffline, syncVentes, getOfflineVentesCount } from '../utils/offlineSync';
 
 const VentesView = ({ userRole, initialTab = 'sale' }) => {
@@ -93,7 +94,15 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const params = { page: currentPage, limit: itemsPerPage, showCancelledOnly: showCancelledOnly };
+      
+      // Paramètres de filtrage : Si c'est un gérant, on filtre par son ID
+      const params = { 
+        page: currentPage, 
+        limit: itemsPerPage, 
+        showCancelledOnly: showCancelledOnly,
+        // On envoie l'ID du gérant au backend pour filtrage
+        gerantId: userRole === 'Gérant' ? localStorage.getItem('userId') : undefined 
+      };
 
       const promises = [
         articleAPI.getAll(),
@@ -103,7 +112,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       // Charger les clients uniquement si l'utilisateur n'est pas un admin,
       // car seul le gérant a besoin de la liste pour créer une nouvelle vente.
       if (userRole !== 'Admin') {
-        promises.push(clientAPI.getAll());
+        const boutiqueId = localStorage.getItem('boutiqueId');
+        promises.push(clientAPI.getAll({ boutiqueId }));
       }
 
       const results = await Promise.all(promises);
@@ -633,51 +643,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     setTimeout(() => barcodeInputRef.current?.focus(), 100);
   };
 
-  const playSuccessSound = () => {
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const now = audioCtx.currentTime;
-
-      const playTone = (freq, startOffset, duration) => {
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(freq, now + startOffset);
-        gainNode.gain.setValueAtTime(0.1, now + startOffset);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, now + startOffset + duration);
-        oscillator.start(now + startOffset);
-        oscillator.stop(now + startOffset + duration);
-      };
-
-      playTone(800, 0, 0.1); // Premier bip (Grave)
-      playTone(1200, 0.15, 0.2); // Deuxième bip (Aigu)
-    } catch (e) {
-      console.error("Audio error", e);
-    }
-  };
-
-  const playBeep = () => {
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime); // Fréquence 1000Hz
-      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); // Volume 10%
-      
-      oscillator.start();
-      oscillator.stop(audioCtx.currentTime + 0.1); // Durée 100ms
-    } catch (e) {
-      console.error("Audio error", e);
-    }
-  };
-
   // Logique de traitement du code-barres (extraite pour être utilisée par le scanner et l'input)
   const processBarcode = (code) => {
     if (!code) return;
@@ -862,9 +827,11 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       `}</style>
       <div className="d-flex justify-content-between align-items-center mb-4 gap-3">
         <h3 className="fw-bold mb-0 text-body">
-          {userRole === 'Admin' || activeTab === 'history' 
-            ? 'Historique des Ventes' 
-            : 'Effectuer une Vente'}
+          {activeTab === 'history' ? (
+            userRole === 'Admin' ? 'Historique Global' : 'Mes Ventes Personnelles'
+          ) : (
+            'Effectuer une Vente'
+          )}
           {offlineCount > 0 && (
             <Badge bg="warning" text="dark" pill className="ms-2 fs-6 align-middle shadow-sm animate__animated animate__bounceIn">
               <iconify-icon icon="solar:cloud-upload-bold-duotone" className="me-1 align-middle"></iconify-icon>

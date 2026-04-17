@@ -4,6 +4,7 @@ const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
 const Client = require('../models/Client');
 const DebtPayment = require('../models/DebtPayment');
+const Depense = require('../models/Depense');
 const mongoose = require('mongoose');
 
 exports.getDashboardStats = async (req, res) => {
@@ -31,7 +32,7 @@ exports.getDashboardStats = async (req, res) => {
             {
                 $match: {
                     statut: 'VALIDEE',
-                    dateValidation: { $gte: todayStart, $lte: todayEnd }
+                    datePaiement: { $gte: todayStart, $lte: todayEnd }
                 }
             },
             {
@@ -72,6 +73,16 @@ exports.getDashboardStats = async (req, res) => {
             }
         ]);
 
+        // Calcul des dépenses totales (Global)
+        const totalDepensesData = await Depense.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: '$montant' }
+                }
+            }
+        ]);
+
         // 3. Graphique Analyse des Ventes (Sales Analysis)
         let salesChartData = { categories: [], series: [] };
         let matchStage = {};
@@ -92,17 +103,70 @@ exports.getDashboardStats = async (req, res) => {
             groupStage = { _id: { $dayOfMonth: "$createdAt" }, total: { $sum: "$prixTotal" } };
         }
 
-        const salesDataRaw = await Vente.aggregate([
+        // Agrégation améliorée : CA, Coût et Dépenses par unité de temps et par boutique
+        const unitExpression = groupStage._id;
+        const detailedSalesRaw = await Vente.aggregate([
             { $match: matchStage },
-            { $group: groupStage },
-            { $sort: { _id: 1 } }
+            {
+                $lookup: {
+                    from: Article.collection.name,
+                    localField: 'article',
+                    foreignField: '_id',
+                    as: 'art'
+                }
+            },
+            { $unwind: '$art' },
+            { 
+                $project: { 
+                    unit: unitExpression, 
+                    boutique: 1, 
+                    ca: '$prixTotal', 
+                    cost: { $multiply: ['$quantite', '$art.prixAchat'] } 
+                } 
+            },
+            {
+                $unionWith: {
+                    coll: Depense.collection.name,
+                    pipeline: [
+                        { $match: matchStage },
+                        { $project: { unit: unitExpression, boutique: 1, depense: '$montant' } }
+                    ]
+                }
+            },
+            {
+                $lookup: {
+                    from: Boutique.collection.name,
+                    localField: 'boutique',
+                    foreignField: '_id',
+                    as: 'btq'
+                }
+            },
+            { $unwind: { path: '$btq', preserveNullAndEmptyArrays: true } },
+            {
+                $group: {
+                    _id: { unit: '$unit', boutique: { $ifNull: ['$btq.nom', 'Boutique Inconnue'] } },
+                    ca: { $sum: { $ifNull: ['$ca', 0] } },
+                    cost: { $sum: { $ifNull: ['$cost', 0] } },
+                    depense: { $sum: { $ifNull: ['$depense', 0] } }
+                }
+            },
+            { 
+                $project: { 
+                    _id: 0, 
+                    unit: '$_id.unit', 
+                    boutique: '$_id.boutique', 
+                    ca: 1, 
+                    profit: { $subtract: ['$ca', { $add: [{ $ifNull: ['$cost', 0] }, { $ifNull: ['$depense', 0] }] }] } 
+                } 
+            },
+            { $sort: { unit: 1 } }
         ]);
 
         // Formatage des données pour le graphique
         if (range === 'yearly') {
             const months = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"];
             const dataMap = new Array(12).fill(0);
-            salesDataRaw.forEach(item => { if(item._id) dataMap[item._id - 1] = item.total; });
+            detailedSalesRaw.forEach(item => { if(item.unit) dataMap[item.unit - 1] += item.ca; });
             salesChartData = {
                 categories: months,
                 series: [{ name: "Chiffre d'affaires", data: dataMap }]
@@ -111,7 +175,7 @@ exports.getDashboardStats = async (req, res) => {
             const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
             const days = Array.from({length: daysInMonth}, (_, i) => (i + 1).toString());
             const dataMap = new Array(daysInMonth).fill(0);
-            salesDataRaw.forEach(item => { if(item._id) dataMap[item._id - 1] = item.total; });
+            detailedSalesRaw.forEach(item => { if(item.unit) dataMap[item.unit - 1] += item.ca; });
             salesChartData = {
                 categories: days,
                 series: [{ name: "Chiffre d'affaires", data: dataMap }]
@@ -140,8 +204,24 @@ exports.getDashboardStats = async (req, res) => {
             series: topProducts.map(p => p.totalVendu)
         };
 
+        // --- NOUVEAU : Calcul des recouvrements par gérant pour le classement ---
+        const recoveriesByGerant = await DebtPayment.aggregate([
+            { $match: { statut: 'VALIDEE' } },
+            {
+                $group: {
+                    _id: '$gerant',
+                    total: { $sum: '$montant' }
+                }
+            }
+        ]);
+
+        const recoveryMap = {};
+        recoveriesByGerant.forEach(r => {
+            recoveryMap[r._id.toString()] = r.total;
+        });
+
         // 5. Performance par Gérant
-        const performanceGerants = await Vente.aggregate([
+        const performanceGerantsRaw = await Vente.aggregate([
             {
                 $group: {
                     _id: '$gerant',
@@ -170,7 +250,7 @@ exports.getDashboardStats = async (req, res) => {
             { $sort: { totalVendu: -1 } },
             {
                 $project: {
-                    _id: 0,
+                    id: '$_id',
                     nom: '$gerantDetails.nom',
                     boutiqueNom: '$boutiqueDetails.nom', // Inclure le nom de la boutique
                     chiffreAffaires: '$totalVendu'
@@ -178,8 +258,12 @@ exports.getDashboardStats = async (req, res) => {
             }
         ]);
 
-        // 6. Total des articles en stock
-        // 6. Performance par Boutique (Nouveau)
+        const performanceGerants = performanceGerantsRaw.map(g => ({
+            ...g,
+            totalRecouvrements: recoveryMap[g.id?.toString()] || 0
+        }));
+
+        // 6. Performance par Boutique
         const performanceBoutiques = await Vente.aggregate([
             {
                 $group: {
@@ -243,7 +327,10 @@ exports.getDashboardStats = async (req, res) => {
         // Construction de l'objet de statistiques pour le frontend
         const stats = {
             totalCA: totalCAData[0]?.totalCA || 0,
-            totalBenefice: (totalCAData[0]?.totalCA || 0) - (totalCoutAchatData[0]?.totalCoutAchat || 0),
+            totalBenefice: 
+                (totalCAData[0]?.totalCA || 0) - 
+                (totalCoutAchatData[0]?.totalCoutAchat || 0) - 
+                (totalDepensesData[0]?.total || 0),
             totalArticles: totalArticlesInStock[0]?.total || 0,
             totalVentes: await Vente.countDocuments(),
             performanceGerants: performanceGerants,
@@ -256,7 +343,8 @@ exports.getDashboardStats = async (req, res) => {
             dailyOrders: dailyStats[0]?.dailyOrders || 0,
             dailyRecoveries: dailyRecoveriesStats[0]?.total || 0, // Ajout du recouvrement du jour
             salesProfit: salesChartData,
-            productSales: productChartData
+            productSales: productChartData,
+            detailedSales: detailedSalesRaw // On envoie les données brutes pour le traitement frontend
         };
 
         res.status(200).json(stats);

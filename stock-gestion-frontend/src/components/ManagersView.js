@@ -76,19 +76,28 @@ const ManagersView = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
     try {
+      // Préparation des données propres
+      const payload = { ...formData };
+      
+      // En mode édition, on n'envoie pas le mot de passe s'il est vide
+      if (editMode && !payload.password) {
+        delete payload.password;
+      }
+
       if (editMode) {
-        await authAPI.updateManager(currentManagerId, formData);
-        setSuccessMessage('Gérant mis à jour !');
+        await authAPI.updateManager(currentManagerId, payload);
+        setSuccessMessage('Le profil du gérant a été mis à jour avec succès !');
       } else {
-        await authAPI.createManager(formData);
-        setSuccessMessage('Gérant créé !');
+        await authAPI.createManager(payload);
+        setSuccessMessage('Nouveau gérant créé avec succès !');
       }
       setShowModal(false);
       fetchData();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError("Erreur d'enregistrement.");
+      setError(err.response?.data?.message || "Une erreur est survenue lors de l'enregistrement.");
     }
   };
 

@@ -32,14 +32,23 @@ const ouvertureCaisseSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
+    // Utile pour le calcul rapide du solde théorique
     totalDepenses: {
         type: Number,
         default: 0,
     },
+    // NOUVEAU : Cumul des dettes encaissées durant cette session
+    totalRecouvrements: {
+        type: Number,
+        default: 0,
+    }
 }, { timestamps: true });
 
-// Index pour s'assurer qu'un gérant ne peut avoir qu'une seule caisse ouverte à la fois
-ouvertureCaisseSchema.index({ gerant: 1, statut: 1 }, { unique: true, partialFilterExpression: { statut: 'OUVERTE' } });
+// Index de sécurité (Excellent choix de ta part)
+ouvertureCaisseSchema.index(
+    { gerant: 1, statut: 1 }, 
+    { unique: true, partialFilterExpression: { statut: 'OUVERTE' } }
+);
 
 const OuvertureCaisse = mongoose.model('OuvertureCaisse', ouvertureCaisseSchema);
 module.exports = OuvertureCaisse;

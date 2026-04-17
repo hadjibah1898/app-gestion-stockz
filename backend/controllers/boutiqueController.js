@@ -1,27 +1,65 @@
+const mongoose = require('mongoose');
 const Boutique = require('../models/Boutique');
 const Article = require('../models/Article');
+const User = require('../models/User');
 const { logAction } = require('../services/auditLogService');
 
 /**
  * @desc    Créer une boutique
- * @route   POST /api/boutiques
- * @access  Private/Admin
  */
 exports.createBoutique = async (req, res) => {
     try {
-        // Logique pour s'assurer qu'il n'y a qu'une seule Boutique Centrale
-        if (req.body.type === 'Centrale') { // L'enum 'Centrale' reste, seul le texte affiché change
+        // 1. Unicité de la Boutique Centrale
+        if (req.body.type === 'Centrale') {
             const centraleExists = await Boutique.findOne({ type: 'Centrale' });
             if (centraleExists) {
-                return res.status(400).json({ message: "Un Dépôt Principal existe déjà. Il ne peut y en avoir qu'un." });
+                return res.status(400).json({ message: "Un Dépôt Principal existe déjà." });
+            }
+        }
+
+        const { nom, adresse, active, type, vendeurs, latitude, longitude } = req.body;
+        
+        // 2. Préparation et filtrage des gérants
+        let managersToCheck = Array.isArray(vendeurs) ? vendeurs : (vendeurs ? [vendeurs] : []);
+        // Filtrer les IDs non valides avant de les utiliser
+        managersToCheck = managersToCheck.filter(id => id && mongoose.Types.ObjectId.isValid(id));
+
+        // Vérification que les utilisateurs sont bien des gérants
+        const validManagers = await User.find({ _id: { $in: managersToCheck }, role: 'Gérant' });
+        if (validManagers.length !== managersToCheck.length) {
+            return res.status(400).json({ message: "Certains utilisateurs sélectionnés ne sont pas des gérants valides." });
+        }
+
+        // 3. CONTRAINTE : Un gérant ne gère qu'une seule boutique
+        if (managersToCheck.length > 0) {
+            const alreadyAssigned = await Boutique.findOne({ vendeurs: { $in: managersToCheck } });
+            if (alreadyAssigned) {
+                return res.status(400).json({ 
+                    message: `L'un des gérants sélectionnés est déjà assigné à : ${alreadyAssigned.nom}` 
+                });
             }
         }
 
         const boutiqueData = {
-            ...req.body,
-            createur: req.user.id // Ajout de l'ID de l'admin créateur
+            nom,
+            adresse,
+            active: active !== undefined ? active : true,
+            type: type || 'Secondaire',
+            vendeurs: managersToCheck,
+            latitude: (latitude !== undefined && latitude !== "") ? Number(latitude) : 9.6412,
+            longitude: (longitude !== undefined && longitude !== "") ? Number(longitude) : -13.5784,
+            createur: req.user.id
         };
+
         const boutique = await Boutique.create(boutiqueData);
+
+        // SYNCHRONISATION : Mettre à jour le champ boutique sur les gérants assignés
+        if (managersToCheck.length > 0) {
+            await User.updateMany(
+                { _id: { $in: managersToCheck } },
+                { $set: { boutique: boutique._id } }
+            );
+        }
 
         await logAction({
             req,
@@ -35,93 +73,87 @@ exports.createBoutique = async (req, res) => {
 
         res.status(201).json(boutique);
     } catch (error) {
-        // Pas de log d'audit pour les erreurs de validation simples
-        res.status(400).json({ message: "Erreur lors de la création de la boutique", error: error.message });
+        if (error.code === 11000) return res.status(400).json({ message: "Nom de boutique déjà utilisé." });
+        res.status(400).json({ message: error.message });
     }
 };
 
 /**
- * @desc    Lister toutes les boutiques
- * @route   GET /api/boutiques
- * @access  Private/Admin
- */
-exports.getAllBoutiques = async (req, res) => {
-    try {
-        // Utilisation d'une agrégation pour inclure le nombre d'articles par boutique
-        const boutiques = await Boutique.aggregate([
-            {
-                $lookup: {
-                    from: 'articles', // Nom de la collection des articles
-                    localField: '_id',
-                    foreignField: 'boutique',
-                    as: 'articles'
-                }
-            },
-            {
-                $addFields: {
-                    articleCount: { $size: '$articles' } // Ajoute le champ articleCount
-                }
-            },
-            {
-                $project: {
-                    articles: 0 // Exclut le tableau complet des articles de la réponse finale
-                }
-            },
-            { $sort: { type: 1, nom: 1 } } // Trie pour mettre la boutique Centrale en premier, puis par nom
-        ]);
-        res.status(200).json(boutiques);
-    } catch (error) {
-        res.status(500).json({ message: "Impossible de récupérer les boutiques", error: error.message });
-    }
-};
-
-/**
- * @desc    Modifier une boutique (nom, adresse, statut actif/inactif)
- * @route   PUT /api/boutiques/:id
- * @access  Private/Admin
+ * @desc    Modifier une boutique
  */
 exports.updateBoutique = async (req, res) => {
     try {
-        // Logique de validation avancée pour le changement de type
-        const boutiqueToUpdate = await Boutique.findById(req.params.id).lean();
-        if (req.body.type) {
-            if (!boutiqueToUpdate) {
-                return res.status(404).json({ message: "Boutique introuvable." });
-            }
+        const boutiqueId = req.params.id;
+        const boutiqueToUpdate = await Boutique.findById(boutiqueId).lean();
+        
+        if (!boutiqueToUpdate) return res.status(404).json({ message: "Boutique introuvable." });
 
-            // Cas 1 : On essaie de passer une boutique en 'Centrale'
+        // 1. Validation du type (Centrale)
+        if (req.body.type) {
             if (req.body.type === 'Centrale' && boutiqueToUpdate.type !== 'Centrale') {
                 const centraleExists = await Boutique.findOne({ type: 'Centrale' });
-                if (centraleExists) {
-                    return res.status(400).json({ message: "Un Dépôt Principal existe déjà. Impossible d'en définir un deuxième." });
-                }
+                if (centraleExists) return res.status(400).json({ message: "Un Dépôt Principal existe déjà." });
             }
-
-            // Cas 2 : On essaie de changer le type de la boutique 'Centrale' actuelle
             if (req.body.type !== 'Centrale' && boutiqueToUpdate.type === 'Centrale') {
-                return res.status(400).json({ message: "Le type du Dépôt Principal ne peut pas être modifié. C'est le pilier du système." });
+                return res.status(400).json({ message: "Le type du Dépôt Principal ne peut pas être modifié." });
             }
         }
 
-        const updateData = {
-            ...req.body,
-            dernierModificateur: req.user.id // Ajout de l'ID de l'admin modificateur
+        // 2. Gestion des gérants (Tableau)
+        let newManagers = Array.isArray(req.body.vendeurs) ? req.body.vendeurs : (req.body.vendeurs ? [req.body.vendeurs] : []);
+        newManagers = newManagers.filter(id => id && id.length === 24);
+
+        // 3. CONTRAINTE : Un gérant ne gère qu'une seule boutique
+        // On vérifie si les gérants choisis sont déjà dans une AUTRE boutique
+        if (newManagers.length > 0) {
+            const alreadyAssigned = await Boutique.findOne({ 
+                _id: { $ne: boutiqueId }, 
+                vendeurs: { $in: newManagers } 
+            });
+
+            if (alreadyAssigned) {
+                return res.status(400).json({ 
+                    message: `L'un des gérants est déjà affecté à "${alreadyAssigned.nom}".` 
+                });
+            }
+        }
+
+        // SYNCHRONISATION DES GÉRANTS
+        // 1. Retirer la boutique des anciens gérants qui ne sont plus dans la liste
+        const oldManagers = boutiqueToUpdate.vendeurs.map(id => id.toString());
+        const removedManagers = oldManagers.filter(id => !newManagers.includes(id));
+        if (removedManagers.length > 0) {
+            await User.updateMany({ _id: { $in: removedManagers } }, { $set: { boutique: null } });
+        }
+
+        // 2. Ajouter la boutique aux nouveaux gérants
+        if (newManagers.length > 0) {
+            await User.updateMany({ _id: { $in: newManagers } }, { $set: { boutique: boutiqueId } });
+        }
+
+        const { nom, adresse, active, type, latitude, longitude } = req.body;
+
+        const updateObject = {
+            $set: {
+                nom: nom || boutiqueToUpdate.nom,
+                adresse: adresse || boutiqueToUpdate.adresse,
+                active: active !== undefined ? active : boutiqueToUpdate.active,
+                type: type || boutiqueToUpdate.type,
+                vendeurs: newManagers,
+                latitude: (latitude !== "" && !isNaN(Number(latitude))) ? Number(latitude) : boutiqueToUpdate.latitude,
+                longitude: (longitude !== "" && !isNaN(Number(longitude))) ? Number(longitude) : boutiqueToUpdate.longitude,
+                dernierModificateur: req.user.id
+            },
+            $unset: { vendeur: "" } // Nettoyage de l'ancien champ singulier
         };
 
-        const boutique = await Boutique.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true }).lean();
-        if (!boutique) return res.status(404).json({ message: "Boutique introuvable." });
+        const boutique = await Boutique.findByIdAndUpdate(boutiqueId, updateObject, { new: true, runValidators: true })
+            .populate('vendeurs', 'nom email')
+            .lean();
 
         await logAction({
-            req,
-            user: req.user,
-            action: 'UPDATE_BOUTIQUE',
-            entity: 'Boutique',
-            entityId: boutique._id,
-            details: {
-                before: boutiqueToUpdate,
-                after: boutique
-            },
-            status: 'SUCCESS'
+            req, user: req.user, action: 'UPDATE_BOUTIQUE', entity: 'Boutique', entityId: boutique._id,
+            details: { before: boutiqueToUpdate, after: boutique }, status: 'SUCCESS'
         });
 
         res.status(200).json(boutique);
@@ -131,44 +163,83 @@ exports.updateBoutique = async (req, res) => {
 };
 
 /**
+ * @desc    Lister toutes les boutiques (avec agrégation)
+ */
+exports.getAllBoutiques = async (req, res) => {
+    try {
+        const boutiques = await Boutique.aggregate([
+            { $sort: { type: 1, nom: 1 } },
+            {
+                $lookup: {
+                    from: 'articles',
+                    localField: '_id',
+                    foreignField: 'boutique',
+                    as: 'articles'
+                }
+            },
+            {
+                $addFields: {
+                    // Fusion et nettoyage des anciens/nouveaux gérants pour l'affichage
+                    vendeurs: {
+                        $map: {
+                            input: {
+                                $setUnion: [
+                                    { $cond: [{ $isArray: "$vendeurs" }, "$vendeurs", []] },
+                                    { $cond: [
+                                        { $and: [{ $gt: ["$vendeur", null] }, { $ne: ["$vendeur", ""] }] },
+                                        ["$vendeur"],
+                                        []
+                                    ]}
+                                ]
+                            },
+                            as: "v",
+                            in: { 
+                                $convert: { 
+                                    input: "$$v", 
+                                    to: "objectId", 
+                                    onError: null, // Gère les IDs malformés sans faire planter
+                                    onNull: null 
+                                } 
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'vendeurs',
+                    foreignField: '_id',
+                    as: 'vendeurs'
+                }
+            },
+            { $addFields: { articleCount: { $size: '$articles' } } },
+            { $project: { articles: 0 } }
+        ]);
+        res.status(200).json(boutiques);
+    } catch (error) {
+        res.status(500).json({ message: "Erreur serveur", error: error.message });
+    }
+};
+
+/**
  * @desc    Supprimer une boutique
- * @route   DELETE /api/boutiques/:id
- * @access  Private/Admin
  */
 exports.deleteBoutique = async (req, res) => {
     try {
         const boutiqueToDelete = await Boutique.findById(req.params.id).lean();
-        if (!boutiqueToDelete) {
-            return res.status(404).json({ message: "Boutique introuvable." });
-        }
+        if (!boutiqueToDelete) return res.status(404).json({ message: "Boutique introuvable." });
+        if (boutiqueToDelete.type === 'Centrale') return res.status(400).json({ message: "Action interdite sur le Dépôt Principal." });
 
-        // On ne peut pas supprimer la boutique centrale
-        if (boutiqueToDelete.type === 'Centrale') {
-            return res.status(400).json({ message: "Le Dépôt Principal ne peut pas être supprimé." });
-        }
-
-        // Vérifier s'il reste des articles dans la boutique avant de supprimer
         const articlesCount = await Article.countDocuments({ boutique: req.params.id });
-        
         if (articlesCount > 0) {
-            return res.status(400).json({ 
-                message: `⚠️ Suppression impossible : Cette boutique contient encore ${articlesCount} article(s). Veuillez utiliser le bouton "Transférer Stock" pour déplacer les articles vers une autre boutique avant de la supprimer.` 
-            });
+            return res.status(400).json({ message: `Boutique non vide (${articlesCount} articles).` });
         }
 
         await Boutique.findByIdAndDelete(req.params.id);
+        await logAction({ req, user: req.user, action: 'DELETE_BOUTIQUE', entity: 'Boutique', entityId: req.params.id, status: 'SUCCESS' });
 
-        await logAction({
-            req,
-            user: req.user,
-            action: 'DELETE_BOUTIQUE',
-            entity: 'Boutique',
-            entityId: boutiqueToDelete._id,
-            details: { deletedBoutique: boutiqueToDelete },
-            status: 'SUCCESS'
-        });
-
-        res.status(200).json({ message: "Boutique supprimée avec succès" });
+        res.status(200).json({ message: "Supprimée avec succès" });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la suppression", error: error.message });
     }

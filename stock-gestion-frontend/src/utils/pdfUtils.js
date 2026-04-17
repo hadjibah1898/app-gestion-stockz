@@ -35,7 +35,6 @@ export const generateSupplyReceipt = (mvt, action = 'download') => {
             a.nomArticle, 
             a.quantite, 
             a.prixAchatUnitaire ? `${formatPrice(a.prixAchatUnitaire)} GNF` : '-',
-            a.prixAchatUnitaire ? `${formatPrice(a.prixAchatUnitaire)} GNF` : '-', 
             a.prixAchatUnitaire ? `${formatPrice(a.prixAchatUnitaire * a.quantite)} GNF` : '-'
         ]),
         theme: 'grid',
@@ -44,10 +43,8 @@ export const generateSupplyReceipt = (mvt, action = 'download') => {
 
     const finalY = doc.lastAutoTable.finalY + 30;
     doc.setFontSize(10).setFont("helvetica", "bold");
-    doc.text("Signature du fournisseur", 40, finalY, { align: 'center' });
-    doc.text("Signature du magasinier", 150, finalY, { align: 'center' });
-    doc.text("Signature Fournisseur", 40, finalY, { align: 'center' });
-    doc.text("Signature Magasinier", 150, finalY, { align: 'center' });
+    doc.text("Signature du Fournisseur", 40, finalY, { align: 'center' });
+    doc.text("Signature du Magasinier", 150, finalY, { align: 'center' });
     doc.setDrawColor(200).line(20, finalY + 15, 60, finalY + 15).line(130, finalY + 15, 170, finalY + 15);
 
     if (action === 'preview') window.open(doc.output('bloburl'), '_blank');
@@ -62,7 +59,7 @@ export const generateTransferReceipt = (mvt, action = 'download') => {
     const doc = new jsPDF();
     doc.addImage(logo, 'PNG', 14, 10, 40, 15);
     doc.setFontSize(18).setTextColor(25, 118, 210).setFont("helvetica", "bold");
-    doc.text("BON DE TRANSFERT DE STOCK", 105, 20, { align: 'center' });
+    doc.text("BON TRANSFERT DE STOCK", 105, 20, { align: 'center' });
     
     doc.setFontSize(10).setTextColor(100).setFont("helvetica", "normal");
     doc.text(`ID Transfert : #TR-${mvt._id.toString().slice(-6).toUpperCase()}`, 105, 27, { align: 'center' });

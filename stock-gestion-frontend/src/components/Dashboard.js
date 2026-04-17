@@ -3,23 +3,34 @@
 // Affiche les statistiques clés, les graphiques et les raccourcis vers les fonctionnalités principales
 // Permet de visualiser rapidement l'état du stock et les performances
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Row, Col, Card, Alert, Table, Badge, Button, Pagination, Placeholder, Toast, ToastContainer, Modal, Form, Spinner } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
-import { dashboardAPI, articleAPI, clientAPI } from '../services/api'; // Import the new API
+import { dashboardAPI, articleAPI, clientAPI, caisseAPI } from '../services/api'; // Import the new API
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './Dashboard.css';
 import logo from '../assets/logo.png'; // Assurez-vous que le chemin vers votre logo est correct
 import { boutiqueAPI } from '../services/api'; // Import boutiqueAPI
+import { playSuccessSound } from '../utils/audioUtils';
 import { getOfflineVentesCount, syncVentes } from '../utils/offlineSync';
 
 // Helper to format currency
+// Helper to safely convert value to number (handles Decimal128 from MongoDB)
+const safeNum = (value) => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return parseFloat(value) || 0;
+  if (typeof value === 'object' && value.$numberDecimal) {
+    return parseFloat(value.$numberDecimal) || 0;
+  }
+  return 0;
+};
+
 const formatCurrency = (value) => {
-  if (typeof value !== 'number') return '...';
   // Remplace les espaces insécables par des espaces normaux pour le support PDF
-  return (value.toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
+  return (safeNum(value).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
 };
 
 // --- Composants Modernes UI ---
@@ -82,12 +93,17 @@ const DashboardSkeleton = () => (
 );
 
 const Dashboard = () => {
-  const { theme } = useOutletContext(); // Récupération du thème (light/dark)
+  const { theme, userRole } = useOutletContext(); // Récupération du thème et du rôle
   const [searchParams, setSearchParams] = useSearchParams();
   const [stats, setStats] = useState(null);
   const [lowStockArticles, setLowStockArticles] = useState([]);
+  const [boutiques, setBoutiques] = useState([]);
+  const [rapports, setRapports] = useState([]); // État pour les rapports de caisse
   const [allArticles, setAllArticles] = useState([]); // Nouvel état pour stocker tous les articles
   const [evolutionData, setEvolutionData] = useState([]);
+  const [isDetailedDebt, setIsDetailedDebt] = useState(false); // Option de comparaison par boutique
+  const [isDetailedSales, setIsDetailedSales] = useState(false); // Comparaison ventes par boutique
+  const [salesMetric, setSalesMetric] = useState('ca'); // 'ca' ou 'profit'
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', variant: 'light' });
   const [timeRange, setTimeRange] = useState('monthly'); // 1. Ajouter l'état pour le filtre
@@ -109,11 +125,12 @@ const Dashboard = () => {
         setLoading(true);
         // Simplification : On fait confiance au backend pour les statistiques.
         // On ne récupère plus l'historique complet des ventes ici.
-        const [statsRes, articlesRes, boutiquesRes, evolutionRes] = await Promise.all([
+        const [statsRes, articlesRes, boutiquesRes, evolutionRes, rapportsRes] = await Promise.all([
           dashboardAPI.getStats({ range: timeRange }),
           articleAPI.getAll(),
           boutiqueAPI.getAll(),
-          clientAPI.getDebtEvolution()
+          clientAPI.getDebtEvolution(),
+          caisseAPI.listerRapports({ limit: 100 }) // Récupérer les rapports récents
         ]);
         
         let statsData = statsRes.data || {};
@@ -126,10 +143,12 @@ const Dashboard = () => {
         if (centrale) setCentralShopId(centrale._id);
         
         setStats(statsData);
+        setBoutiques(allBoutiques);
+        setRapports(rapportsRes.data || []);
         setAllArticles(fetchedArticles); // Sauvegarder tous les articles pour la recherche ultérieure
         
         // Calcul du stock faible (seuil arbitraire à 10 unités)
-        const lowStockItems = fetchedArticles.filter(a => a.quantite <= 10);
+        const lowStockItems = fetchedArticles.filter(a => safeNum(a.quantite) <= 10);
         setLowStockArticles(lowStockItems);
         
         const count = await getOfflineVentesCount();
@@ -154,31 +173,6 @@ const Dashboard = () => {
     fetchStats();
   }, [timeRange, refreshTrigger]); // Redéclencher si le filtre change OU si une action est effectuée
 
-  const playSuccessSound = () => {
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const now = audioCtx.currentTime;
-
-      const playTone = (freq, startOffset, duration) => {
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(freq, now + startOffset);
-        gainNode.gain.setValueAtTime(0.1, now + startOffset);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, now + startOffset + duration);
-        oscillator.start(now + startOffset);
-        oscillator.stop(now + startOffset + duration);
-      };
-
-      playTone(800, 0, 0.1);
-      playTone(1200, 0.15, 0.2);
-    } catch (e) {
-      console.error("Audio error", e);
-    }
-  };
-
   const handleSyncManual = async () => {
     const result = await syncVentes();
     if (result.success > 0) {
@@ -195,10 +189,38 @@ const Dashboard = () => {
   const gridColor = theme === 'dark' ? '#444c56' : '#f1f1f1';
   const cardBg = theme === 'dark' ? '#22272e' : '#ffffff';
 
+  // Calcul dynamique des séries du graphique d'Analyse des Ventes
+  const processedSalesSeries = useMemo(() => {
+    if (!stats?.detailedSales || !stats?.salesProfit?.categories) return [];
+    
+    const categories = stats.salesProfit.categories;
+    const metricName = salesMetric === 'ca' ? "Chiffre d'affaires" : "Bénéfice Net";
+
+    if (!isDetailedSales) {
+        // Vue Globale (identique à l'ancienne version mais peut switcher metric)
+        const dataMap = new Array(categories.length).fill(0);
+        stats.detailedSales.forEach(item => {
+            if (item.unit) dataMap[item.unit - 1] += safeNum(item[salesMetric]);
+        });
+        return [{ name: metricName, data: dataMap }];
+    } else {
+        // Vue par Boutique
+        const uniqueBoutiques = [...new Set(stats.detailedSales.map(d => d.boutique))];
+        return uniqueBoutiques.map(bName => {
+            const data = new Array(categories.length).fill(0);
+            stats.detailedSales.filter(d => d.boutique === bName).forEach(item => {
+                if (item.unit) data[item.unit - 1] = safeNum(item[salesMetric]);
+            });
+            return { name: bName, data };
+        });
+    }
+  }, [stats, isDetailedSales, salesMetric]);
+
   // Chart configurations now depend on state
   const salesChartOptions = {
     chart: { type: 'area', toolbar: { show: false }, fontFamily: 'inherit', foreColor: textColor },
-    colors: ['#0d6efd', '#a7e05f'],
+    colors: isDetailedSales ? undefined : (salesMetric === 'ca' ? ['#0d6efd'] : ['#198754']),
+    legend: { show: isDetailedSales, position: 'top', labels: { colors: textColor } },
     dataLabels: { enabled: false },
     stroke: { curve: 'smooth', width: 2 },
     fill: { 
@@ -231,9 +253,42 @@ const Dashboard = () => {
     stroke: { show: true, colors: [cardBg], width: 2 } // Bordure pour séparer les segments
   };
 
+  // Calcul des données d'évolution de la dette (Global ou Par Boutique)
+  const processedDebtData = useMemo(() => {
+    if (!evolutionData || evolutionData.length === 0) return { categories: [], series: [], totalLatest: 0 };
+
+    const uniqueDates = [...new Set(evolutionData.map(d => d.date))].sort();
+    
+    if (isDetailedDebt) {
+        const uniqueBoutiques = [...new Set(evolutionData.map(d => d.boutiqueName))];
+        const series = uniqueBoutiques.map(bName => {
+            let runningTotal = 0;
+            const data = uniqueDates.map(date => {
+                const dailyEntries = evolutionData.filter(d => d.date === date && d.boutiqueName === bName);
+                runningTotal += dailyEntries.reduce((acc, curr) => acc + safeNum(curr.netChange), 0);
+                return runningTotal;
+            });
+            return { name: bName, data };
+        });
+        const totalLatest = series.reduce((sum, s) => sum + s.data[s.data.length - 1], 0);
+        return { categories: uniqueDates, series, totalLatest };
+    } else {
+        let globalRunningTotal = 0;
+        const data = uniqueDates.map(date => {
+            const dailyNetChange = evolutionData
+                .filter(d => d.date === date)
+                .reduce((acc, curr) => acc + safeNum(curr.netChange), 0);
+            globalRunningTotal += dailyNetChange;
+            return globalRunningTotal;
+        });
+        return { categories: uniqueDates, series: [{ name: "Dette Totale", data }], totalLatest: globalRunningTotal };
+    }
+  }, [evolutionData, isDetailedDebt]);
+
   const debtEvolutionChartOptions = {
     chart: { type: 'area', toolbar: { show: false }, fontFamily: 'inherit', foreColor: textColor },
-    colors: ['#dc3545'], // Red for debt
+    colors: isDetailedDebt ? undefined : ['#dc3545'], // Couleur fixe pour le global, dynamique pour la comparaison
+    legend: { show: isDetailedDebt, position: 'top', labels: { colors: textColor } },
     dataLabels: { enabled: false },
     stroke: { curve: 'smooth', width: 2 },
     fill: { 
@@ -242,8 +297,8 @@ const Dashboard = () => {
     },
     xaxis: { 
         type: 'datetime',
-        categories: evolutionData.map(d => d.date) 
-    },
+        categories: processedDebtData.categories 
+    }, // Categories are dates, so no safeNum needed here directly on the date string
     yaxis: {
         title: { text: 'Montant Total des Dettes (GNF)' }
     },
@@ -252,13 +307,89 @@ const Dashboard = () => {
         x: { format: 'dd MMM yyyy' },
         y: {
             formatter: function (val) {
-                return val.toLocaleString('fr-FR') + " GNF"
+                return safeNum(val).toLocaleString('fr-FR') + " GNF"
             }
         }
     },
     grid: { borderColor: gridColor }
   };
-  const debtEvolutionChartSeries = [{ name: "Dette Totale", data: evolutionData.map(d => d.totalDebt) }];
+  const debtEvolutionChartSeries = processedDebtData.series;
+
+  // Préparation des données pour le graphique des écarts sur 7 jours (Déplacé depuis AdminCaisseView)
+  const ecartsChartData = useMemo(() => {
+    const last7Days = [...Array(7)].map((_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        return d.toISOString().split('T')[0];
+    }).reverse();
+
+    // Extraire les boutiques uniques présentes dans les rapports chargés
+    const uniqueBoutiques = [...new Set(rapports.map(r => r.boutique?.nom || 'Boutique Inconnue'))];
+
+    const series = uniqueBoutiques.map(boutiqueNom => {
+        const data = last7Days.map(date => {
+            return rapports
+                .filter(r => 
+                    new Date(r.createdAt).toISOString().split('T')[0] === date && 
+                    (r.boutique?.nom || 'Boutique Inconnue') === boutiqueNom
+                )
+                .reduce((acc, r) => acc + safeNum(r.ecart), 0);
+        });
+        return { name: boutiqueNom, data };
+    });
+
+    return {
+        options: {
+            chart: { 
+                type: 'bar', 
+                stacked: true,
+                toolbar: { show: false },
+                fontFamily: 'inherit',
+                foreColor: textColor
+            },
+            plotOptions: {
+                bar: { columnWidth: '70%', borderRadius: 4 }
+            },
+            xaxis: {
+                categories: last7Days.map(d => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
+            },
+            yaxis: { title: { text: 'Écart (GNF)' } },
+            tooltip: { theme: theme, y: { formatter: (val) => val.toLocaleString() + ' GNF' } },
+            legend: { position: 'top', labels: { colors: textColor } },
+            grid: { borderColor: gridColor }
+        },
+        series: series
+    };
+  }, [rapports, theme, textColor, gridColor]);
+
+  // Graphique de Performance par Boutique (Barres)
+  const boutiquePerformanceChart = useMemo(() => {
+    if (!stats?.performanceBoutiques) return null;
+    
+    return {
+      series: [{
+        name: "Chiffre d'affaires",
+        data: stats.performanceBoutiques.map(b => safeNum(b.chiffreAffaires))
+      }],
+      options: {
+        chart: { type: 'bar', toolbar: { show: false }, fontFamily: 'inherit' },
+        plotOptions: {
+          bar: { borderRadius: 4, horizontal: true, dataLabels: { position: 'top' } }
+        },
+        colors: ['#0d6efd'],
+        dataLabels: {
+          enabled: true,
+          formatter: (val) => formatCurrency(val),
+          style: { fontSize: '10px', colors: [textColor] }
+        },
+        xaxis: {
+          categories: stats.performanceBoutiques.map(b => b.nom),
+          labels: { show: false }
+        },
+        tooltip: { theme: theme, y: { formatter: (val) => formatCurrency(val) } }
+      }
+    };
+  }, [stats, theme, textColor]);
 
   // Logique de pagination
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -292,13 +423,13 @@ const Dashboard = () => {
     finalY += 5;
 
     const summaryData = [
-        ['Ventes du Jour', formatCurrency(stats?.dailySales)],
-        ['Commandes du Jour', stats?.dailyOrders || 0],
-        ['Recouvrement du Jour', formatCurrency(stats?.dailyRecoveries)],
-        ['Chiffre d\'Affaires Total', formatCurrency(stats?.totalCA)],
-        ['Bénéfice Net Total', formatCurrency(stats?.totalBenefice)],
-        ['Dette Totale Actuelle', formatCurrency(evolutionData[evolutionData.length - 1]?.totalDebt || 0)],
-        ['Articles en Stock Faible', `${lowStockArticles.length} article(s)`],
+        ['Ventes du Jour', formatCurrency(safeNum(stats?.dailySales))],
+        ['Commandes du Jour', safeNum(stats?.dailyOrders)],
+        ['Recouvrement du Jour', formatCurrency(safeNum(stats?.dailyRecoveries))],
+        ['Chiffre d\'Affaires Total', formatCurrency(safeNum(stats?.totalCA))],
+        ['Bénéfice Net Total', formatCurrency(safeNum(stats?.totalBenefice))],
+        ['Dette Totale Actuelle', formatCurrency(safeNum(processedDebtData.totalLatest))],
+        ['Articles en Stock Faible', `${lowStockArticles.length} article(s)`], // lowStockArticles.length is already a number
     ];
 
     autoTable(doc, {
@@ -316,19 +447,65 @@ const Dashboard = () => {
     });
     finalY = doc.lastAutoTable.finalY + 10;
 
-    // --- 3. PERFORMANCE PAR BOUTIQUE ---
+    // --- 3. PERFORMANCE ET VOLUME PAR BOUTIQUE (GRAPHIQUE VISUEL) ---
     if (stats?.performanceBoutiques?.length > 0) {
         doc.setFontSize(14);
         doc.setTextColor(41, 128, 185);
-        doc.text("Performance par Boutique", 14, finalY);
+        doc.text("Répartition du Chiffre d'Affaires par Boutique", 14, finalY);
         finalY += 5;
+
+        const totalCA = stats.performanceBoutiques.reduce((sum, b) => sum + (b.chiffreAffaires || 0), 0);
+        const maxCA = Math.max(...stats.performanceBoutiques.map(b => b.chiffreAffaires || 0));
+
         autoTable(doc, {
             startY: finalY,
-            head: [['Boutique', 'Chiffre d\'Affaires']],
-            body: stats.performanceBoutiques.map(b => [b.nom, formatCurrency(b.chiffreAffaires)]),
+            head: [['Boutique', 'Chiffre d\'Affaires', '% Contribution', 'Volume']],
+            body: stats.performanceBoutiques.map(b => {
+                const percentage = totalCA > 0 ? ((b.chiffreAffaires / totalCA) * 100).toFixed(1) : 0;
+                return [b.nom, formatCurrency(b.chiffreAffaires), `${percentage}%`, ''];
+            }), // Performance par Boutique
             theme: 'striped',
             headStyles: { fillColor: [41, 128, 185] },
-            columnStyles: { 1: { halign: 'right' } }
+            columnStyles: { 
+                1: { halign: 'right' }, 
+                2: { halign: 'center' },
+                3: { cellWidth: 40 } 
+            },
+            didDrawCell: (data) => {
+                // Dessiner une barre de progression horizontale dans la dernière colonne
+                if (data.column.index === 3 && data.section === 'body') {
+                    const rowIndex = data.row.index; // Performance par Boutique
+                    const boutiqueCA = stats.performanceBoutiques[rowIndex].chiffreAffaires || 0;
+                    const barWidth = maxCA > 0 ? (boutiqueCA / maxCA) * 30 : 0; // Max 30mm
+                    doc.setFillColor(230, 230, 230); // Fond de la barre
+                    doc.rect(data.cell.x + 2, data.cell.y + 4, 30, 3, 'F');
+                    doc.setFillColor(41, 128, 185); // Remplissage (Bleu)
+                    doc.rect(data.cell.x + 2, data.cell.y + 4, barWidth, 3, 'F');
+                }
+            }
+        });
+        finalY = doc.lastAutoTable.finalY + 10;
+    }
+
+    // --- 4. ÉVOLUTION TEMPORELLE DU CA (GRAPHIQUE TABULAIRE) ---
+    if (stats?.salesProfit?.categories?.length > 0 && stats?.salesProfit?.series?.length > 0) {
+        if (finalY > pageHeight - 60) { doc.addPage(); finalY = 20; }
+        doc.setFontSize(14);
+        doc.setTextColor(41, 128, 185);
+        doc.text("Évolution Temporelle du CA et des Bénéfices", 14, finalY);
+        finalY += 5;
+
+        autoTable(doc, {
+            startY: finalY,
+            head: [['Série (Indicateur)', ...stats.salesProfit.categories]],
+            body: stats.salesProfit.series.map(s => [
+                s.name, 
+                ...s.data.map(val => safeNum(val).toLocaleString('fr-FR'))
+            ]),
+            theme: 'grid',
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: [52, 73, 94] },
+            columnStyles: { 0: { fontStyle: 'bold', fillColor: [245, 247, 250] } }
         });
         finalY = doc.lastAutoTable.finalY + 10;
     }
@@ -347,7 +524,7 @@ const Dashboard = () => {
         autoTable(doc, {
             startY: finalY,
             head: [['Gérant', 'Boutique', 'Chiffre d\'Affaires']],
-            body: stats.performanceGerants.map(g => [g.nom, g.boutiqueNom || 'N/A', formatCurrency(g.chiffreAffaires)]),
+            body: stats.performanceGerants.map(g => [g.nom, g.boutiqueNom || 'N/A', formatCurrency(safeNum(g.chiffreAffaires))]),
             theme: 'striped',
             headStyles: { fillColor: [41, 128, 185] },
             columnStyles: { 2: { halign: 'right' } }
@@ -368,7 +545,7 @@ const Dashboard = () => {
         autoTable(doc, {
             startY: finalY,
             head: [['Article', 'Quantité Vendue']],
-            body: stats.productSales.labels.map((label, index) => [label, stats.productSales.series[index]]),
+            body: stats.productSales.labels.map((label, index) => [label, safeNum(stats.productSales.series[index])]),
             theme: 'striped',
             headStyles: { fillColor: [41, 128, 185] },
             columnStyles: { 1: { halign: 'center' } }
@@ -389,7 +566,7 @@ const Dashboard = () => {
         autoTable(doc, {
             startY: finalY,
             head: [['Article', 'Boutique', 'Quantité Restante']],
-            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', a.quantite]),
+            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', safeNum(a.quantite)]),
             theme: 'striped',
             headStyles: { fillColor: [220, 53, 69] }, // L'en-tête du tableau reste rouge pour signifier l'alerte
             columnStyles: { 2: { halign: 'center' } }
@@ -522,14 +699,14 @@ const Dashboard = () => {
         <Card.Body className="p-4 d-flex align-items-center justify-content-between position-relative">
           <div className="z-1 position-relative w-100">
             <div className="d-flex flex-wrap align-items-center gap-3 mb-2">
-                <h1 className="fw-bold mb-0 fs-2">Bienvenue sur votre Dashboard ! 👋</h1>
+                <h1 className="fw-bold mb-0 fs-2">{userRole === 'Admin' ? 'Tableau de Bord Admin' : 'Mes Performances Ventes'} 👋</h1>
                 <Button variant="light" size="sm" onClick={handleExportPDF} className="text-primary fw-bold shadow-sm">
                     <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                     Exporter Rapport
                 </Button>
             </div>
             <p className="mb-4 opacity-75" style={{ maxWidth: '600px' }}>
-              Voici un aperçu de vos performances aujourd'hui. Consultez les statistiques ci-dessous pour plus de détails.
+              {userRole === 'Admin' ? 'Aperçu global de toutes les boutiques.' : 'Voici vos résultats personnels pour cette période.'}
             </p>
             <div className="d-flex flex-wrap gap-4">
               <div className="glass-stat p-2 px-3 rounded-3">
@@ -543,6 +720,10 @@ const Dashboard = () => {
               <div className="glass-stat p-2 px-3 rounded-3">
                 <h4 className="mb-0 fw-bold">{formatCurrency(stats?.dailyRecoveries)}</h4>
                 <small className="opacity-75">Recouvrement</small>
+              </div>
+              <div className="glass-stat p-2 px-3 rounded-3 border border-white border-opacity-25 bg-white bg-opacity-10">
+                <h4 className="mb-0 fw-bold">{formatCurrency((stats?.dailySales || 0) + (stats?.dailyRecoveries || 0))}</h4>
+                <small className="opacity-100 fw-bold">Encaissement Total</small>
               </div>
             </div>
           </div>
@@ -572,8 +753,8 @@ const Dashboard = () => {
       {/* B. Les Cartes de Statistiques */}
       <Row className="mb-4 g-4" id="quick-stats" role="region" aria-label="Statistiques rapides">
         {[
-          { title: "Chiffre d'affaires", value: formatCurrency(stats?.totalCA), icon: 'solar:bag-smile-bold-duotone', color: 'primary', trend: 'Global', trendColor: 'primary' },
-          { title: 'Bénéfice', value: formatCurrency(stats?.totalBenefice), icon: 'solar:wallet-money-bold-duotone', color: 'success', trend: 'Net', trendColor: 'success' },
+          { title: "Chiffre d'affaires", value: formatCurrency(safeNum(stats?.totalCA)), icon: 'solar:bag-smile-bold-duotone', color: 'primary', trend: 'Global', trendColor: 'primary' },
+          { title: 'Bénéfice', value: formatCurrency(safeNum(stats?.totalBenefice)), icon: 'solar:wallet-money-bold-duotone', color: 'success', trend: 'Net', trendColor: 'success' },
           { title: 'Alerte Stock Faible', value: `${lowStockArticles.length} articles`, icon: 'solar:box-minimalistic-bold-duotone', color: 'danger', trend: '< 10 unités', trendColor: 'danger' },
         ].map((stat, idx) => (
           <Col md={4} key={idx}>
@@ -604,18 +785,35 @@ const Dashboard = () => {
           <Card className="border-0 shadow-sm h-100 rounded-4">
             <Card.Body className="p-4">
               <div className="d-flex justify-content-between align-items-center mb-4">
-                <h5 className="fw-bold mb-0">Analyse des Ventes</h5>
-                {/* 2. Lier l'état au select */}
-                <select 
-                  className="form-select form-select-sm w-auto border-0 bg-body-tertiary fw-medium"
-                  value={timeRange}
-                  onChange={(e) => setTimeRange(e.target.value)}
-                >
-                  <option value="monthly">Ce mois</option>
-                  <option value="yearly">Cette année</option>
-                </select>
+                <h5 className="fw-bold mb-0">{salesMetric === 'ca' ? 'Analyse des Ventes' : 'Analyse des Bénéfices'}</h5>
+                <div className="d-flex gap-3 align-items-center">
+                    <Form.Check 
+                        type="switch"
+                        id="sales-metric-switch"
+                        label={salesMetric === 'ca' ? "Vue CA" : "Vue Bénéfice"}
+                        checked={salesMetric === 'profit'}
+                        onChange={(e) => setSalesMetric(e.target.checked ? 'profit' : 'ca')}
+                        className="fw-medium small text-primary"
+                    />
+                    <Form.Check 
+                        type="switch"
+                        id="sales-detail-switch"
+                        label="Par boutique"
+                        checked={isDetailedSales}
+                        onChange={(e) => setIsDetailedSales(e.target.checked)}
+                        className="fw-medium small"
+                    />
+                    <select 
+                        className="form-select form-select-sm w-auto border-0 bg-body-tertiary fw-medium"
+                        value={timeRange}
+                        onChange={(e) => setTimeRange(e.target.value)}
+                    >
+                        <option value="monthly">Ce mois</option>
+                        <option value="yearly">Cette année</option>
+                    </select>
+                </div>
               </div>
-              <Chart options={salesChartOptions} series={stats?.salesProfit?.series || []} type="area" height={350} />
+              <Chart options={salesChartOptions} series={processedSalesSeries} type="area" height={350} />
             </Card.Body>
           </Card>
         </Col>
@@ -623,7 +821,7 @@ const Dashboard = () => {
           <Card className="border-0 shadow-sm h-100 rounded-4">
             <Card.Body className="p-4">
               <h5 className="fw-bold mb-4">Articles les plus vendus</h5>
-              <Chart options={productChartOptions} series={stats?.productSales?.series || []} type="donut" height={320} />
+              <Chart options={productChartOptions} series={stats?.productSales?.series.map(safeNum) || []} type="donut" height={320} />
             </Card.Body>
           </Card>
         </Col>
@@ -633,10 +831,36 @@ const Dashboard = () => {
         <Col lg={12}>
             <Card className="border-0 shadow-sm h-100 rounded-4">
                 <Card.Body className="p-4">
-                    <h5 className="fw-bold mb-3">Évolution du Total des Dettes</h5>
+                    <h5 className="fw-bold mb-2">Précision des Caisses (7 derniers jours)</h5>
+                    <p className="text-muted small mb-4">
+                        Ce graphique montre les erreurs de comptage par boutique. 
+                        Une barre qui <strong>monte</strong> indique un surplus d'argent, 
+                        une barre qui <strong>descend</strong> indique un manque d'argent (déficit).
+                    </p>
+                    <Chart options={ecartsChartData.options} series={ecartsChartData.series} type="bar" height={300} />
+                </Card.Body>
+            </Card>
+        </Col>
+      </Row>
+
+      <Row className="g-4 mt-4">
+        <Col lg={12}>
+            <Card className="border-0 shadow-sm h-100 rounded-4">
+                <Card.Body className="p-4">
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                        <h5 className="fw-bold mb-0">Évolution du Total des Dettes</h5>
+                        <Form.Check 
+                            type="switch"
+                            id="debt-detail-switch"
+                            label="Comparer par boutique"
+                            checked={isDetailedDebt}
+                            onChange={(e) => setIsDetailedDebt(e.target.checked)}
+                            className="fw-medium small"
+                        />
+                    </div>
                     {loading ? (
                         <div className="text-center py-5"><Spinner animation="border" /></div>
-                    ) : evolutionData.length > 0 ? (
+                    ) : processedDebtData.series.length > 0 ? (
                         <Chart options={debtEvolutionChartOptions} series={debtEvolutionChartSeries} type="area" height={300} />
                     ) : (
                         <Alert variant="info" className="m-0">Aucune donnée disponible pour afficher l'évolution des dettes.</Alert>
@@ -672,7 +896,7 @@ const Dashboard = () => {
                       <tr key={article._id}>
                         <td className="ps-4"><span className="fw-bold">{article.nom}</span></td>
                         <td>{article.boutique?.nom || <Badge bg="secondary">Non assignée</Badge>}</td>
-                        <td className="text-center"><Badge bg="danger" pill>{article.quantite}</Badge></td>
+                        <td className="text-center"><Badge bg="danger" pill>{safeNum(article.quantite)}</Badge></td>
                         <td className="text-end pe-4">
                           {article.boutique && article.boutique.type !== 'Centrale' && centralShopId ? (
                               <Button 
@@ -725,38 +949,117 @@ const Dashboard = () => {
       </Row>
 
       {/* F. Performances par Boutique et Gérant */}
-      <Row className="mt-4" id="performance">
+      {/* On cache cette section pour les gérants (ils ne voient pas la performance des autres) */}
+      {userRole === 'Admin' && (
+      <Row className="mt-4 g-4" id="performance">
+        <Col lg={5}>
+          <Card className="border-0 shadow-sm h-100 rounded-4">
+            <Card.Body className="p-4">
+              <h5 className="fw-bold mb-4">CA par Boutique</h5>
+              {boutiquePerformanceChart && (
+                <Chart 
+                  options={boutiquePerformanceChart.options} 
+                  series={boutiquePerformanceChart.series} 
+                  type="bar" 
+                  height={300} 
+                />
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col lg={7}>
+          <Card className="border-0 shadow-sm h-100 rounded-4">
+            <Card.Body className="p-4">
+              <h5 className="fw-bold mb-4">Classement des Gérants</h5>
+              <div className="table-responsive">
+                <Table hover className="align-middle mb-0">
+                  <thead className="bg-light">
+                    <tr>
+                      <th className="border-0 small">Gérant</th>
+                      <th className="border-0 text-end small">Ventes</th>
+                      <th className="border-0 text-end small">Recouvrement</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats?.performanceGerants?.map((gerant, idx) => (
+                      <tr key={idx}>
+                        <td>
+                          <div className="fw-bold">{gerant.nom}</div>
+                          <div className="small text-muted">{gerant.boutiqueNom}</div>
+                        </td>
+                        <td className="text-end fw-bold text-primary">{formatCurrency(gerant.chiffreAffaires)}</td>
+                        <td className="text-end fw-bold text-success">{formatCurrency(gerant.totalRecouvrements)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+      )}
+
+      {/* H. Répartition des Gérants par Boutique (Vue Admin) */}
+      {userRole === 'Admin' && (
+      <Row className="mt-4">
         <Col lg={12}>
           <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Header className="bg-body py-3">
-              <h5 className="fw-bold mb-0">Performance par Gérant et Boutique</h5>
+            <Card.Header className="bg-body py-3 d-flex justify-content-between align-items-center">
+              <h5 className="fw-bold mb-0">Affectation des Gérants par Boutique</h5>
+              <Button as={Link} to="/admin/boutiques" variant="primary" size="sm" className="rounded-pill px-3 fw-bold shadow-sm">
+                <iconify-icon icon="solar:user-plus-bold" className="me-2 align-middle"></iconify-icon>
+                Modifier les accès
+              </Button>
             </Card.Header>
             <Card.Body className="p-0">
               <Table responsive hover className="align-middle mb-0">
                 <thead className="bg-body-tertiary">
                   <tr>
-                    <th className="ps-4 border-0 text-muted small text-uppercase">Gérant</th>
-                    <th className="border-0 text-muted small text-uppercase">Boutique</th>
-                    <th className="text-end pe-4 border-0 text-muted small text-uppercase">CA</th>
+                    <th className="ps-4 border-0 text-muted small text-uppercase">Boutique</th>
+                    <th className="border-0 text-muted small text-uppercase">Type</th>
+                    <th className="border-0 text-muted small text-uppercase">Gérants Assignés</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stats?.performanceGerants?.map((gerant, idx) => (
-                    <tr key={idx}>
-                      <td className="ps-4 fw-bold">{gerant.nom}</td>
-                      <td>{gerant.boutiqueNom || 'Non assignée'}</td>
-                      <td className="text-end pe-4 text-success fw-bold">{formatCurrency(gerant.chiffreAffaires)}</td>
+                  {boutiques.map((boutique) => (
+                    <tr key={boutique._id}>
+                      <td className="ps-4">
+                        <div className="d-flex align-items-center">
+                          <div className={`bg-${boutique.type === 'Centrale' ? 'primary' : 'info'}-subtle text-${boutique.type === 'Centrale' ? 'primary' : 'info'} rounded-circle p-2 me-3 d-flex align-items-center justify-content-center`} style={{ width: '35px', height: '35px' }}>
+                            <iconify-icon icon={boutique.type === 'Centrale' ? "solar:home-2-bold" : "solar:shop-2-bold"}></iconify-icon>
+                          </div>
+                          <span className="fw-bold">{boutique.nom}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <Badge bg={boutique.type === 'Centrale' ? 'primary-subtle' : 'info-subtle'} text={boutique.type === 'Centrale' ? 'primary' : 'info'} pill>
+                          {boutique.type}
+                        </Badge>
+                      </td>
+                      <td>
+                        <div className="d-flex flex-wrap gap-1">
+                          {boutique.vendeurs && boutique.vendeurs.length > 0 ? (
+                            boutique.vendeurs.map((v, i) => (
+                              <Badge key={i} bg="secondary-subtle" text="dark" pill className="fw-normal">
+                                <iconify-icon icon="solar:user-bold" className="me-1 small"></iconify-icon>
+                                {v.nom || 'Utilisateur'}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-muted small italic">Aucun gérant assigné</span>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
-                  {(!stats?.performanceGerants || stats.performanceGerants.length === 0) && (
-                    <tr><td colSpan="2" className="text-center py-3 text-muted">Aucune vente enregistrée</td></tr>
-                  )}
                 </tbody>
               </Table>
             </Card.Body>
           </Card>
         </Col>
       </Row>
+      )}
 
       {/* Modale de Transfert Rapide (Réapprovisionnement d'urgence) */}
       <Modal show={showTransferModal} onHide={() => setShowTransferModal(false)} centered>
