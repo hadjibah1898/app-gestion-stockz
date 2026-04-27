@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal, Button, Form, Alert, Spinner } from 'react-bootstrap';
 import { boutiqueAPI, articleAPI } from '../services/api';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import logo from '../assets/logo.png';
 
 const RestockModal = ({ show, onHide, onSuccess }) => {
     const [boutiques, setBoutiques] = useState([]);
@@ -12,6 +15,7 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
     const [loading, setLoading] = useState(true);
     const [restockLoading, setRestockLoading] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
+    const [movementData, setMovementData] = useState(null); // État pour stocker le mouvement après succès
 
     const fetchData = useCallback(async () => {
         if (!show) return;
@@ -39,6 +43,47 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
         fetchData();
     }, [fetchData]);
 
+    const generateTransferReceipt = (mvt, action = 'download') => {
+        const doc = new jsPDF();
+        doc.addImage(logo, 'PNG', 14, 10, 40, 15);
+        doc.setFontSize(18).setTextColor(25, 118, 210).setFont("helvetica", "bold");
+        doc.text("BON DE TRANSFERT DE STOCK", 105, 20, { align: 'center' });
+        
+        doc.setFontSize(10).setTextColor(100).setFont("helvetica", "normal");
+        doc.text(`ID Transfert : #TR-${mvt._id.toString().slice(-6).toUpperCase()}`, 105, 27, { align: 'center' });
+        doc.text(`Date : ${new Date().toLocaleString('fr-FR')}`, 196, 20, { align: 'right' });
+
+        const infoY = 45;
+        doc.setFontSize(11).setTextColor(0).setFont("helvetica", "bold");
+        doc.text("BOUTIQUE SOURCE (EXPÉDITEUR)", 14, infoY);
+        doc.text("BOUTIQUE CIBLE (RÉCEPTIONNAIRE)", 105, infoY);
+        
+        doc.setFont("helvetica", "normal");
+        doc.text(mvt.boutiqueSource?.nom || 'Dépôt Principal', 14, infoY + 7);
+        doc.text(mvt.boutiqueDestination?.nom || 'N/A', 105, infoY + 7);
+
+        autoTable(doc, {
+            startY: infoY + 20,
+            head: [['Référence', 'Désignation Article', 'Quantité']],
+            body: mvt.articles.map(a => ['-', a.nomArticle, a.quantite]),
+            theme: 'grid',
+            headStyles: { fillColor: [25, 118, 210] }
+        });
+
+        const finalY = doc.lastAutoTable.finalY + 30;
+        doc.setFontSize(10).setFont("helvetica", "bold");
+        doc.text("Visa Expéditeur", 40, finalY, { align: 'center' });
+        doc.text("Visa Réceptionnaire", 150, finalY, { align: 'center' });
+        doc.setDrawColor(200).line(20, finalY + 15, 60, finalY + 15).line(130, finalY + 15, 170, finalY + 15);
+
+        if (action === 'preview') {
+            const blob = doc.output('bloburl');
+            window.open(blob, '_blank');
+        } else {
+            doc.save(`transfert_${mvt._id.toString().slice(-6)}.pdf`);
+        }
+    };
+
     const handleRestockSubmit = async (e) => {
         e.preventDefault();
         setRestockLoading(true);
@@ -64,8 +109,12 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
                 targetId: restockTargetId, 
                 articles: articlesPayload 
             });
-            onSuccess(res.data.message);
-            handleClose();
+            if (res.data.movement) {
+                setMovementData(res.data.movement); // On bascule vers l'affichage du succès
+            } else {
+                onSuccess(res.data.message);
+                handleClose();
+            }
         } catch (err) {
             setMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors du réapprovisionnement." });
         } finally {
@@ -78,106 +127,134 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
         setSelectedRestockArticles([]);
         setRestockQuantities({});
         setMessage({ type: '', text: '' });
+        setMovementData(null);
         onHide();
     };
 
     return (
         <Modal show={show} onHide={handleClose}>
             <Modal.Header closeButton>
-                <Modal.Title>Réapprovisionner une boutique</Modal.Title>
+                <Modal.Title>{movementData ? 'Opération Réussie' : 'Réapprovisionner une boutique'}</Modal.Title>
             </Modal.Header>
-            <Form onSubmit={handleRestockSubmit}>
-                <Modal.Body>
-                    <Alert variant="info" className="small">
-                        Transférez des articles depuis le Dépôt Principal vers une boutique secondaire.
-                    </Alert>
-                    {message.text && <Alert variant={message.type}>{message.text}</Alert>}
+            {movementData ? (
+                <Modal.Body className="text-center py-4">
+                    <div className="mb-3 text-success">
+                        <iconify-icon icon="solar:check-circle-bold-duotone" style={{ fontSize: '64px' }}></iconify-icon>
+                    </div>
+                    <h5 className="fw-bold mb-3">Le stock a été mis à jour avec succès !</h5>
+                    <p className="text-muted mb-4 px-3">Souhaitez-vous prévisualiser le bon de transfert avant de fermer cette fenêtre ?</p>
                     
-                    <Form.Group className="mb-3">
-                        <Form.Label>Depuis la boutique (Source)</Form.Label>
-                        <Form.Control 
-                            type="text"
-                            value={centralShop?.nom || 'Dépôt Principal non trouvé'}
-                            disabled
-                        />
-                    </Form.Group>
-
-                    {centralShop && (
-                        <Form.Group className="mb-3">
-                            <Form.Label>Sélectionner les articles à transférer</Form.Label>
-                            {loading ? <div className="text-center"><Spinner size="sm" /></div> : (
-                                <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', padding: '10px', borderRadius: '4px' }}>
-                                    {centralShopArticles.length > 0 ? (
-                                        <>
-                                        <Form.Check 
-                                            type="checkbox"
-                                            label="Tout sélectionner"
-                                            checked={selectedRestockArticles.length === centralShopArticles.length && centralShopArticles.length > 0}
-                                            onChange={(e) => {
-                                                if (e.target.checked) setSelectedRestockArticles(centralShopArticles.map(a => a._id));
-                                                else {
-                                                    setSelectedRestockArticles([]);
-                                                    setRestockQuantities({});
-                                                }
-                                            }}
-                                            className="mb-2 fw-bold text-primary"
-                                        />
-                                        {centralShopArticles.map(article => (
-                                            <div key={article._id} className="d-flex align-items-center justify-content-between mb-2 border-bottom pb-1">
-                                                <Form.Check 
-                                                    type="checkbox"
-                                                    label={`${article.nom} (Dispo: ${article.quantite})`}
-                                                    checked={selectedRestockArticles.includes(article._id)}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) {
-                                                            setSelectedRestockArticles([...selectedRestockArticles, article._id]);
-                                                            setRestockQuantities(prev => ({...prev, [article._id]: article.quantite}));
-                                                        } else {
-                                                            setSelectedRestockArticles(selectedRestockArticles.filter(id => id !== article._id));
-                                                        }
-                                                    }}
-                                                    className="flex-grow-1"
-                                                />
-                                                {selectedRestockArticles.includes(article._id) && (
-                                                    <Form.Control 
-                                                        type="number" 
-                                                        min="1" 
-                                                        max={article.quantite}
-                                                        value={restockQuantities[article._id] !== undefined ? restockQuantities[article._id] : article.quantite}
-                                                        onChange={(e) => setRestockQuantities({...restockQuantities, [article._id]: e.target.value === '' ? '' : parseInt(e.target.value)})}
-                                                        style={{ width: '80px' }}
-                                                        size="sm"
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    />
-                                                )}
-                                            </div>
-                                        ))}
-                                        </>
-                                    ) : <p className="text-muted small mb-0">Aucun article dans le dépôt principal.</p>}
-                                </div>
-                            )}
-                        </Form.Group>
-                    )}
-
-                    <Form.Group className="mb-3">
-                        <Form.Label>Vers la boutique (Destination)</Form.Label>
-                        <Form.Select 
-                            value={restockTargetId}
-                            onChange={(e) => setRestockTargetId(e.target.value)}
-                            required
-                        >
-                            <option value="">Sélectionner une boutique secondaire...</option>
-                            {boutiques.filter(b => b.type !== 'Centrale').map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
-                        </Form.Select>
-                    </Form.Group>
+                    <div className="d-grid gap-2 px-4">
+                        <Button variant="outline-primary" className="rounded-pill py-2 d-flex align-items-center justify-content-center fw-bold" onClick={() => generateTransferReceipt(movementData, 'preview')}>
+                            <iconify-icon icon="solar:eye-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
+                            Prévisualiser le Bon
+                        </Button>
+                        <Button variant="primary" className="rounded-pill py-2 d-flex align-items-center justify-content-center fw-bold shadow-sm" onClick={() => generateTransferReceipt(movementData, 'download')}>
+                            <iconify-icon icon="solar:download-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
+                            Télécharger le Bon (PDF)
+                        </Button>
+                    </div>
                 </Modal.Body>
-                <Modal.Footer>
-                    <Button variant="secondary" onClick={handleClose}>Fermer</Button>
-                    <Button variant="success" type="submit" disabled={restockLoading || loading}>
-                        {restockLoading ? <Spinner as="span" animation="border" size="sm" /> : 'Réapprovisionner'}
-                    </Button>
-                </Modal.Footer>
-            </Form>
+            ) : (
+                <Form onSubmit={handleRestockSubmit}>
+                    <Modal.Body>
+                        <Alert variant="info" className="small">
+                            Transférez des articles depuis le Dépôt Principal vers une boutique secondaire.
+                        </Alert>
+                        {message.text && <Alert variant={message.type}>{message.text}</Alert>}
+                        
+                        <Form.Group className="mb-3">
+                            <Form.Label>Depuis la boutique (Source)</Form.Label>
+                            <Form.Control 
+                                type="text"
+                                value={centralShop?.nom || 'Dépôt Principal non trouvé'}
+                                disabled
+                            />
+                        </Form.Group>
+
+                        {centralShop && (
+                            <Form.Group className="mb-3">
+                                <Form.Label>Sélectionner les articles à transférer</Form.Label>
+                                {loading ? <div className="text-center"><Spinner size="sm" /></div> : (
+                                    <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', padding: '10px', borderRadius: '4px' }}>
+                                        {centralShopArticles.length > 0 ? (
+                                            <>
+                                            <Form.Check 
+                                                type="checkbox"
+                                                label="Tout sélectionner"
+                                                checked={selectedRestockArticles.length === centralShopArticles.length && centralShopArticles.length > 0}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) setSelectedRestockArticles(centralShopArticles.map(a => a._id));
+                                                    else {
+                                                        setSelectedRestockArticles([]);
+                                                        setRestockQuantities({});
+                                                    }
+                                                }}
+                                                className="mb-2 fw-bold text-primary"
+                                            />
+                                            {centralShopArticles.map(article => (
+                                                <div key={article._id} className="d-flex align-items-center justify-content-between mb-2 border-bottom pb-1">
+                                                    <Form.Check 
+                                                        type="checkbox"
+                                                        label={`${article.nom} (Dispo: ${article.quantite})`}
+                                                        checked={selectedRestockArticles.includes(article._id)}
+                                                        onChange={(e) => {
+                                                            if (e.target.checked) {
+                                                                setSelectedRestockArticles([...selectedRestockArticles, article._id]);
+                                                                setRestockQuantities(prev => ({...prev, [article._id]: article.quantite}));
+                                                            } else {
+                                                                setSelectedRestockArticles(selectedRestockArticles.filter(id => id !== article._id));
+                                                            }
+                                                        }}
+                                                        className="flex-grow-1"
+                                                    />
+                                                    {selectedRestockArticles.includes(article._id) && (
+                                                        <Form.Control 
+                                                            type="number" 
+                                                            min="1" 
+                                                            max={article.quantite}
+                                                            value={restockQuantities[article._id] !== undefined ? restockQuantities[article._id] : article.quantite}
+                                                            onChange={(e) => setRestockQuantities({...restockQuantities, [article._id]: e.target.value === '' ? '' : parseInt(e.target.value)})}
+                                                            style={{ width: '80px' }}
+                                                            size="sm"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        />
+                                                    )}
+                                                </div>
+                                            ))}
+                                            </>
+                                        ) : <p className="text-muted small mb-0">Aucun article dans le dépôt principal.</p>}
+                                    </div>
+                                )}
+                            </Form.Group>
+                        )}
+
+                        <Form.Group className="mb-3">
+                            <Form.Label>Vers la boutique (Destination)</Form.Label>
+                            <Form.Select 
+                                value={restockTargetId}
+                                onChange={(e) => setRestockTargetId(e.target.value)}
+                                required
+                            >
+                                <option value="">Sélectionner une boutique secondaire...</option>
+                                {boutiques.filter(b => b.type !== 'Centrale').map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
+                            </Form.Select>
+                        </Form.Group>
+                    </Modal.Body>
+                </Form>
+            )}
+            <Modal.Footer>
+                {movementData ? (
+                    <Button variant="secondary" className="rounded-pill px-4" onClick={() => { onSuccess("Réapprovisionnement terminé"); handleClose(); }}>Terminer</Button>
+                ) : (
+                    <>
+                        <Button variant="secondary" onClick={handleClose}>Fermer</Button>
+                        <Button variant="success" type="submit" onClick={handleRestockSubmit} disabled={restockLoading || loading}>
+                            {restockLoading ? <Spinner as="span" animation="border" size="sm" /> : 'Réapprovisionner'}
+                        </Button>
+                    </>
+                )}
+            </Modal.Footer>
         </Modal>
     );
 };

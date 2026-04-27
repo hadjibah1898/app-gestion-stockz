@@ -1,39 +1,43 @@
 const express = require('express');
 const router = express.Router();
 const caisseController = require('../controllers/caisseController');
+const clientController = require('../controllers/clientController'); // Import nécessaire pour payDette
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { checkCaisseOuverte, checkAucunRapportEnAttente } = require('../middleware/caisseMiddleware');
+const { checkCaisseOuverte } = require('../middleware/caisseMiddleware');
 const { validateOuvertureCaisse, validateFermetureCaisse, validateDepense } = require('../middleware/validators');
 const validateObjectId = require('../middleware/validateObjectId');
 
+// Toutes les routes nécessitent une connexion
+router.use(protect); 
+
 // --- Routes pour les Gérants ---
-router.use(protect); // Toutes les routes suivantes nécessitent une connexion
 
 // Gérer sa propre caisse
 router.post('/ouvrir', authorize('Gérant'), validateOuvertureCaisse, caisseController.ouvrirCaisse);
 router.post('/fermer', authorize('Gérant'), checkCaisseOuverte, validateFermetureCaisse, caisseController.fermerCaisse);
-router.put('/correction', authorize('Gérant'), validateFermetureCaisse, caisseController.corrigerRapport); // Nouvelle route de correction
+router.put('/correction', authorize('Gérant'), validateFermetureCaisse, caisseController.corrigerRapport);
 router.get('/statut', authorize('Gérant'), caisseController.getStatutCaisse);
 router.get('/statistiques-session', authorize('Gérant'), checkCaisseOuverte, caisseController.getStatistiquesSession);
 
-// Gérer ses propres dépenses
+// Dépenses et Paiements (Liés à la caisse ouverte)
 router.post('/depenses', authorize('Gérant'), checkCaisseOuverte, validateDepense, caisseController.creerDepense);
 router.get('/depenses/me', authorize('Gérant'), caisseController.listerMesDepenses);
 
-// Gérer ses propres rapports
+// Paiement de dette via la caisse
+// CORRECTION : Utilise protect, validateObjectId et le bon contrôleur
+router.post('/pay-dette/:id', authorize('Gérant'), validateObjectId('id'), checkCaisseOuverte, clientController.payDette);
+
+// Rapports personnels
 router.get('/rapports/me', authorize('Gérant'), caisseController.listerMesRapports);
 
 
 // --- Routes pour les Admins ---
 
-// Gérer tous les rapports
 router.get('/rapports', authorize('Admin'), caisseController.listerRapports);
-// La route /rapports-journaliers a été annulée
 router.put('/rapports/:id/valider', authorize('Admin'), validateObjectId('id'), caisseController.validerRapport);
 router.put('/rapports/:id/rejeter', authorize('Admin'), validateObjectId('id'), caisseController.rejeterRapport);
 router.get('/rapports/:id/details', authorize('Admin'), validateObjectId('id'), caisseController.getReportDetails);
 
-// Gérer la caisse centrale
 router.get('/admin', authorize('Admin'), caisseController.getCaisseAdmin);
 
 module.exports = router;

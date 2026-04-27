@@ -32,6 +32,22 @@ exports.verifyArticlesBelongToBoutique = async (req, res, next) => {
 
         // Vérifier l'existence du client si un ID est fourni
         const { clientId, montantPaye, echeanceDette } = req.body;
+
+        // Validation de la date d'échéance
+        if (echeanceDette) {
+            const dateEcheance = new Date(echeanceDette);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); // Normaliser à minuit pour comparer uniquement la date
+
+            if (dateEcheance < today) {
+                return res.status(400).json({ message: "La date d'échéance de la dette ne peut pas être dans le passé." });
+            }
+        }
+
+        if (montantPaye !== undefined && montantPaye < 0) {
+            return res.status(400).json({ message: "Le montant payé ne peut pas être négatif." });
+        }
+
         let client = null;
         if (clientId) {
             if (!mongoose.Types.ObjectId.isValid(clientId)) {

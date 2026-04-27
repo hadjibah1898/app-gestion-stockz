@@ -3,287 +3,247 @@ const Article = require('../models/Article');
 const User = require('../models/User');
 const Mouvement = require('../models/Mouvement');
 const Client = require('../models/Client');
+const DebtMovement = require('../models/DebtMovement');
 const notificationService = require('./notificationService');
-const DebtMovement = require('../models/DebtMovement'); // Importer le nouveau modèle
 const mongoose = require('mongoose');
 const { logAction } = require('./auditLogService');
 
-// Nouvelle méthode pour traiter tout un panier en une seule transaction atomique
+/**
+ * Traite un panier complet (plusieurs articles) avec gestion de stock, remise et dette client.
+ */
 exports.traiterPanier = async (items, userId, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null) => {
     try {
+        // 1. SÉCURITÉ : Vérifier la session de caisse
+        const sessionActive = await mongoose.model('OuvertureCaisse').findOne({ 
+            _id: ouvertureCaisseId, 
+            gerant: userId, 
+            statut: 'OUVERTE' 
+        });
+        if (!sessionActive) throw new Error("Session de caisse invalide ou fermée.");
+
         const itemsVendus = [];
         const articlesPourMvt = [];
+        let totalGeneralVente = 0;
 
+        // 2. BOUCLE SUR LES ARTICLES DU PANIER
         for (const item of items) {
-            // Correction pour correspondre aux données envoyées par le frontend (`article`, `quantite`, `remiseTemp`)
-            const { article: articleId, quantite, remiseTemp } = item;
+            const { article: articleId, quantite, remiseTemp, remiseType } = item;
 
-            // 1. Déduire le stock de manière atomique (pour une seule opération)
+            // Déduction du stock atomique
             const article = await Article.findOneAndUpdate(
                 { _id: articleId, quantite: { $gte: quantite } },
                 { $inc: { quantite: -quantite } },
                 { new: true } 
-            ).populate({ path: 'boutique' });
+            ).populate('boutique');
 
             if (!article) {
                 const exists = await Article.findById(articleId);
-                if (!exists) {
-                    throw new Error(`Article introuvable (ID: ${articleId})`);
-                } else {
-                    throw new Error(`Stock insuffisant pour l'article "${exists.nom}". Disponible: ${exists.quantite}, demandé: ${quantite}.`);
-                }
+                throw new Error(exists 
+                    ? `Stock insuffisant pour "${exists.nom}". Dispo: ${exists.quantite}` 
+                    : `Article introuvable ID: ${articleId}`);
             }
-            
-            // 2. Créer l'enregistrement de la vente
-            // Calcul du prix unitaire avec Promo ou Remise
+
+            // Calcul du prix unitaire (Logique de hiérarchie des prix)
             let prixUnitaire = article.prixVente;
-            
-            // Priorité 1 : Promotion active (si dans les dates)
+
             if (article.promoActive && article.promo > 0) {
-                const now = new Date();
-                if ((!article.dateDebutPromo || now >= article.dateDebutPromo) && 
-                    (!article.dateFinPromo || now <= article.dateFinPromo)) {
-                    prixUnitaire = prixUnitaire * (1 - article.promo / 100);
-                }
-            } 
-            // Priorité 2 : Remise temporaire du panier (en GNF)
-            else if (remiseTemp && remiseTemp > 0) {
-                // Validation backend: la remise ne peut pas être supérieure au prix
-                if (remiseTemp > prixUnitaire) {
-                    throw new Error(`La remise (${remiseTemp}) pour l'article "${article.nom}" ne peut pas être supérieure à son prix (${prixUnitaire}).`);
-                }
-                prixUnitaire = prixUnitaire - remiseTemp;
-            }
-            // Priorité 3 : Remise permanente sur l'article
-            else if (article.remise > 0) { 
+                prixUnitaire = prixUnitaire * (1 - article.promo / 100);
+            } else if (remiseTemp && remiseTemp > 0) {
+                prixUnitaire = remiseType === 'pourcentage' 
+                    ? prixUnitaire * (1 - remiseTemp / 100) 
+                    : prixUnitaire - remiseTemp;
+            } else if (article.remise > 0) {
                 prixUnitaire = prixUnitaire * (1 - article.remise / 100);
             }
 
+            // Sécurité anti-vente à perte
+            if (prixUnitaire < article.prixAchat) {
+                throw new Error(`Prix remisé (${prixUnitaire} GNF) inférieur au prix d'achat pour "${article.nom}".`);
+            }
+
             const prixTotal = prixUnitaire * quantite;
-            const vente = new Vente({
+            totalGeneralVente += prixTotal;
+
+            // Création de l'entrée de vente
+            const vente = await Vente.create({
                 article: articleId,
-                quantite: quantite,
+                quantite,
                 prixTotal,
                 gerant: userId,
                 boutique: boutiqueId,
                 statut: 'finalisee',
                 remiseAppliquee: remiseTemp || 0,
-                ouvertureCaisse: ouvertureCaisseId, // Association de la vente à la session de caisse
-                client: clientId // Ajout de l'ID client à chaque vente
+                remiseType: remiseType || 'montant',
+                ouvertureCaisse: ouvertureCaisseId,
+                client: clientId
             });
-            
-            const savedVente = await vente.save();
-            
-            // Notification Stock Faible (effet de bord, non transactionnel, ce qui est normal)
+
+            itemsVendus.push(vente);
+            articlesPourMvt.push({ 
+                articleId: article._id, 
+                nomArticle: article.nom, 
+                quantite, 
+                prixAchatUnitaire: article.prixAchat 
+            });
+
+            // Alerte stock faible
             if (article.quantite <= 10) {
-                notificationService.sendLowStockAlert(article).catch(err => console.error("Erreur notif:", err));
+                notificationService.sendLowStockAlert(article).catch(e => console.error(e));
             }
-            
-            itemsVendus.push(savedVente);
-            articlesPourMvt.push({ articleId: article._id, nomArticle: article.nom, quantite: quantite, prixAchatUnitaire: article.prixAchat });
         }
 
-        const totalVentePanier = itemsVendus.reduce((acc, v) => acc + v.prixTotal, 0);
-
-        // 3. Gestion de la dette et mise à jour du client
+        // 3. GESTION DU CLIENT ET DE LA DETTE (Centralisée)
         if (clientId) {
             const client = await Client.findById(clientId);
-            if (!client) {
-                // Si le client n'est pas trouvé, on ne bloque pas la vente mais on log une erreur
-                console.error(`Client avec ID ${clientId} non trouvé. Impossible de mettre à jour la dette ou le total des achats.`);
-            } else {
-                // Mettre à jour le total des achats du client
-                client.totalAchats += totalVentePanier;
+            if (client) {
+                client.totalAchats += totalGeneralVente;
 
-                // Gestion Automatique des Commissions pour les Ouvriers
+                // Commission ouvrier
                 if (client.type === 'Ouvrier' && client.tauxCommission > 0) {
-                    const commissionGagnee = (totalVentePanier * client.tauxCommission) / 100;
-                    client.commission = (client.commission || 0) + commissionGagnee;
+                    client.commission = (client.commission || 0) + (totalGeneralVente * client.tauxCommission / 100);
                 }
 
-                // Vérifier s'il y a une dette
-                if (montantPaye !== null && montantPaye < totalVentePanier) {
-                    const soldeAnterieur = client.dette;
-                    const detteAAjouter = totalVentePanier - montantPaye;
-                    client.dette += detteAAjouter;
-                    const nouveauSolde = client.dette;
-                    
-                    // Mettre à jour l'échéance de la dette
-                    if (echeanceDette) {
-                        client.echeanceDette = echeanceDette;
-                    }
+                // Calcul de la dette
+                const montantEncaissé = montantPaye !== null ? montantPaye : totalGeneralVente;
+                const detteGeneree = totalGeneralVente - montantEncaissé;
 
-                    // Enregistrer le mouvement de dette
+                if (detteGeneree > 0) {
+                    if (!echeanceDette) throw new Error("Échéance obligatoire pour une vente à crédit.");
+                    
+                    const soldeAnterieur = client.dette;
+                    client.dette += detteGeneree;
+                    client.echeanceDette = echeanceDette;
+
+                    // Historique du mouvement de dette
                     await DebtMovement.create({
                         client: clientId,
                         type: 'CREATION',
-                        montant: detteAAjouter,
-                        soldeAnterieur: soldeAnterieur,
-                        nouveauSolde: nouveauSolde,
+                        montant: detteGeneree,
+                        soldeAnterieur,
+                        nouveauSolde: client.dette,
                         operateur: userId,
-                        venteAssociee: itemsVendus.length > 0 ? itemsVendus[0]._id : null 
+                        boutique: boutiqueId,
+                        venteAssociee: itemsVendus[0]._id
                     });
-
-                    // Alerter les admins qu'une dette a été accordée
-                    const gerant = await User.findById(userId);
-                    if (gerant) {
-                        notificationService.sendDebtGrantedAlert(gerant, client, detteAAjouter, totalVentePanier)
-                            .catch(err => console.error("Erreur lors de la notification de dette :", err));
-                    }
                 }
                 await client.save();
             }
         }
 
-        // 4. Enregistrer un seul mouvement pour tout le panier
-        if (articlesPourMvt.length > 0) {
-            let details = `Vente de ${articlesPourMvt.length} article(s) pour un total de ${totalVentePanier.toLocaleString('fr-FR')} GNF.`;
-
-            if (hasRemise) {
-                const remises = items
-                    .filter(item => item.remiseTemp > 0)
-                    .map(item => `${item.remiseTemp.toLocaleString('fr-FR')} GNF`);
-                
-                details += ` Remise(s) appliquée(s): ${[...new Set(remises)].join(', ')}.`;
-
-                // Alerter les admins qu'une remise a été appliquée
-                const gerant = await User.findById(userId);
-                const client = clientId ? await Client.findById(clientId) : null;
-                if (gerant) {
-                    notificationService.sendDiscountGrantedAlert(gerant, remises, totalVentePanier, client?.nom)
-                        .catch(err => console.error("Erreur lors de la notification de remise :", err));
-                }
-            }
-
-            await Mouvement.create([{
-                type: 'Vente',
-                boutiqueSource: boutiqueId,
-                articles: articlesPourMvt,
-                operateur: userId,
-                details: details
-            }]);
-        }
+        // 4. TRAÇABILITÉ GLOBALE (Mouvement de stock)
+        const refVente = itemsVendus[0]?._id.toString().slice(-6).toUpperCase();
+        await Mouvement.create({
+            type: 'Vente',
+            boutiqueSource: boutiqueId,
+            articles: articlesPourMvt,
+            operateur: userId,
+            details: `Vente #${refVente} | Total: ${totalGeneralVente.toLocaleString()} GNF | Client: ${clientId ? 'Oui' : 'Comptant'}`
+        });
 
         return itemsVendus;
+
     } catch (error) {
+        console.error("ERREUR TRAITER_PANIER:", error.message);
         throw error;
     }
 };
 
+/**
+ * Liste les ventes avec filtres et pagination
+ */
 exports.listerVentes = async (filter = {}, user = null) => {
     const page = parseInt(filter.page) || 1;
-    // Si limit n'est pas défini, on pagine. Si limit=0, on retourne tout.
     const limit = filter.limit !== undefined ? parseInt(filter.limit) : 15;
-    // Si le filtre contient startDate ou endDate, on les utilise pour la recherche
     const query = {};
-    
+
     if (filter.startDate || filter.endDate) {
         query.createdAt = {};
         if (filter.startDate) query.createdAt.$gte = new Date(filter.startDate);
         if (filter.endDate) {
             const end = new Date(filter.endDate);
-            end.setHours(23, 59, 59, 999); // Inclure toute la journée de fin
+            end.setHours(23, 59, 59, 999);
             query.createdAt.$lte = end;
         }
     }
 
-    // Gérer le filtre pour les ventes annulées
-    if (filter.showCancelledOnly === 'true') {
-        query.isCancelled = true;
-    }
+    if (filter.showCancelledOnly === 'true') query.isCancelled = true;
 
-    // Si l'utilisateur est un gérant, on force le filtre sur son ID pour la sécurité.
     if (user && user.role === 'Gérant') {
         query.gerant = user.id;
-        // SÉCURITÉ : Filtrer aussi par la boutique actuelle du gérant
-        // Cela évite d'afficher les ventes d'une ancienne affectation dans le dashboard actuel
-        if (user.boutique) {
-            query.boutique = user.boutique;
-        }
-    } else if (filter.gerantId) { // Sinon, si un filtre admin est passé, on l'utilise.
-        query.gerant = filter.gerantId;
+        if (user.boutique) query.boutique = user.boutique;
     }
-    
+
     const totalVentes = await Vente.countDocuments(query);
-    let ventesQuery = Vente.find(query)
+    const ventes = await Vente.find(query)
         .sort({ createdAt: -1 })
-        .populate('article', 'nom image code prixAchat')
+        .skip(limit > 0 ? (page - 1) * limit : 0)
+        .limit(limit > 0 ? limit : 0)
+        .populate('article', 'nom image code')
         .populate('gerant', 'nom')
         .populate('boutique', 'nom')
-        .populate('client', 'nom type');
+        .populate('client', 'nom');
 
-    // Appliquer la pagination seulement si une limite positive est spécifiée
-    if (limit > 0) {
-        const skip = (page - 1) * limit;
-        ventesQuery = ventesQuery.skip(skip).limit(limit);
-    }
-
-    const ventes = await ventesQuery;
-
-    return {
-        ventes,
-        totalPages: limit > 0 ? Math.ceil(totalVentes / limit) : 1,
-        currentPage: page,
-    };
+    return { ventes, totalPages: limit > 0 ? Math.ceil(totalVentes / limit) : 1, currentPage: page };
 };
 
+/**
+ * Annule une vente et restaure le stock
+ */
 exports.annulerVente = async (venteId, user, req) => {
-    // NOTE: Cette opération n'est pas atomique sans Replica Set.
-    // Un crash serveur entre les différentes opérations peut laisser la base de données
-    // dans un état incohérent.
     try {
         const vente = await Vente.findById(venteId);
-        if (!vente) throw new Error("Vente introuvable.");
-        if (vente.isCancelled) throw new Error("Cette vente est déjà annulée.");
+        if (!vente || vente.isCancelled) throw new Error("Vente introuvable ou déjà annulée.");
 
-        // Règle métier : Un gérant ne peut annuler une vente que dans les 24h.
+        // Délai de 24h pour les gérants
         if (user.role === 'Gérant') {
-            const now = new Date();
-            const saleDate = new Date(vente.createdAt);
-            const diffInHours = (now - saleDate) / (1000 * 60 * 60);
-
-            if (diffInHours > 24) {
-                throw new Error("L'annulation par un gérant n'est possible que dans les 24 heures suivant la vente.");
-            }
+            const diffInHours = (new Date() - new Date(vente.createdAt)) / (1000 * 60 * 60);
+            if (diffInHours > 24) throw new Error("Délai d'annulation (24h) dépassé.");
         }
 
         const article = await Article.findById(vente.article);
-        // Si l'article a été supprimé, on ne peut pas restaurer le stock facilement.
-        if (!article) throw new Error("Impossible d'annuler : L'article associé n'existe plus.");
+        if (!article) throw new Error("Article supprimé, impossible de restaurer le stock.");
 
-        // Restauration du stock
+        // Restauration
         article.quantite += vente.quantite;
         await article.save();
 
-        // Marquer la vente comme annulée
         vente.isCancelled = true;
         await vente.save();
 
-        // Log audit (effet de bord, non transactionnel)
+        // Audit & Mouvement
+        await Mouvement.create({
+            type: 'Annulation Vente',
+            boutiqueSource: vente.boutique,
+            articles: [{ articleId: article._id, nomArticle: article.nom, quantite: vente.quantite }],
+            operateur: user.id,
+            details: `Restauration suite annulation vente #${vente._id}`
+        });
+
+        // Enregistrement dans le Journal d'Audit (AuditLog) pour l'admin
         await logAction({
             req,
             user,
             action: 'CANCEL_SALE',
             entity: 'Vente',
             entityId: vente._id,
-            details: {
-                article: article.nom,
-                prixTotal: vente.prixTotal
-            },
+            details: { article: article.nom, quantite: vente.quantite, montant: vente.prixTotal },
             status: 'SUCCESS'
         });
-        // Enregistrer un mouvement d'annulation pour la traçabilité
-        await Mouvement.create([{
-            type: 'Annulation Vente',
-            details: `Annulation de la vente #${vente._id}. Retour de ${vente.quantite} unité(s) en stock.`,
-            boutiqueSource: vente.boutique, // Le stock revient ici
-            articles: [{ articleId: article._id, nomArticle: article.nom, quantite: vente.quantite, prixAchatUnitaire: article.prixAchat }],
-            operateur: user.id,
-            isCancelled: true
-        }]);
 
-        return { message: "Vente annulée avec succès. Le stock a été restauré." };
+        return { success: true };
     } catch (error) {
         throw error;
     }
+};
+/** * Récupère les détails d'une vente spécifique */
+exports.getDetailsVente = async (venteId) => {
+    const vente = await Vente.findById(venteId)
+        .populate('article', 'nom image code')
+        .populate('gerant', 'nom')        
+        .populate('boutique', 'nom')
+        .populate('client', 'nom');
+
+    if (!vente) throw new Error("Vente introuvable.");
+
+    return vente;
 };

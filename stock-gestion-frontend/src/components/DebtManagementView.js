@@ -3,12 +3,10 @@ import { Table, Button, Badge, Card, Form, Modal, Spinner, Tab, Tabs, Alert, Pag
 import { clientAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+
 
 const DebtManagementView = () => {
     const [dettes, setDettes] = useState([]);
-    const [encaissementsAValider, setEncaissementsAValider] = useState([]);
-    const [paiementsEnAttenteMap, setPaiementsEnAttenteMap] = useState({}); // Map clientID -> montant
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -18,12 +16,7 @@ const DebtManagementView = () => {
     const [selectedDebt, setSelectedDebt] = useState(null);
     const [amount, setAmount] = useState('');
     const [submitLoading, setSubmitLoading] = useState(false);
-    const [lastValidatedPayment, setLastValidatedPayment] = useState(null);
     const [lastPayment, setLastPayment] = useState(null);
-
-    // --- Nouveaux états pour la modale de confirmation moderne ---
-    const [showConfirmModal, setShowConfirmModal] = useState(false);
-    const [actionConfig, setActionConfig] = useState({ type: '', id: '', title: '', message: '', variant: '' });
 
     const userRole = localStorage.getItem('userRole');
     const isAdmin = userRole === 'Admin';
@@ -32,13 +25,8 @@ const DebtManagementView = () => {
         setLoading(true);
         setError('');
         try {
-            // Utilisation de Promise.all pour charger toutes les données en parallèle pour une meilleure performance
-            const [dettesRes, validationsRes, historyRes] = await Promise.all([
+            const [dettesRes, historyRes] = await Promise.all([
                 clientAPI.getDebts(),
-                clientAPI.getPendingDebtPayments().catch(err => {
-                    console.warn("Info: Impossible de charger les paiements en attente (Accès restreint ou erreur)", err);
-                    return { data: [] }; // Retourner des données vides pour ne pas bloquer les autres requêtes
-                }),
                 clientAPI.getDebtHistory().catch(err => {
                     console.error("Erreur chargement historique des paiements:", err);
                     return { data: [] }; // Retourner des données vides en cas d'erreur
@@ -46,35 +34,11 @@ const DebtManagementView = () => {
             ]);
 
             setDettes(dettesRes.data);
-            
-            const pendingPayments = validationsRes.data || [];
-            const historicalPayments = historyRes.data || [];
 
-            // Création d'une source de vérité unique pour l'historique en combinant les paiements
-            // en attente et l'historique reçu, pour pallier les éventuels décalages de la base de données.
-            const allPaymentsMap = new Map();
-            // On ajoute d'abord l'historique
-            historicalPayments.forEach(p => allPaymentsMap.set(p._id, p));
-            // Ensuite, on ajoute ou met à jour avec les paiements en attente, qui sont les plus récents.
-            pendingPayments.forEach(p => allPaymentsMap.set(p._id, p));
-
-            const combinedHistory = Array.from(allPaymentsMap.values());
-
-            const sortedHistory = combinedHistory.sort((a, b) => {
+            const sortedHistory = (historyRes.data || []).sort((a, b) => {
                 return new Date(b.datePaiement || b.createdAt) - new Date(a.datePaiement || a.createdAt);
             });
             setHistory(sortedHistory);
-            
-            setEncaissementsAValider(pendingPayments);
-            
-            // Calculer la somme des paiements en attente par client pour déduction logique
-            const pendingMap = {};
-            pendingPayments.forEach(p => {
-                if (p.client && p.client._id) {
-                    pendingMap[p.client._id] = (pendingMap[p.client._id] || 0) + p.montant;
-                }
-            });
-            setPaiementsEnAttenteMap(pendingMap);
 
         } catch (err) {
             console.error("Erreur critique lors du chargement des dettes:", err);
@@ -99,20 +63,13 @@ const DebtManagementView = () => {
             setShowPayModal(false);
             setAmount('');
             
-            // Mise à jour optimiste locale pour éviter d'attendre le reload
-            const newPendingMap = { ...paiementsEnAttenteMap };
-            newPendingMap[selectedDebt._id] = (newPendingMap[selectedDebt._id] || 0) + montantPaye;
-            setPaiementsEnAttenteMap(newPendingMap);
-
-            // 1. Stocker les infos AVANT d'afficher le succès pour garantir que le bouton s'affiche
-            // Le reste à payer sur le ticket tient compte de ce nouveau paiement
             setLastPayment({
                 clientName: selectedDebt.nom,
                 amount: amount,
-                oldDebt: selectedDebt.dette - (paiementsEnAttenteMap[selectedDebt._id] || 0) // On base le reçu sur la dette réelle visible
+                oldDebt: selectedDebt.dette
             });
             
-            setSuccess("Paiement enregistré ! En attente de validation par l'administrateur.");
+            setSuccess("Paiement encaissé avec succès ! Le solde du client et votre caisse ont été mis à jour.");
             loadData(); // Recharger les données
             
             // Note : J'ai retiré le setTimeout ici pour que le bouton "Télécharger" reste visible
@@ -185,121 +142,11 @@ const DebtManagementView = () => {
         doc.save(`recu_${payment.clientName.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
     };
 
-    // --- Fonctions Modernisées pour remplacer window.confirm ---
-    
-    const openValidateModal = (payId) => {
-        setActionConfig({
-            type: 'VALIDATE',
-            id: payId,
-            title: 'Valider le paiement',
-            message: 'Confirmez-vous avoir reçu physiquement cet argent ? Le montant sera ajouté à votre Caisse Centrale et la dette du client sera réduite. Cette action est irréversible.',
-            variant: 'success',
-            btnLabel: 'Oui, Valider',
-            icon: 'solar:check-circle-bold-duotone'
-        });
-        setShowConfirmModal(true);
-    };
-
-    const openRejectModal = (payId) => {
-        setActionConfig({
-            type: 'REJECT',
-            id: payId,
-            title: 'Rejeter le paiement',
-            message: 'Voulez-vous vraiment rejeter ce paiement ? Il passera en statut "REJETÉ" et ne sera pas comptabilisé. Utilisez ceci en cas d\'erreur de saisie.',
-            variant: 'danger',
-            btnLabel: 'Oui, Rejeter',
-            icon: 'solar:trash-bin-trash-bold-duotone'
-        });
-        setShowConfirmModal(true);
-    };
-
-    const handleConfirmAction = async () => {
-        setShowConfirmModal(false);
-        const { type, id } = actionConfig;
-        
-        try {
-            if (type === 'VALIDATE') {
-                await clientAPI.validateDebtPayment(id);
-                // Préparer les données pour le reçu de validation
-                const validatedPayment = encaissementsAValider.find(p => p._id === id);
-                if (validatedPayment) {
-                    setLastValidatedPayment({
-                        clientName: validatedPayment.client?.nom || 'N/A',
-                        amount: validatedPayment.montant,
-                        // La dette affichée dans la liste est la dette AVANT validation, donc c'est le bon "solde antérieur"
-                        oldDebt: validatedPayment.client?.dette || 0,
-                        adminName: localStorage.getItem('userName') || 'Admin',
-                        gerantName: validatedPayment.gerant?.nom || 'N/A',
-                        datePaiement: validatedPayment.datePaiement,
-                        dateValidation: new Date()
-                    });
-                }
-                setSuccess("Paiement validé avec succès.");
-            } else if (type === 'REJECT') {
-                await clientAPI.rejectDebtPayment(id);
-                setSuccess("Paiement rejeté.");
-            }
-            loadData();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'opération");
-            loadData();
-        }
-    };
-
-    const generateValidationReceipt = (payment) => {
-        const doc = new jsPDF();
-        
-        // En-tête
-        doc.setFontSize(18);
-        doc.setTextColor(41, 128, 185);
-        doc.text("Reçu de Validation d'Encaissement", 105, 20, { align: 'center' });
-        
-        doc.setFontSize(10);
-        doc.setTextColor(100);
-        doc.text(`Date de validation: ${new Date(payment.dateValidation).toLocaleString('fr-FR')}`, 105, 28, { align: 'center' });
-
-        // Tableau des détails
-        const tableBody = [
-            ['Client', payment.clientName],
-            ['Montant Validé', `${payment.amount.toLocaleString('fr-FR')} GNF`],
-            ['Date du Versement', new Date(payment.datePaiement).toLocaleString('fr-FR')],
-            ['Encaissé par (Gérant)', payment.gerantName],
-            ['Validé par (Admin)', payment.adminName],
-            ['Solde Précédent', `${payment.oldDebt.toLocaleString('fr-FR')} GNF`],
-            ['Nouveau Solde', `${(payment.oldDebt - payment.amount).toLocaleString('fr-FR')} GNF`],
-        ];
-
-        autoTable(doc, {
-            startY: 40,
-            body: tableBody,
-            theme: 'grid',
-            styles: {
-                fontSize: 11,
-                cellPadding: 3,
-            },
-            headStyles: { fontStyle: 'bold' },
-            columnStyles: {
-                0: { fontStyle: 'bold', fillColor: [240, 240, 240] },
-                1: { halign: 'right' }
-            },
-            didDrawCell: (data) => {
-                if (data.row.index === tableBody.length - 1) {
-                    data.cell.styles.fontStyle = 'bold';
-                }
-            }
-        });
-
-        doc.save(`validation_recu_${payment.clientName.replace(/\s+/g, '_')}.pdf`);
-    };
-
     const handleExportExcel = () => {
         const dataToExport = dettes.map(d => ({
             'Client': d.nom,
             'Téléphone': d.telephone || '-',
-            'Dette Comptable (GNF)': d.dette,
-            'En Attente (GNF)': paiementsEnAttenteMap[d._id] || 0,
-            'Reste à Payer Net (GNF)': d.dette - (paiementsEnAttenteMap[d._id] || 0),
+            'Dette Totale (GNF)': d.dette,
             'Échéance': d.echeanceDette ? new Date(d.echeanceDette).toLocaleDateString() : '-',
             'Statut': new Date(d.echeanceDette) < new Date() ? 'En retard' : 'OK'
         }));
@@ -344,19 +191,13 @@ const DebtManagementView = () => {
 
             {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
             {success && (
-                <Alert variant="success" onClose={() => { setSuccess(''); setLastPayment(null); setLastValidatedPayment(null); }} dismissible>
+                <Alert variant="success" onClose={() => { setSuccess(''); setLastPayment(null); }} dismissible>
                     <div className="d-flex justify-content-between align-items-center">
                         <span>{success}</span>
                         {lastPayment && (
                             <Button variant="outline-success" size="sm" onClick={() => generateReceipt(lastPayment)}>
                                 <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
                                 Télécharger le Reçu (Gérant)
-                            </Button>
-                        )}
-                        {lastValidatedPayment && (
-                            <Button variant="outline-success" size="sm" onClick={() => generateValidationReceipt(lastValidatedPayment)}>
-                                <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
-                                Imprimer Reçu de Validation
                             </Button>
                         )}
                     </div>
@@ -371,9 +212,7 @@ const DebtManagementView = () => {
                                 <thead className="bg-light">
                                     <tr>
                                         <th className="ps-4">Client</th>
-                                        <th>Dette Comptable</th>
-                                        <th>En Attente Validation</th>
-                                        <th>Reste à Payer (Net)</th>
+                                        <th>Montant de la Dette</th>
                                         <th>Échéance</th>
                                         <th>Statut</th>
                                         <th className="pe-4 text-end">Actions</th>
@@ -382,30 +221,17 @@ const DebtManagementView = () => {
                                 <tbody>
                                     {loading && dettes.length === 0 ? (
                                         <tr><td colSpan="4" className="text-center py-5"><Spinner animation="border" /></td></tr>
-                                    ) : dettes.length > 0 ? dettes.map(d => {
-                                        const montantEnAttente = paiementsEnAttenteMap[d._id] || 0;
-                                        const resteAPayerReel = d.dette - montantEnAttente;
-                                        
-                                        return (
+                                    ) : dettes.length > 0 ? dettes.map(d => (
                                             <tr key={d._id}>
                                                 <td className="ps-4">
                                                     <div className="fw-bold">{d.nom}</div>
                                                     <small className="text-muted">{d.telephone}</small>
                                                 </td>
-                                                <td className="text-muted">{d.dette.toLocaleString()} GNF</td>
-                                                <td className="text-warning fw-bold">
-                                                    {montantEnAttente > 0 ? (
-                                                        <span>
-                                                            <iconify-icon icon="solar:hourglass-line-bold" className="me-1 align-middle"></iconify-icon>
-                                                            -{montantEnAttente.toLocaleString()} GNF
-                                                        </span>
-                                                    ) : '-'}
-                                                </td>
-                                                <td className="text-danger fw-bold fs-6">{resteAPayerReel.toLocaleString()} GNF</td>
+                                                <td className="text-danger fw-bold fs-6">{d.dette.toLocaleString()} GNF</td>
                                                 <td>{d.echeanceDette ? new Date(d.echeanceDette).toLocaleDateString() : '-'}</td>
                                                 <td>{getStatusBadge(d.echeanceDette)}</td>
                                                 <td className="pe-4 text-end">
-                                                    {!isAdmin && resteAPayerReel > 0 && (
+                                                    {!isAdmin && d.dette > 0 && (
                                                         <Button variant="success" size="sm" className="me-2" onClick={() => { setSelectedDebt(d); setShowPayModal(true); }}>
                                                             <iconify-icon icon="solar:money-bag-bold" className="me-1"></iconify-icon>
                                                             Encaisser
@@ -417,8 +243,7 @@ const DebtManagementView = () => {
                                                     </Button>
                                                 </td>
                                             </tr>
-                                        );
-                                    }) : (
+                                    )) : (
                                         <tr><td colSpan="4" className="text-center text-muted py-5">Aucune dette en cours.</td></tr>
                                     )}
                                 </tbody>
@@ -426,71 +251,6 @@ const DebtManagementView = () => {
                         </Card.Body>
                     </Card>
                 </Tab>
-
-                {isAdmin && (
-                    <Tab eventKey="validation" title={
-                        <span className="d-flex align-items-center">
-                            <iconify-icon icon="solar:check-circle-bold" className="me-2"></iconify-icon>
-                            Validations en attente
-                            {encaissementsAValider.length > 0 && <Badge pill bg="warning" text="dark" className="ms-2">{encaissementsAValider.length}</Badge>}
-                        </span>
-                    }>
-                        <Card className="border-0 shadow-sm rounded-4">
-                            <Card.Body>
-                                <Alert variant="info" className="small">
-                                    Validez ces montants dès que vous récupérez l'argent physique auprès du gérant. La validation mettra à jour la dette du client.
-                                </Alert>
-                                <Table responsive hover>
-                                    <thead className="bg-light">
-                                        <tr>
-                                            <th>Date Encaissement</th>
-                                            <th>Client</th>
-                                        <th>Dette Actuelle</th>
-                                            <th>Montant</th>
-                                        <th>Reste à Payer (Est.)</th>
-                                            <th>Gérant / Boutique</th>
-                                            <th className="text-end">Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {loading ? (
-                                            <tr><td colSpan="5" className="text-center py-5"><Spinner animation="border" /></td></tr>
-                                        ) : encaissementsAValider.length > 0 ? encaissementsAValider.map(p => {
-                                            const datePaiement = p.datePaiement ? new Date(p.datePaiement).toLocaleString('fr-FR') : <span className="text-danger fw-bold">Date Manquante</span>;
-                                        const detteActuelle = p.client?.dette || 0;
-                                        const restePrevisionnel = detteActuelle - (p.montant || 0);
-                                        
-                                            return (
-                                                <tr key={p._id}>
-                                                    <td>{datePaiement}</td>
-                                                    <td>{p.client?.nom || 'Client supprimé'}</td>
-                                                <td className="text-muted">{detteActuelle.toLocaleString()} GNF</td>
-                                                    <td className="fw-bold text-success">{p.montant.toLocaleString()} GNF</td>
-                                                <td className="fw-bold text-primary">{restePrevisionnel.toLocaleString()} GNF</td>
-                                                    <td>
-                                                        <div>{p.gerant?.nom || 'Gérant supprimé'}</div>
-                                                        <small className="text-muted">{p.boutique?.nom || 'Boutique supprimée'}</small>
-                                                    </td>
-                                                    <td className="text-end">
-                                                        <Button variant="success" size="sm" onClick={() => openValidateModal(p._id)} className="me-2" title="Valider">
-                                                            <iconify-icon icon="solar:check-circle-bold" className="me-1"></iconify-icon>
-                                                            Valider
-                                                        </Button>
-                                                        <Button variant="danger" size="sm" onClick={() => openRejectModal(p._id)} title="Rejeter / Annuler">
-                                                            <iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon>
-                                                        </Button>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        }) : (
-                                        <tr><td colSpan="7" className="text-center text-muted py-5">Aucun encaissement à valider.</td></tr>
-                                        )}
-                                    </tbody>
-                                </Table>
-                            </Card.Body>
-                        </Card>
-                    </Tab>
-                )}
 
                 <Tab eventKey="history" title={
                     <span className="d-flex align-items-center">
@@ -531,27 +291,6 @@ const DebtManagementView = () => {
                         </Button>
                     </Modal.Footer>
                 </Form>
-            </Modal>
-
-            {/* Modale de Confirmation Moderne (Validation / Rejet) */}
-            <Modal show={showConfirmModal} onHide={() => setShowConfirmModal(false)} centered>
-                <Modal.Header closeButton className={`bg-${actionConfig.variant}-subtle text-${actionConfig.variant}`}>
-                    <Modal.Title className="fw-bold">
-                        {actionConfig.title}
-                    </Modal.Title>
-                </Modal.Header>
-                <Modal.Body className="text-center py-4">
-                    <iconify-icon icon={actionConfig.icon} style={{ fontSize: '64px' }} className={`text-${actionConfig.variant} mb-3`}></iconify-icon>
-                    <p className="fs-5">{actionConfig.message}</p>
-                </Modal.Body>
-                <Modal.Footer className="justify-content-center">
-                    <Button variant="secondary" onClick={() => setShowConfirmModal(false)} className="rounded-pill px-4">
-                        Annuler
-                    </Button>
-                    <Button variant={actionConfig.variant} onClick={handleConfirmAction} className="rounded-pill px-4 shadow-sm">
-                        {actionConfig.btnLabel}
-                    </Button>
-                </Modal.Footer>
             </Modal>
         </div>
     );
@@ -681,9 +420,9 @@ const DebtHistoryTab = ({ history, loading }) => {
                                     <td>{datePaiement}</td>
                                     <td>{p.client?.nom || <span className="text-muted">Client supprimé</span>}</td>
                                     <td className="text-muted">{detteActuelle.toLocaleString()} GNF</td>
-                                    <td className="fw-bold">{p.montant.toLocaleString()} GNF</td>
+                                    <td className="fw-bold text-success">+{p.montant.toLocaleString()} GNF</td>
                                     <td>{getStatusBadge(p.statut)}</td>
-                                    <td>{p.gerant?.nom || <span className="text-muted">N/A</span>}</td>
+                                    <td className="fw-bold">{p.gerant?.nom || <span className="text-muted">N/A</span>}</td>
                                     <td>{p.boutique?.nom || <span className="text-muted">N/A</span>}</td>
                                     <td>{dateValidation}</td>
                                 </tr>

@@ -186,7 +186,18 @@ const ClientsView = () => {
         key: 'createdAt',
         label: 'Date Création',
         render: (date) => date ? new Date(date).toLocaleDateString('fr-FR') : <span className="text-muted">-</span>
-    }
+    },
+    { 
+  key: 'createur', 
+  label: 'Enregistré par', 
+  render: (createur) => (
+    <div className="d-flex align-items-center">
+      <iconify-icon icon="solar:user-id-bold" className="me-1 text-muted"></iconify-icon>
+      <span className="small">{createur?.nom || 'Admin / Système'}</span>
+    </div>
+  ) 
+}
+
   ];
 
   const debtHistoryColumns = [

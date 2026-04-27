@@ -5,7 +5,7 @@
 // Contient les fonctionnalités d'export PDF et de filtres avancés
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col, Pagination } from 'react-bootstrap';
+import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Row, Col, Pagination, InputGroup } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { articleAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
 import IntelligentSupplyModal from './common/IntelligentSupplyModal'; // Importer la nouvelle modale
@@ -31,6 +31,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [successMessage, setSuccessMessage] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -41,15 +42,78 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     prixAchat: '',
     prixVente: '',
     quantite: '',
-    boutique: '', // Ajout du champ boutique
+    boutique: '',
     image: '',
     promo: 0,
     promoActive: false,
     dateDebutPromo: '',
     dateFinPromo: '',
     remise: 0,
-    datePeremption: ''
+    datePeremption: '',
+    categorie: 'Divers'
   });
+
+  const [availableCategories, setAvailableCategories] = useState([
+    'Divers', 'Fast food', 'Restauration', 'Boulangerie', 'Boucherie', 'Habillement'
+  ]);
+
+  // Mettre à jour la liste des catégories disponibles en fonction des articles existants
+  useEffect(() => {
+    if (articles.length > 0) {
+      const existingCats = articles.map(a => a.categorie).filter(Boolean);
+      setAvailableCategories(prev => {
+        const combined = [...new Set([...prev, ...existingCats])];
+        return combined;
+      });
+    }
+  }, [articles]);
+
+  const handleAddCategory = () => {
+    const newCat = prompt("Entrez le nom de la nouvelle catégorie :");
+    if (newCat && newCat.trim() !== '') {
+      const trimmedCat = newCat.trim();
+      
+      // Vider l'erreur de catégorie si elle existe
+      setFieldErrors(prev => {
+        const updated = { ...prev };
+        delete updated.categorie;
+        return updated;
+      });
+
+      if (!availableCategories.includes(trimmedCat)) {
+        setAvailableCategories(prev => [...prev, trimmedCat]);
+        setCurrentArticle(prev => ({ ...prev, categorie: trimmedCat }));
+      } else {
+        setCurrentArticle(prev => ({ ...prev, categorie: trimmedCat }));
+      }
+    }
+  };
+
+  const handleRenameCategory = async () => {
+    const oldCat = prompt("Entrez le nom exact de la catégorie à modifier :");
+    if (!oldCat || !availableCategories.includes(oldCat)) {
+        alert("Catégorie introuvable dans la liste actuelle.");
+        return;
+    }
+
+    const newCat = prompt(`Entrez le nouveau nom pour remplacer "${oldCat}" :`);
+    if (!newCat || newCat.trim() === '' || newCat === oldCat) return;
+
+    if (window.confirm(`Voulez-vous vraiment renommer "${oldCat}" en "${newCat}" pour TOUS les articles ?`)) {
+      try {
+        setLoading(true);
+        // On envoie une requête de mise à jour groupée au backend
+        await articleAPI.updateMany({ oldCategorie: oldCat, newCategorie: newCat.trim() });
+        setSuccessMessage(`La catégorie "${oldCat}" a été renommée en "${newCat}" avec succès.`);
+        fetchData();
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } catch (err) {
+        setError(err.response?.data?.message || "Erreur lors du renommage global.");
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
 
   // États pour la confirmation de suppression
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -199,6 +263,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       setEditMode(false);
     }
     setShowModal(true);
+    setFieldErrors({});
   };
 
   const handleCloseModal = () => {
@@ -206,10 +271,21 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   };
 
   const handleChange = (e) => {
-    setCurrentArticle({
-      ...currentArticle,
-      [e.target.name]: e.target.type === 'checkbox' ? e.target.checked : e.target.value
-    });
+    const { name, value, type, checked } = e.target;
+    
+    setCurrentArticle(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+
+    // Vider l'erreur du champ spécifique dès que l'utilisateur commence à le modifier
+    if (fieldErrors[name]) {
+      setFieldErrors(prev => {
+        const updatedErrors = { ...prev };
+        delete updatedErrors[name];
+        return updatedErrors;
+      });
+    }
   };
 
   const handleImageChange = (e) => {
@@ -254,6 +330,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
+    setFieldErrors({});
     
     // Correction : S'assurer que l'ID de la boutique est envoyé, pas l'objet complet
     const payload = {
@@ -278,7 +355,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       handleCloseModal();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
+      if (err.response?.status === 400 && err.response.data.errors) {
+          // Si le backend renvoie des erreurs de validation par champ
+          setFieldErrors(err.response.data.errors);
+          setError(err.response.data.message);
+      } else {
       setError(err.response?.data?.message || 'Erreur d\'enregistrement');
+      }
     }
   };
 
@@ -424,7 +507,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       const dataToExport = allData.map(a => ({
         'Code': a.code || '-',
         'Nom': a.nom,
-        'Type': a.type || 'Divers',
         'Boutique': a.boutique?.nom || 'N/A',
         'Fournisseur': a.fournisseur?.nom || 'N/A',
         'Prix Achat (GNF)': a.prixAchat,
@@ -508,10 +590,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     },
     { key: 'code', label: 'Code' },
     { key: 'nom', label: 'Nom' },
-    {
-      key: 'type',
-      label: 'Type',
-      render: (type) => type || 'Divers'
+    { 
+      key: 'categorie', 
+      label: 'Catégorie',
+      render: (cat) => <Badge bg="info" pill>{cat || 'Divers'}</Badge>
     },
     {
       key: 'boutique',
@@ -660,6 +742,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
               </>
             )}
             {userRole === 'Admin' && (
+                <Button variant="outline-warning" onClick={handleRenameCategory} className="rounded-pill px-4 shadow-sm">
+                    <iconify-icon icon="solar:pen-new-square-bold" className="me-2 align-middle"></iconify-icon>
+                    Renommer une Catégorie
+                </Button>
+            )}
+            {userRole === 'Admin' && (
                 <Button variant="warning" onClick={() => setShowAutoPromoModal(true)} className="rounded-pill px-4 shadow-sm text-white">
                     <iconify-icon icon="solar:tag-price-bold-duotone" className="me-2 align-middle"></iconify-icon>
                     Promo Péremption
@@ -802,18 +890,38 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 name="code"
                 value={currentArticle.code}
                 onChange={handleChange}
+                isInvalid={!!fieldErrors.code}
                 placeholder="Ex: REF-001"
               />
+              <Form.Control.Feedback type="invalid">
+                {fieldErrors.code}
+              </Form.Control.Feedback>
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Type de produit</Form.Label>
-              <Form.Control
-                type="text"
-                name="type"
-                value={currentArticle.type}
-                onChange={handleChange}
-                placeholder="Ex: Boisson, Ciment..."
-              />
+              <Form.Label>Catégorie</Form.Label>
+              <InputGroup>
+                <Form.Select
+                  name="categorie"
+                  value={currentArticle.categorie || 'Divers'}
+                  onChange={handleChange}
+                  isInvalid={!!fieldErrors.categorie}
+                  required
+                >
+                  {availableCategories.sort().map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </Form.Select>
+                <Button 
+                  variant="outline-primary" 
+                  onClick={handleAddCategory}
+                  title="Ajouter une nouvelle catégorie"
+                >
+                  <iconify-icon icon="solar:add-circle-bold" style={{ verticalAlign: 'middle' }}></iconify-icon>
+                </Button>
+              </InputGroup>
+              {fieldErrors.categorie && (
+                <div className="text-danger small mt-1">{fieldErrors.categorie}</div>
+              )}
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Nom de l'article</Form.Label>
@@ -822,8 +930,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 name="nom"
                 value={currentArticle.nom}
                 onChange={handleChange}
+                isInvalid={!!fieldErrors.nom}
                 required
               />
+              <Form.Control.Feedback type="invalid">
+                {fieldErrors.nom}
+              </Form.Control.Feedback>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Boutique</Form.Label>
@@ -831,6 +943,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 name="boutique"
                 value={currentArticle.boutique?._id || currentArticle.boutique || ''}
                 onChange={handleChange}
+                isInvalid={!!fieldErrors.boutique}
                 required
                 disabled={userRole !== 'Admin'}
               >
@@ -841,6 +954,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                   </option>
                 ))}
               </Form.Select>
+              <Form.Control.Feedback type="invalid">
+                {fieldErrors.boutique}
+              </Form.Control.Feedback>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Fournisseur</Form.Label>
@@ -867,8 +983,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 onChange={handleChange}
                 min="0"
                 step="0.01"
+                isInvalid={!!fieldErrors.prixAchat}
                 required
               />
+              <Form.Control.Feedback type="invalid">
+                {fieldErrors.prixAchat}
+              </Form.Control.Feedback>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Prix de vente (GNF)</Form.Label>
@@ -879,8 +999,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 onChange={handleChange}
                 min="0"
                 step="0.01"
+                isInvalid={!!fieldErrors.prixVente}
                 required
               />
+              <Form.Control.Feedback type="invalid">
+                {fieldErrors.prixVente}
+              </Form.Control.Feedback>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Quantité initiale</Form.Label>
@@ -890,9 +1014,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 value={currentArticle.quantite}
                 onChange={handleChange}
                 disabled={editMode}
+                isInvalid={!!fieldErrors.quantite}
                 min="0"
                 required
               />
+              <Form.Control.Feedback type="invalid">
+                {fieldErrors.quantite}
+              </Form.Control.Feedback>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Date de péremption (Optionnel)</Form.Label>
@@ -901,6 +1029,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 name="datePeremption"
                 value={currentArticle.datePeremption ? currentArticle.datePeremption.split('T')[0] : ''}
                 onChange={handleChange}
+                min={new Date().toISOString().split('T')[0]} // Empêche la sélection d'une date passée
               />
             </Form.Group>
 
@@ -942,7 +1071,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                     </Col>
                     <Col md={6}>
                       <Form.Label>Date fin</Form.Label>
-                      <Form.Control type="date" name="dateFinPromo" value={currentArticle.dateFinPromo ? currentArticle.dateFinPromo.split('T')[0] : ''} onChange={handleChange} />
+                      <Form.Control 
+                        type="date" 
+                        name="dateFinPromo" 
+                        value={currentArticle.dateFinPromo ? currentArticle.dateFinPromo.split('T')[0] : ''} 
+                        onChange={handleChange}
+                        min={currentArticle.dateDebutPromo ? currentArticle.dateDebutPromo.split('T')[0] : ''} 
+                      />
                     </Col>
                   </Row>
                 )}

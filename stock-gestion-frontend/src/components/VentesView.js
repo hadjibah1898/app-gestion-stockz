@@ -7,16 +7,15 @@
  * - Il récupère les données depuis l'API.
  * - Il orchestre l'affichage des sous-composants (SaleTab, HistoryTab, AdminHistoryTab) et des modales, en leur passant les données et les fonctions nécessaires via les props.
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Form, Alert, Spinner, Tabs, Tab } from 'react-bootstrap';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Alert, Spinner, Modal, Button, Badge, Form, Row, Col } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
 import { articleAPI, venteAPI, clientAPI } from '../services/api';
 import { Html5QrcodeScanner } from "html5-qrcode";
-import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
-import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import logo from '../assets/logo.png';
+import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
 import SaleTab from './SaleTab';
 import HistoryTab from './HistoryTab';
 import AdminHistoryTab from './AdminHistoryTab';
@@ -24,6 +23,8 @@ import CancelSaleModal from './CancelSaleModal';
 import ReceiptModal from './ReceiptModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import ScannerModal from './ScannerModal';
+import { playSuccessSound, playBeep } from '../utils/audioUtils';
+import { saveVenteOffline, syncVentes, getOfflineVentesCount } from '../utils/offlineSync';
 
 const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [searchParams] = useSearchParams();
@@ -31,17 +32,25 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [historique, setHistorique] = useState([]);
   const [clients, setClients] = useState([]); // Liste des clients
   const [panier, setPanier] = useState([]);
-  const [remisePanier, setRemisePanier] = useState('');
+  const [itemRemiseInput, setItemRemiseInput] = useState('');
+  const [itemRemiseType, setItemRemiseType] = useState('montant'); // Nouvel état pour le type de remise (montant ou pourcentage)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showErrorModal, setShowErrorModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [selectedArticle, setSelectedArticle] = useState('');
   const [quantite, setQuantite] = useState(1);
   const [barcode, setBarcode] = useState('');
-  const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
   const [selectedClientId, setSelectedClientId] = useState(''); // Client sélectionné
   const [montantPaye, setMontantPaye] = useState(''); // Montant payé par le client
   const [echeanceDette, setEcheanceDette] = useState(''); // Échéance pour la dette
+  const [brouillons, setBrouillons] = useState([]); // État pour les ventes en brouillon
+  const [showMobilePanier, setShowMobilePanier] = useState(false); // État pour le panier mobile
+  const [offlineCount, setOfflineCount] = useState(0); // État pour le badge hors-ligne
+  
+  // États pour l'export CSV mensuel
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportDate, setExportDate] = useState({ month: new Date().getMonth() + 1, year: new Date().getFullYear() });
 
   const [isSubmitting, setIsSubmitting] = useState(false); // Pour le feedback sur le bouton de vente
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -70,20 +79,30 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [totalPages, setTotalPages] = useState(0);
   const itemsPerPage = 15;
 
+  // Liste dynamique des catégories disponibles pour les filtres de vente
+  const availableCategories = useMemo(() => {
+    const existingArticleCategories = articles
+      .map(a => a.categorie || 'Divers')
+      .filter(Boolean); // Filtrer les catégories vides ou nulles
+    const uniqueCategories = [...new Set(existingArticleCategories)];
+    // Convertir au format { key, label } attendu par SaleTab
+    return uniqueCategories.map(cat => ({ key: cat, label: cat }));
+  }, [articles]);
+
+  const activeTab = searchParams.get('tab') || initialTab;
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const params = {
-        page: currentPage,
-        limit: itemsPerPage,
-        showCancelledOnly: showCancelledOnly
+      
+      // Paramètres de filtrage : Si c'est un gérant, on filtre par son ID
+      const params = { 
+        page: currentPage, 
+        limit: itemsPerPage, 
+        showCancelledOnly: showCancelledOnly,
+        // On envoie l'ID du gérant au backend pour filtrage
+        gerantId: userRole === 'Gérant' ? localStorage.getItem('userId') : undefined 
       };
-      if (dateFilter.start) params.startDate = dateFilter.start;
-      if (dateFilter.end) {
-          const end = new Date(dateFilter.end);
-          end.setHours(23, 59, 59, 999);
-          params.endDate = end.toISOString();
-      }
 
       const promises = [
         articleAPI.getAll(),
@@ -93,7 +112,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       // Charger les clients uniquement si l'utilisateur n'est pas un admin,
       // car seul le gérant a besoin de la liste pour créer une nouvelle vente.
       if (userRole !== 'Admin') {
-        promises.push(clientAPI.getAll());
+        const boutiqueId = localStorage.getItem('boutiqueId');
+        promises.push(clientAPI.getAll({ boutiqueId }));
       }
 
       const results = await Promise.all(promises);
@@ -107,20 +127,52 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setClients(clientsRes.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Erreur lors du chargement des données de vente.");
+      setShowErrorModal(true);
     } finally {
-      setLoading(false);
+      setLoading(false); //
     }
-  }, [dateFilter, currentPage, showCancelledOnly, userRole]);
+  }, [currentPage, showCancelledOnly, userRole]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // Gestion du mode Offline
+  useEffect(() => {
+    const updateOfflineCount = async () => {
+      const count = await getOfflineVentesCount();
+      setOfflineCount(count);
+    };
+
+    updateOfflineCount();
+
+    const handleOnlineStatus = async () => {
+      if (navigator.onLine) {
+        const result = await syncVentes();
+        if (result.success > 0) {
+          setSuccessMessage(`${result.success} vente(s) synchronisée(s) automatiquement.`);
+          playSuccessSound();
+          fetchData();
+        }
+        updateOfflineCount();
+      }
+    };
+
+    window.addEventListener('online', handleOnlineStatus);
+    return () => window.removeEventListener('online', handleOnlineStatus);
+  }, [fetchData]);
+
   // Fonction utilitaire pour calculer le prix effectif d'un article (avec promo/remise)
   // Ajout d'un paramètre remise temporaire (pour le panier)
-  const getEffectivePrice = (article, remiseTemp = null) => {
+  const getEffectivePrice = (article, remiseTemp = null, remiseType = 'montant') => {
     let price = article.prixVente;
-    // 1. Promo
+
+    // 1. Remise temporaire (panier) - PRIORITÉ ABSOLUE car saisie manuellement par le gérant
+    if (remiseTemp !== null && !isNaN(remiseTemp) && remiseTemp > 0) {
+      return remiseType === 'pourcentage' ? Math.max(0, price * (1 - remiseTemp / 100)) : Math.max(0, price - remiseTemp);
+    }
+
+    // 2. Promo
     if (article.promoActive && article.promo > 0) {
         const now = new Date();
         const start = article.dateDebutPromo ? new Date(article.dateDebutPromo) : null;
@@ -128,10 +180,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         if ((!start || now >= start) && (!end || now <= end)) {
             return price * (1 - article.promo / 100);
         }
-    }
-    // 2. Remise temporaire (panier) - maintenant en GNF
-    if (remiseTemp !== null && !isNaN(remiseTemp) && remiseTemp > 0) {
-      return Math.max(0, price - remiseTemp);
     }
     // 3. Remise article (définitive)
     if (article.remise > 0) {
@@ -143,32 +191,54 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const ajouterAuPanier = () => {
     if (parseInt(quantite) <= 0) {
       setError("La quantité doit être supérieure à 0");
+      setShowErrorModal(true);
       return;
     }
     
     // Sécurité : Forcer un entier pour éviter les décimales non gérées
     if (!Number.isInteger(parseFloat(quantite))) {
         setError("La quantité doit être un nombre entier.");
+        setShowErrorModal(true);
         return;
     }
 
-    if (remisePanier !== '' && (isNaN(parseFloat(remisePanier)) || parseFloat(remisePanier) < 0)) {
-      setError("La remise doit être un montant positif (supérieur ou égal à 0 GNF)");
-      return;
-    }
-    setError('');
+    const remiseValue = itemRemiseInput !== '' ? parseFloat(itemRemiseInput) : null;
 
     const article = articles.find(a => a._id === selectedArticle);
     if (!article) return;
 
-    const remiseValue = remisePanier !== '' ? parseFloat(remisePanier) : null;
+    if (remiseValue !== null && (isNaN(remiseValue) || remiseValue < 0)) {
+      setError("La remise doit être un nombre positif (supérieur ou égal à 0).");
+      setShowErrorModal(true);
+      return;
+    }
 
-    if (remiseValue && remiseValue > article.prixVente) {
-        setError(`La remise (${remiseValue.toLocaleString()} GNF) ne peut pas être supérieure au prix de l'article (${article.prixVente.toLocaleString()} GNF).`);
+    if (remiseValue !== null) {
+        if (itemRemiseType === 'pourcentage' && (remiseValue < 0 || remiseValue > 100)) {
+            setError("La remise en pourcentage doit être entre 0 et 100%.");
+            setShowErrorModal(true);
+            return;
+        }
+        if (itemRemiseType === 'montant' && remiseValue > article.prixVente) {
+            setError(`La remise (${remiseValue.toLocaleString()} GNF) ne peut pas être supérieure au prix de l'article (${article.prixVente.toLocaleString()} GNF).`);
+            setShowErrorModal(true);
+            return;
+        }
+    }
+    setError('');
+    
+    // Validation du stock disponible
+    const qtyToAdd = parseInt(quantite);
+    const itemInPanier = panier.find(item => item.article._id === selectedArticle);
+    const totalQtyRequested = (itemInPanier ? itemInPanier.quantite : 0) + qtyToAdd;
+
+    if (totalQtyRequested > article.quantite) {
+        setError(`Stock insuffisant pour "${article.nom}". (Disponible: ${article.quantite}${itemInPanier ? `, déjà dans le panier: ${itemInPanier.quantite}` : ''})`);
+        setShowErrorModal(true);
         return;
     }
 
-    const prixUnitaire = getEffectivePrice(article, remiseValue);
+    const prixUnitaire = getEffectivePrice(article, remiseValue, itemRemiseType);
 
     const existeDeja = panier.find(item => item.article._id === selectedArticle);
     
@@ -179,8 +249,9 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
               ...item, 
               quantite: item.quantite + parseInt(quantite),
               remiseTemp: remiseValue,
-          prixUnitaire: prixUnitaire,
-          prixTotal: prixUnitaire * (item.quantite + parseInt(quantite))
+              remiseType: itemRemiseType, // Stocker le type de remise
+              prixUnitaire: prixUnitaire,
+              prixTotal: prixUnitaire * (item.quantite + parseInt(quantite))
             }
           : item
       ));
@@ -191,14 +262,16 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           article,
           quantite: parseInt(quantite),
           remiseTemp: remiseValue, // en GNF
+          remiseType: itemRemiseType, // Stocker le type de remise
           prixUnitaire: prixUnitaire,
           prixTotal: prixUnitaire * parseInt(quantite)
         }
       ]);
     }
     setSelectedArticle('');
-    setQuantite(1);
-    setRemisePanier('');
+    setQuantite(1); // Reset quantity
+    setItemRemiseInput(''); // Reset item discount input
+    setItemRemiseType('montant'); // Reset item discount type
     // Refocus sur le champ scanner pour enchaîner (Mode Douchette Bluetooth)
     setTimeout(() => barcodeInputRef.current?.focus(), 10);
   };
@@ -213,9 +286,12 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     return panier.reduce((total, item) => total + item.prixTotal, 0);
   };
 
+  // ...
   const effectuerVente = async () => {
+    // ...
     if (panier.length === 0) {
       setError('Le panier est vide');
+      setShowErrorModal(true);
       return;
     }
 
@@ -225,11 +301,13 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
     if (montantPayeFinal > totalVente) {
         setError("Le montant payé ne peut pas être supérieur au total de la vente.");
+        setShowErrorModal(true);
         return;
     }
     
     if (montantPayeFinal < 0) {
         setError("Le montant payé ne peut pas être négatif.");
+        setShowErrorModal(true);
         return;
     }
 
@@ -237,15 +315,29 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     const hasRemise = panier.some(item => item.remiseTemp && item.remiseTemp > 0);
     
     // On ne peut créer une dette que si un client est sélectionné
-    if (montantPayeFinal < totalVente && !selectedClientId) {
+    if (montantPayeFinal < totalVente && !selectedClientId && totalVente > 0) { // Ajout de totalVente > 0 pour éviter le blocage si panier vide
         setError("Veuillez sélectionner un client pour enregistrer une dette.");
+        setShowErrorModal(true);
         return;
     }
 
     // NOUVELLE VALIDATION: si une dette est créée, l'échéance est obligatoire
     if (montantPayeFinal < totalVente && !echeanceDette) {
         setError("Veuillez spécifier une date d'échéance pour la dette.");
+        setShowErrorModal(true);
         return;
+    }
+
+    // Validation : Date d'échéance ne doit pas être dans le passé
+    if (montantPayeFinal < totalVente && echeanceDette) {
+        const dateEcheance = new Date(echeanceDette);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (dateEcheance < today) {
+            setError("La date d'échéance ne peut pas être dans le passé.");
+            setShowErrorModal(true);
+            return;
+        }
     }
 
     setIsSubmitting(true);
@@ -254,6 +346,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         article: item.article._id,
         quantite: item.quantite,
         remiseTemp: item.remiseTemp || 0, // Passer la remise temporaire
+        remiseType: item.remiseType || 'montant', // Passer le type de remise
       })),
       clientId: selectedClientId || null, // Envoyer l'ID du client
       montantPaye: montantPayeFinal, // Envoyer le montant réellement payé
@@ -262,10 +355,19 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     };
 
     try {
-      await venteAPI.create(venteData);
+      if (!navigator.onLine) {
+        await saveVenteOffline(venteData);
+        setSuccessMessage('Connexion instable. Vente sauvegardée localement (Offline).');
+        const count = await getOfflineVentesCount();
+        setOfflineCount(count);
+      } else {
+        await venteAPI.create(venteData);
+      }
 
       const subTotal = panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0);
-      const totalRemise = subTotal - totalVente;
+      const totalAfterItemDiscounts = panier.reduce((acc, item) => acc + item.prixTotal, 0);
+      const itemLevelDiscount = subTotal - totalAfterItemDiscounts;
+      const finalTotalNet = calculerTotal();
 
       // 4. Dynamisme : Récupération des informations de la boutique depuis le panier.
       const boutiqueInfo = panier.length > 0 ? panier[0].article.boutique : null;
@@ -279,9 +381,9 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           clientName: clientObj ? clientObj.nom : 'Client de passage',
           date: new Date(),
           items: panier,
-          subTotal: subTotal,
-          discount: totalRemise,
-          totalNet: totalVente,
+          subTotal: subTotal, // Total before any discounts
+          itemLevelDiscount: itemLevelDiscount, // Sum of item-level discounts
+          totalNet: finalTotalNet,
           amountPaid: montantPayeFinal,
           change: montantPayeFinal - totalVente,
           echeanceDette: echeanceDette, // Ajout de l'échéance pour le ticket
@@ -299,10 +401,65 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       fetchData();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur lors de la vente');
+      // Si l'erreur est réseau (pas de réponse du serveur)
+      if (!err.response) {
+        await saveVenteOffline(venteData);
+        setSuccessMessage('Erreur réseau. Vente sécurisée en mode Offline.');
+        const count = await getOfflineVentesCount();
+        setOfflineCount(count);
+        setPanier([]);
+      } else {
+        setError(err.response?.data?.message || 'Erreur lors de la vente');
+        setShowErrorModal(true);
+      }
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // --- Gestion des Brouillons (Ventes en attente) ---
+  const mettreEnBrouillon = () => {
+    if (panier.length === 0) {
+        setError("Le panier est vide, impossible de mettre en brouillon.");
+        setShowErrorModal(true);
+        return;
+    }
+
+    const clientObj = clients.find(c => c._id === selectedClientId);
+    const newDraft = {
+        id: Date.now(),
+        date: new Date(),
+        panier: [...panier],
+        selectedClientId,
+        clientName: clientObj ? clientObj.nom : 'Client de passage',
+        montantPaye,
+        echeanceDette,
+        total: calculerTotal()
+    };
+
+    setBrouillons([newDraft, ...brouillons]);
+    
+    // Réinitialiser la vente actuelle pour passer à une autre personne
+    setPanier([]);
+    setSelectedClientId('');
+    setMontantPaye('');
+    setEcheanceDette('');
+    setSuccessMessage("Vente mise en brouillon ! Vous pouvez maintenant servir un nouveau client.");
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const chargerBrouillon = (draft) => {
+    // Si le panier actuel n'est pas vide, on demande confirmation
+    if (panier.length > 0 && !window.confirm("Le panier actuel sera remplacé par ce brouillon. Continuer ?")) {
+        return;
+    }
+    setPanier(draft.panier);
+    setSelectedClientId(draft.selectedClientId);
+    setMontantPaye(draft.montantPaye);
+    setEcheanceDette(draft.echeanceDette);
+    
+    // Retirer du brouillon car il redevient la vente active
+    setBrouillons(brouillons.filter(b => b.id !== draft.id));
   };
 
   const handleClientCreationSuccess = (createdClient, isEdit) => {
@@ -338,6 +495,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       fetchData();
     } catch (err) {
       setError(err.response?.data?.message || "Erreur lors de l'annulation.");
+      setShowErrorModal(true);
     } finally {
       setShowCancelModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -368,8 +526,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         clientName = 'Client de passage',
         cashierName = 'N/A',
         items = [],
-        subTotal = 0,
-        discount = 0,
+        subTotal = 0, // Total before any discounts
+        itemLevelDiscount = 0, // Sum of item-level discounts
         totalNet = 0,
         amountPaid = 0,
         echeanceDette = null, // Récupération de l'échéance
@@ -426,10 +584,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     doc.text('Sous-total:', 5, finalY);
     doc.text(`${formatPrice(subTotal)} GNF`, 75, finalY, { align: 'right' });
     finalY += 4;
-
-    if (discount > 0) {
-        doc.text('Remise:', 5, finalY);
-        doc.text(`- ${formatPrice(discount)} GNF`, 75, finalY, { align: 'right' });
+    
+    if (itemLevelDiscount > 0) {
+        doc.text('Remise (articles):', 5, finalY);
+        doc.text(`- ${formatPrice(itemLevelDiscount)} GNF`, 75, finalY, { align: 'right' });
         finalY += 4;
     }
 
@@ -473,93 +631,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     doc.save(`ticket_${transactionId}.pdf`);
   };
 
-  // Génération de l'historique (Format A4)
-  const generateHistoryPDF = (sales, logoImg) => {
-    const doc = new jsPDF();
-    try { doc.addImage(logoImg, 'PNG', 14, 8, 40, 15); } catch (e) {}
-
-    doc.setFontSize(18);
-    doc.setTextColor(41, 128, 185);
-    doc.text("Historique des Ventes", 60, 16);
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 60, 22);
-
-    const tableRows = sales.map(v => [
-        new Date(v.createdAt).toLocaleString('fr-FR'),
-        v.article?.nom || 'N/A',
-        v.quantite,
-        (v.prixTotal || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ') + ' GNF',
-        v.gerant?.nom || 'N/A',
-        v.isCancelled ? 'Annulée' : 'OK'
-    ]);
-
-    autoTable(doc, {
-        head: [["Date", "Article", "Qté", "Total", "Vendeur", "Statut"]],
-        body: tableRows,
-        startY: 30,
-        theme: 'grid',
-        headStyles: { fillColor: [41, 128, 185] },
-        styles: { fontSize: 8 }
-    });
-
-    doc.save(`historique_ventes_${new Date().toISOString().slice(0,10)}.pdf`);
-  };
-
-  // Génération de l'export Excel (Toutes les données filtrées)
-  const handleExportExcel = async () => {
-    try {
-      setLoading(true);
-      setError('');
-
-      // On récupère TOUTES les ventes (limit: 0) en respectant les filtres de date actuels
-      const params = {
-        limit: 0,
-        showCancelledOnly: showCancelledOnly
-      };
-      if (dateFilter.start) params.startDate = dateFilter.start;
-      if (dateFilter.end) {
-          const end = new Date(dateFilter.end);
-          end.setHours(23, 59, 59, 999);
-          params.endDate = end.toISOString();
-      }
-
-      const res = await venteAPI.getHistorique(params);
-      const allSales = res.data.ventes || [];
-
-      if (allSales.length === 0) {
-        setError("Aucune donnée à exporter.");
-        return;
-      }
-
-      // Préparation des données pour Excel
-      const dataToExport = allSales.map(v => ({
-        'Date': new Date(v.createdAt).toLocaleString('fr-FR'),
-        'Article': v.article?.nom || 'N/A',
-        'Code Réf': v.article?.code || 'N/A',
-        'Quantité': v.quantite,
-        'Prix Total (GNF)': v.prixTotal,
-        'Vendeur': v.gerant?.nom || 'N/A',
-        'Boutique': v.boutique?.nom || 'N/A',
-        'Client': v.client?.nom || 'Passage',
-        'Statut': v.isCancelled ? 'Annulée' : 'Validée',
-        'Remise (GNF)': v.remiseAppliquee || 0
-      }));
-
-      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Ventes");
-      XLSX.writeFile(workbook, `export_ventes_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      
-      setSuccessMessage("Fichier Excel généré avec succès !");
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      setError("Erreur lors de la génération du fichier Excel.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handlePrintReceipt = () => {
     if (currentReceiptData) {
       generateReceiptPDF(currentReceiptData);
@@ -570,26 +641,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const handleCloseReceiptModal = () => {
     setShowReceiptModal(false);
     setTimeout(() => barcodeInputRef.current?.focus(), 100);
-  };
-
-  const playBeep = () => {
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime); // Fréquence 1000Hz
-      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); // Volume 10%
-      
-      oscillator.start();
-      oscillator.stop(audioCtx.currentTime + 0.1); // Durée 100ms
-    } catch (e) {
-      console.error("Audio error", e);
-    }
   };
 
   // Logique de traitement du code-barres (extraite pour être utilisée par le scanner et l'input)
@@ -618,9 +669,13 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
             setBarcode(''); // Vider le champ même en cas d'erreur
             return prevPanier; // Ne pas modifier le panier
         }
+        // Correction : Maintenir la remise existante lors du scan
+        const currentRemise = existeDeja.remiseTemp || 0;
+        const currentRemiseType = existeDeja.remiseType || 'montant'; // Récupérer le type de remise existant
+        const newUnitPrice = getEffectivePrice(article, currentRemise, currentRemiseType); // Passer le type de remise
         return prevPanier.map(item => 
           item.article._id === article._id 
-            ? { ...item, quantite: item.quantite + 1, prixTotal: getEffectivePrice(article) * (item.quantite + 1) }
+            ? { ...item, quantite: item.quantite + 1, prixUnitaire: newUnitPrice, prixTotal: newUnitPrice * (item.quantite + 1) }
             : item
         );
       } else {
@@ -628,6 +683,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           ...prevPanier,
           {
             article,
+            remiseType: 'montant', // Par défaut, pas de remise temporaire sur un nouvel article scanné
             quantite: 1,
             prixTotal: getEffectivePrice(article) * 1
           }
@@ -687,6 +743,57 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     setShowImageModal(true);
   };
 
+  // Logique d'exportation CSV mensuelle des transactions
+  const handleExportCSV = async () => {
+    try {
+      setLoading(true);
+      // Bornes du mois sélectionné
+      const startDate = new Date(exportDate.year, exportDate.month - 1, 1).toISOString();
+      const endDate = new Date(exportDate.year, exportDate.month, 0, 23, 59, 59).toISOString();
+      
+      const res = await venteAPI.getHistorique({ startDate, endDate, limit: 0 });
+      const data = res.data.ventes || [];
+      
+      if (data.length === 0) {
+        setError(`Aucune transaction trouvée pour ${exportDate.month}/${exportDate.year}.`);
+        setShowErrorModal(true);
+        setShowExportModal(false);
+        return;
+      }
+
+      // Construction du contenu CSV
+      const headers = ["Date", "Heure", "Boutique", "Gerant", "Client", "Article", "Ref", "Quantite", "PU (GNF)", "Remise", "Total (GNF)", "Annulee"];
+      const rows = data.map(v => [
+        new Date(v.createdAt).toLocaleDateString('fr-FR'),
+        new Date(v.createdAt).toLocaleTimeString('fr-FR'),
+        v.boutique?.nom || 'N/A',
+        v.gerant?.nom || 'N/A',
+        v.client?.nom || 'Passage',
+        v.article?.nom || 'N/A',
+        v.article?.code || '-',
+        v.quantite,
+        v.prixTotal / v.quantite,
+        `${v.remiseAppliquee}${v.remiseType === 'pourcentage' ? '%' : ' GNF'}`,
+        v.prixTotal,
+        v.isCancelled ? "OUI" : "NON"
+      ]);
+
+      const csvContent = [headers.join(","), ...rows.map(r => r.map(val => `"${val}"`).join(","))].join("\n");
+      const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `rapport_mensuel_ventes_${exportDate.month}_${exportDate.year}.csv`);
+      link.click();
+      setShowExportModal(false);
+    } catch (err) {
+      setError("Erreur lors de la génération du rapport CSV.");
+      setShowErrorModal(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (loading) return <Spinner animation="border" />;
 
   return (
@@ -695,47 +802,87 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       <style>{`
         input[type="date"]::-webkit-calendar-picker-indicator {
             cursor: pointer;
-            filter: invert(33%) sepia(78%) saturate(2646%) hue-rotate(203deg) brightness(102%) contrast(103%);
+            filter: invert(33%) sepia(78%) saturate(2646%) hue-rotate(203deg) brightness(102%) contrast(103%); //
+        }
+
+        /* Animation pour le panier */
+        @keyframes pulse-cart {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 0 rgba(0, 0, 0, 0.2);
+            }
+            50% {
+                transform: scale(1.02);
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            }
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 rgba(0, 0, 0, 0.2);
+            }
+        }
+
+        .cart-pulse {
+            animation: pulse-cart 0.5s ease-in-out;
         }
       `}</style>
-      <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
-        <h3 className="fw-bold mb-0 text-body">{userRole === 'Admin' ? 'Historique des Ventes' : 'Gestion des Ventes'}</h3>
-        <div className="d-flex gap-2 align-items-center">
-            <Form.Control 
-                type="date"
-                value={dateFilter.start}
-                onChange={(e) => {
-                    setCurrentPage(1);
-                    setDateFilter({...dateFilter, start: e.target.value});
-                }}
-                className="rounded-pill shadow-sm w-auto"
-                title="Date de début"
-            />
-            <span className="text-muted d-none d-md-inline">-</span>
-            <Form.Control 
-                type="date" 
-                value={dateFilter.end}
-                onChange={(e) => {
-                    setCurrentPage(1);
-                    setDateFilter({...dateFilter, end: e.target.value});
-                }}
-                className="rounded-pill shadow-sm w-auto"
-                title="Date de fin"
-            />
-            <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
-                <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
-                Exporter Excel
-            </Button>
-            <Button variant="outline-secondary" onClick={() => generateHistoryPDF(historique, logo)} className="rounded-pill px-4 shadow-sm">
-                <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
-                Exporter PDF
-            </Button>
-        </div>
+      <div className="d-flex justify-content-between align-items-center mb-4 gap-3">
+        <h3 className="fw-bold mb-0 text-body">
+          {activeTab === 'history' ? (
+            userRole === 'Admin' ? 'Historique Global' : 'Mes Ventes Personnelles'
+          ) : (
+            'Effectuer une Vente'
+          )}
+          {offlineCount > 0 && (
+            <Badge bg="warning" text="dark" pill className="ms-2 fs-6 align-middle shadow-sm animate__animated animate__bounceIn">
+              <iconify-icon icon="solar:cloud-upload-bold-duotone" className="me-1 align-middle"></iconify-icon>
+              {offlineCount}
+              <span className="d-none d-sm-inline ms-1 small">hors-ligne</span>
+            </Badge>
+          )}
+        </h3>
+
+        {/* Icône du panier pour mobile dans le header */}
+        {activeTab === 'sale' && userRole === 'Gérant' && (
+          <Button 
+            variant="primary" 
+            className="d-md-none rounded-circle position-relative p-0 d-flex align-items-center justify-content-center shadow-sm"
+            style={{ width: '45px', height: '45px', minWidth: '45px' }}
+            onClick={() => setShowMobilePanier(true)}
+          >
+            <iconify-icon icon="solar:cart-large-bold" style={{ fontSize: '24px' }}></iconify-icon>
+            {panier.length > 0 && (
+              <Badge pill bg="danger" className="position-absolute top-0 start-100 translate-middle border border-light" style={{ fontSize: '0.7em', padding: '0.4em 0.6em' }}>
+                {panier.reduce((acc, item) => acc + item.quantite, 0)}
+              </Badge>
+            )}
+          </Button>
+        )}
+
+        {/* Bouton Export CSV Mensuel pour Admin */}
+        {userRole === 'Admin' && (
+          <Button variant="outline-success" className="rounded-pill px-4 shadow-sm d-flex align-items-center" onClick={() => setShowExportModal(true)}>
+            <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
+            Export Mensuel
+          </Button>
+        )}
       </div>
 
-      {error && <Alert variant="danger" onClose={() => setError('')} dismissible>
-        {error}
-      </Alert>}
+      {/* Erreur sous forme de modale pour les actions bloquantes */}
+      <Modal show={showErrorModal} onHide={() => setShowErrorModal(false)} centered size="sm">
+        <Modal.Header closeButton className="bg-danger text-white border-0 py-2">
+          <Modal.Title className="h6 mb-0">Action bloquée</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="text-center p-4">
+          <iconify-icon icon="solar:danger-triangle-bold-duotone" style={{ fontSize: '56px', color: '#dc3545' }}></iconify-icon>
+          <div className="mt-3 fw-bold text-dark">{error}</div>
+        </Modal.Body>
+        <Modal.Footer className="justify-content-center border-0 pt-0">
+          <Button variant="danger" className="rounded-pill px-4 shadow-sm" onClick={() => setShowErrorModal(false)}>
+            J'ai compris
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
 
       {userRole === 'Admin' ? (
@@ -753,56 +900,59 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           />
         </>
       ) : (
-        <Tabs 
-            defaultActiveKey={searchParams.get('tab') || initialTab} 
-            id="gerant-ventes-tabs" 
-            className="mb-3 nav-tabs-custom"
-        >
-            <Tab eventKey="sale" title={<span className="d-flex align-items-center"><iconify-icon icon="solar:cart-plus-bold" className="me-2"></iconify-icon>Effectuer une Vente</span>}>
-                <SaleTab
-                    panier={panier}
-                    clients={clients}
-                    articles={articles}
-                    selectedClientId={selectedClientId}
-                    setSelectedClientId={setSelectedClientId}
-                    setShowClientModal={setShowClientModal}
-                    barcodeInputRef={barcodeInputRef}
-                    barcode={barcode}
-                    setBarcode={setBarcode}
-                    handleBarcodeScan={handleBarcodeScan}
-                    selectedArticle={selectedArticle}
-                    setSelectedArticle={setSelectedArticle}
-                    quantite={quantite}
-                    setQuantite={setQuantite}
-                    remisePanier={remisePanier}
-                    setRemisePanier={setRemisePanier}
-                    ajouterAuPanier={ajouterAuPanier}
-                    getEffectivePrice={getEffectivePrice}
-                    handleImageClick={handleImageClick}
-                    retirerDuPanier={retirerDuPanier}
-                    montantPaye={montantPaye}
-                    setMontantPaye={setMontantPaye}
-                    echeanceDette={echeanceDette}
-                    setEcheanceDette={setEcheanceDette}
-                    calculerTotal={calculerTotal}
-                    effectuerVente={effectuerVente}
-                    historique={historique}
-                    isSubmitting={isSubmitting}
-                />
-            </Tab>
-            <Tab eventKey="history" title={<span className="d-flex align-items-center"><iconify-icon icon="solar:bill-list-bold" className="me-2"></iconify-icon>Historique Complet</span>}>
-                <HistoryTab
-                    historique={historique}
-                    showCancelledOnly={showCancelledOnly}
-                    setShowCancelledOnly={setShowCancelledOnly}
-                    setCurrentPage={setCurrentPage}
-                    isCancellationAllowed={isCancellationAllowed}
-                    handleImageClick={handleImageClick}
-                    setSaleToCancel={setSaleToCancel}
-                    setShowCancelModal={setShowCancelModal}
-                />
-            </Tab>
-        </Tabs>
+        activeTab === 'history' ? (
+          <HistoryTab
+            historique={historique}
+            showCancelledOnly={showCancelledOnly}
+            setShowCancelledOnly={setShowCancelledOnly}
+            setCurrentPage={setCurrentPage}
+            isCancellationAllowed={isCancellationAllowed}
+            handleImageClick={handleImageClick}
+            setSaleToCancel={setSaleToCancel}
+            setShowCancelModal={setShowCancelModal}
+          />
+        ) : (
+            <SaleTab
+              panier={panier}
+              setPanier={setPanier}
+              clients={clients}
+              articles={articles}
+              selectedClientId={selectedClientId}
+              availableCategories={availableCategories}
+              setSelectedClientId={setSelectedClientId}
+              setShowClientModal={setShowClientModal}
+              barcodeInputRef={barcodeInputRef}
+              barcode={barcode}
+              setBarcode={setBarcode}
+              handleBarcodeScan={handleBarcodeScan}
+              selectedArticle={selectedArticle}
+              setSelectedArticle={setSelectedArticle}
+              quantite={quantite}
+              setQuantite={setQuantite}
+              itemRemiseInput={itemRemiseInput}
+              setItemRemiseInput={setItemRemiseInput}
+              itemRemiseType={itemRemiseType} // Nouveau prop
+              setItemRemiseType={setItemRemiseType} // Nouveau prop
+              ajouterAuPanier={ajouterAuPanier}
+              getEffectivePrice={getEffectivePrice}
+              handleImageClick={handleImageClick}
+              retirerDuPanier={retirerDuPanier}
+              montantPaye={montantPaye}
+              setMontantPaye={setMontantPaye}
+              echeanceDette={echeanceDette}
+              setEcheanceDette={setEcheanceDette}
+              calculerTotal={calculerTotal}
+              effectuerVente={effectuerVente}
+              historique={historique}
+              isSubmitting={isSubmitting}
+              brouillons={brouillons}
+              mettreEnBrouillon={mettreEnBrouillon}
+              chargerBrouillon={chargerBrouillon}
+              setBrouillons={setBrouillons}
+              showMobilePanier={showMobilePanier}
+              setShowMobilePanier={setShowMobilePanier}
+            />
+        )
       )}
 
       {/* Modale de confirmation d'annulation */}
@@ -840,6 +990,39 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         clientToEdit={null} // Toujours en mode création
         onSuccess={handleClientCreationSuccess}
       />
+
+      {/* Modale de sélection pour l'Export CSV */}
+      <Modal show={showExportModal} onHide={() => setShowExportModal(false)} centered size="sm">
+        <Modal.Header closeButton className="border-0 pb-0">
+          <Modal.Title className="fw-bold h5">Rapport Mensuel</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="py-3">
+          <Row className="g-2">
+            <Col xs={7}>
+              <Form.Label className="small fw-bold text-muted">Mois</Form.Label>
+              <Form.Select size="sm" className="rounded-3" value={exportDate.month} onChange={(e) => setExportDate({...exportDate, month: parseInt(e.target.value)})}>
+                {Array.from({length: 12}, (_, i) => (
+                  <option key={i+1} value={i+1}>{new Date(2024, i).toLocaleString('fr-FR', {month: 'long'})}</option>
+                ))}
+              </Form.Select>
+            </Col>
+            <Col xs={5}>
+              <Form.Label className="small fw-bold text-muted">Année</Form.Label>
+              <Form.Select size="sm" className="rounded-3" value={exportDate.year} onChange={(e) => setExportDate({...exportDate, year: parseInt(e.target.value)})}>
+                {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+              </Form.Select>
+            </Col>
+          </Row>
+          <div className="mt-3 p-2 bg-light rounded x-small text-muted">
+            Ce rapport contient l'historique complet des transactions structurées pour le mois sélectionné.
+          </div>
+        </Modal.Body>
+        <Modal.Footer className="border-0 pt-0">
+          <Button variant="success" className="w-100 rounded-pill fw-bold shadow-sm" onClick={handleExportCSV}>
+            Générer CSV
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   );
 }

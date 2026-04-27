@@ -27,6 +27,11 @@ const clientSchema = new mongoose.Schema({
         enum: ['Client', 'Ouvrier'],
         default: 'Client',
     },
+    boutique: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Boutique',
+        required: [true, 'La boutique est obligatoire pour associer le client.']
+    },
     dette: {
         type: Number,
         default: 0,

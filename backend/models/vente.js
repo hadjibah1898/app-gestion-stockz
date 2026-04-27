@@ -14,7 +14,8 @@ const venteSchema = new mongoose.Schema({
         default: 'finalisee' 
     },
     isCancelled: { type: Boolean, default: false },
-    remiseAppliquee: { type: Number, default: 0 }
+    remiseAppliquee: { type: Number, default: 0 },
+    remiseType: { type: String, enum: ['montant', 'pourcentage'], default: 'montant' } // Nouveau champ
 }, { timestamps: true });
 
 module.exports = mongoose.model('Vente', venteSchema);

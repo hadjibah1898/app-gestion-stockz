@@ -17,7 +17,7 @@ const api = axios.create({
  * Fonctions utilitaires
  */
 const clearAuthSession = () => {
-  const items = ['token', 'userRole', 'userName', 'mustChangePassword'];
+  const items = ['token', 'userRole', 'userName', 'userId', 'boutiqueId', 'mustChangePassword'];
   items.forEach(item => localStorage.removeItem(item));
   window.location.href = '/login';
 };
@@ -89,6 +89,7 @@ export const articleAPI = {
   restock: (data) => api.post('articles/restock', data),
   demanderRemise: (id, data) => api.post(`articles/${id}/demander-remise`, data),
   applyAutoPromo: (data) => api.post('articles/auto-promo', data),
+  updateMany: (data) => api.put('articles/update-many', data),
 };
 
 export const fournisseurAPI = {
@@ -112,16 +113,15 @@ export const venteAPI = {
 };
 
 export const clientAPI = {
-  getAll: () => api.get('clients'),
+  getAll: (params) => api.get('clients', { params }),
   create: (data) => api.post('clients', data),
   update: (id, data) => api.put(`clients/${id}`, data),
   delete: (id) => api.delete(`clients/${id}`),
   payDette: (id, data) => api.post(`clients/${id}/pay-dette`, data),
   getDebts: () => api.get('clients/debts'),
   getDebtHistory: () => api.get('clients/debt-history'),
-  getPendingDebtPayments: () => api.get('clients/debt-payments/pending'),
-  validateDebtPayment: (id) => api.put(`clients/debt-payments/${id}/validate`),
   getDebtEvolution: () => api.get('clients/debt-evolution'),
+  payerCommission: (data) => api.post('clients/pay-commission', data),
 };
 
 export const caisseAPI = {
@@ -137,6 +137,7 @@ export const caisseAPI = {
   rejeterRapport: (id, data) => api.put(`caisse/rapports/${id}/rejeter`, data),
   getCaisseAdmin: () => api.get('caisse/admin'),
   getStatistiquesSession: () => api.get('caisse/statistiques-session'),
+  corrigerRapport: (data) => api.put('caisse/correction', data),
 };
 
 export const mouvementAPI = {
@@ -150,6 +151,10 @@ export const dashboardAPI = {
 
 export const auditAPI = {
   getLogs: (params) => api.get('audit', { params }),
+};
+
+export const userAPI = {
+  getAll: () => api.get('auth/users'),
 };
 
 export default api;

@@ -3,6 +3,7 @@ const Article = require('../models/Article');
 const Mouvement = require('../models/Mouvement');
 const Notification = require('../models/Notification');
 const Boutique = require('../models/Boutique');
+const Fournisseur = require('../models/Fournisseur');
 const { logAction } = require('./auditLogService');
 
 /**
@@ -63,17 +64,33 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0) => {
  * --- MODIFICATION ET SUPPRESSION ---
  */
 
-exports.modifierArticle = async (id, data, user, req) => {
-    if (Object.keys(data).length === 0) throw new Error("Données de mise à jour vides.");
+exports.modifierArticle = async (id, inputData, user, req) => {
+    if (Object.keys(inputData).length === 0) throw new Error("Données de mise à jour vides.");
 
     const articleExistant = await articleRepository.findById(id);
     if (!articleExistant) throw new Error("Article introuvable.");
+
+    // SÉCURITÉ : Filtrer les champs pour empêcher la modification directe du stock 
+    // ou des métadonnées sensibles par injection via l'API.
+    const allowedFields = [
+        'nom', 'prixAchat', 'prixVente', 'boutique', 'categorie', 'code', 
+        'image', 'promo', 'promoActive', 'dateDebutPromo', 'dateFinPromo', 
+        'remise', 'datePeremption', 'fournisseur', 'remiseEnAttente'
+    ];
+    
+    const data = {};
+    allowedFields.forEach(f => { if (inputData[f] !== undefined) data[f] = inputData[f]; });
 
     const operateurId = user?._id || user?.id;
     let detailsMouvement = '';
 
     // Gestion des notifications de remise (Validation/Refus)
-    if (articleExistant.remiseEnAttente?.valeur && data.remiseEnAttente === null) {
+    if (articleExistant.remiseEnAttente?.valeur && inputData.remiseEnAttente === null) {
+        // SÉCURITÉ : Seul l'Admin peut valider/vider une demande de remise
+        if (user.role !== 'Admin') {
+            throw new Error("Seul l'administrateur peut valider ou refuser une demande de remise.");
+        }
+
         const recipientId = articleExistant.remiseEnAttente.gerant?._id || articleExistant.remiseEnAttente.gerant;
         const isApproved = Number(data.remise) === articleExistant.remiseEnAttente.valeur;
         
@@ -92,6 +109,48 @@ exports.modifierArticle = async (id, data, user, req) => {
 
     if (prixVenteFinal <= prixAchatFinal) throw new Error("Le prix de vente doit être supérieur au prix d'achat.");
     if (data.quantite !== undefined && Number(data.quantite) < 0) throw new Error("La quantité ne peut pas être négative.");
+
+    // Validation de la date de péremption : ne peut pas être dans le passé
+    if (data.datePeremption) {
+        const peremptionDate = new Date(data.datePeremption);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Normaliser à minuit pour comparer uniquement la date
+        if (peremptionDate < today) {
+            throw new Error("La date de péremption ne peut pas être dans le passé.");
+        }
+    }
+
+    // Vérification que la remise permanente ne vend pas l'article à perte
+    const remiseFinale = data.remise !== undefined ? Number(data.remise) : articleExistant.remise;
+    if (remiseFinale > 0) {
+        const prixEffectif = prixVenteFinal * (1 - remiseFinale / 100);
+        if (prixEffectif < prixAchatFinal) {
+            throw new Error(`Action refusée : Une remise de ${remiseFinale}% rendrait le prix de vente (${prixEffectif.toLocaleString('fr-FR')} GNF) inférieur au prix d'achat (${prixAchatFinal.toLocaleString('fr-FR')} GNF).`);
+        }
+    }
+
+    // Protection de l'intégrité de l'intervalle de promotion (Fusion data + existant)
+    const promoActiveFinal = data.promoActive !== undefined ? data.promoActive : articleExistant.promoActive;
+    const dateDebutFinal = data.dateDebutPromo || articleExistant.dateDebutPromo;
+    const dateFinFinal = data.dateFinPromo || articleExistant.dateFinPromo;
+
+    if (promoActiveFinal && dateDebutFinal && dateFinFinal) {
+        if (new Date(dateFinFinal) < new Date(dateDebutFinal)) {
+            throw new Error("Action refusée : La date de fin de promotion ne peut pas être antérieure à la date de début.");
+        }
+    }
+
+    // Validation de l'existence de la boutique si elle est modifiée ou fournie
+    if (data.boutique) {
+        const boutiqueCheck = await Boutique.findById(data.boutique);
+        if (!boutiqueCheck) throw new Error("La boutique spécifiée est introuvable.");
+    }
+
+    // Validation de l'existence du fournisseur si il est modifié ou fourni
+    if (data.fournisseur) {
+        const fournisseurCheck = await Fournisseur.findById(data.fournisseur);
+        if (!fournisseurCheck) throw new Error("Le fournisseur spécifié est introuvable.");
+    }
 
     // Traçabilité des changements de prix
     if (data.prixAchat !== undefined && Number(data.prixAchat) !== articleExistant.prixAchat) {
@@ -301,4 +360,18 @@ exports.appliquerPromoPeremption = async (jours, pourcentage) => {
         }
     );
     return { modifiedCount: result.modifiedCount };
+};
+
+exports.desactiverPromotionsExpirees = async () => {
+    const now = new Date();
+    const result = await Article.updateMany(
+        { 
+            promoActive: true, 
+            dateFinPromo: { $lt: now } 
+        },
+        { 
+            $set: { promoActive: false } 
+        }
+    );
+    return result.modifiedCount;
 };

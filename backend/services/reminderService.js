@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const Client = require('../models/Client');
 const nodemailer = require('nodemailer');
+const articleService = require('./articleService');
 
 const sendDebtReminders = async () => {
     console.log('⏰ [CRON] Vérification quotidienne des échéances de dettes...');
@@ -71,11 +72,22 @@ const sendDebtReminders = async () => {
     }
 };
 
+const checkExpiredPromotions = async () => {
+    console.log('⏰ [CRON] Vérification des promotions expirées...');
+    try {
+        const count = await articleService.desactiverPromotionsExpirees();
+        if (count > 0) console.log(`✅ [CRON] ${count} promotion(s) expirée(s) ont été désactivées.`);
+    } catch (error) {
+        console.error("❌ [CRON] Erreur lors de la désactivation des promotions expirées:", error);
+    }
+};
+
 const initReminderService = () => {
     // Planification : Tous les jours à 9h00 du matin
     // Format cron: minute heure jour mois jour-semaine
     cron.schedule('0 9 * * *', () => {
         sendDebtReminders();
+        checkExpiredPromotions();
     });
     console.log('✅ Service de rappel de dettes activé (Vérification quotidienne à 09:00).');
 };

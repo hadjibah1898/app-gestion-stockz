@@ -66,7 +66,9 @@ const HistoryTab = ({
                                         <div>
                                             <div className={vente.isCancelled ? "text-decoration-line-through" : "fw-bold"}>{vente.article?.nom || 'Article supprimé'}</div>
                                             {vente.remiseAppliquee > 0 && !vente.isCancelled && (
-                                                <Badge bg="warning" text="dark" pill>Remise {vente.remiseAppliquee.toLocaleString()} GNF</Badge>
+                                                <Badge bg="warning" text="dark" pill>
+                                                    Remise {vente.remiseAppliquee.toLocaleString()} {vente.remiseType === 'pourcentage' ? '%' : 'GNF'}
+                                                </Badge>
                                             )}
                                             {vente.article?.code && <div className="small text-muted">{vente.article?.code}</div>}
                                         </div>
