@@ -19,15 +19,25 @@ exports.checkCaisseOuverte = async (req, res, next) => {
             });
         }
 
-        const ouverture = await OuvertureCaisse.findOne({
-            gerant: userId,
+        const query = {
             boutique: req.user.boutique,
             statut: 'OUVERTE' 
-        });
+        };
+
+        // SÉCURITÉ : Pour le gérant, on vérifie sa propre caisse (responsabilité financière).
+        // Pour le serveur, on vérifie simplement qu'une caisse est ouverte dans la boutique.
+        if (req.user.role === 'Gérant') {
+            query.gerant = userId;
+        }
+
+        const ouverture = await OuvertureCaisse.findOne(query);
 
         if (!ouverture) {
+            const errorMsg = req.user.role === 'Serveur' 
+                ? "Opération impossible : La caisse de la boutique n'est pas encore ouverte. Demandez au gérant de l'ouvrir."
+                : "Opération impossible : Vous devez d'abord ouvrir votre caisse pour la journée.";
             return res.status(403).json({ 
-                message: "Opération impossible : Vous devez d'abord ouvrir votre caisse pour la journée." 
+                message: errorMsg
             });
         }
 

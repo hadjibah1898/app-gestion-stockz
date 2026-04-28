@@ -45,7 +45,7 @@ const articleService = require('../services/articleService');
 // Mis à jour pour filtrer par rôle
 exports.getAllArticles = async (req, res) => {
     try {
-        const { page, limit, search, boutique, fournisseur, sort, order } = req.query;
+        const { page, limit, search, boutique, fournisseur, sort, order, status } = req.query;
         const filter = {};
 
         // Filtre de recherche (Nom ou Code)
@@ -66,6 +66,11 @@ exports.getAllArticles = async (req, res) => {
             filter.fournisseur = fournisseur;
         }
 
+        // Filtre par statut (Stock faible, rupture, etc.)
+        if (status) {
+            filter.status = status;
+        }
+
         if (sort) {
             filter.sort = sort;
         }
@@ -73,13 +78,13 @@ exports.getAllArticles = async (req, res) => {
             filter.order = order;
         }
 
-        // Si l'utilisateur connecté est un Gérant (info venant du token JWT via le middleware 'protect')
-        if (req.user.role === 'Gérant') {
+        // SÉCURITÉ : Gérant et Serveur ne voient que les articles de leur boutique
+        if (['Gérant', 'Serveur'].includes(req.user.role)) {
             // S'il n'a pas de boutique assignée, il ne voit aucun article.
             if (!req.user.boutique) {
                 return res.status(200).json(page ? { data: [], totalPages: 0 } : []);
             }
-            // On ajoute un filtre pour ne retourner que les articles de sa boutique.
+            // On force le filtre sur sa propre boutique, ignorant tout paramètre externe
             filter.boutique = req.user.boutique;
         }
 
@@ -141,11 +146,11 @@ exports.updateArticle = async (req, res) => {
 
 exports.transferArticles = async (req, res) => {
     try {
-        const { sourceId, targetId, articles, details } = req.body;
+        const { sourceId, targetId, articles, details, nomTransporteur } = req.body;
         if (!sourceId || !targetId) {
             return res.status(400).json({ message: "Les boutiques source et destination sont requises." });
         }
-        const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details);
+        const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details, nomTransporteur);
         const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
 
         await logAction({
@@ -170,8 +175,8 @@ exports.transferArticles = async (req, res) => {
  */
 exports.restockFromCentral = async (req, res) => {
     try {
-        const { targetId, articles, details } = req.body;
-        const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, details);
+        const { targetId, articles, nomTransporteur } = req.body;
+        const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, nomTransporteur);
         const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
 
         await logAction({

@@ -73,7 +73,13 @@ const CentraleStockView = () => {
                     <Toast.Body className="text-white">{toast.message}</Toast.Body>
                 </Toast>
             </ToastContainer>
-            <ArticlesView key={viewKey} userRole="Admin" boutiqueId={centralShop._id} title={`Stock de la ${centralShop.nom}`} headerActions={headerActions} />
+            <ArticlesView 
+                key={viewKey} 
+                userRole="Admin" 
+                boutiqueId={centralShop._id} 
+                title={`Dépôt Principal (${centralShop.nom})`} 
+                headerActions={headerActions} 
+            />
             <RestockModal show={showRestockModal} onHide={() => setShowRestockModal(false)} onSuccess={handleRestockSuccess} />
             <SupplyModal show={showSupplyModal} onHide={() => setShowSupplyModal(false)} onSuccess={handleRestockSuccess} />
         </>

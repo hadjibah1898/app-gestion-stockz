@@ -26,35 +26,73 @@ const calculerBilansSession = async (ouvertureCaisseId) => {
         ? new mongoose.Types.ObjectId(ouvertureCaisseId.toString())
         : null;
 
-    if (!sessionOid) return { cashEnCaisse: 0, totalVentes: 0, totalDettesAccordees: 0, totalDepenses: 0, totalRecouvrement: 0 };
+    if (!sessionOid) return { cashEnCaisse: 0, totalVentes: 0, totalDettesAccordees: 0, totalDepenses: 0, totalRecouvrement: 0, listeRecouvrements: [] };
 
     // 1. Ventes (Uniquement ce qui est payé cash au moment de la vente)
     const ventes = await Vente.find({ ouvertureCaisse: sessionOid, isCancelled: { $ne: true } }).lean();
     const totalVentes = Math.round(ventes.reduce((acc, v) => acc + safeNum(v.prixTotal), 0));
-
     const venteIds = ventes.map(v => v._id);
     const dettesAccordees = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' }).lean();
     const totalDettesAccordees = Math.round(dettesAccordees.reduce((acc, d) => acc + safeNum(d.montant), 0));
+
+    // 3. Recouvrements (Dettes payées durant cette session)
+    // On ajoute populate('client', 'nom') pour récupérer le nom réel du client au lieu de son ID
+    const remboursements = await DebtPayment.find({ ouvertureCaisse: sessionOid, statut: 'VALIDEE' }).populate('client', 'nom').lean();
+    const totalRecouvrement = Math.round(remboursements.reduce((sum, p) => sum + safeNum(p.montant), 0));
+
+    // Regroupement par client (Fusionner les montants si un client a payé plusieurs fois dans la session)
+    const listeRecouvrementsGroupée = Object.values(remboursements.reduce((acc, curr) => {
+        const clientId = curr.client?._id?.toString() || 'inconnu';
+        if (!acc[clientId]) {
+            acc[clientId] = { 
+                client: { nom: curr.client?.nom || 'Client Inconnu' }, 
+                montant: 0 
+            };
+        }
+        acc[clientId].montant += safeNum(curr.montant);
+        return acc;
+    }, {}));
+
+    // Calcul du total Mobile Money (Numérique RÉELLEMENT encaissé)
+    const mobileModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
+    
+    // Fintech sur les ventes (CA Net encaissé en Fintech)
+    let totalMobileMoneySales = 0;
+    ventes.forEach(v => {
+        if (mobileModes.includes(v.modePaiement)) {
+            const detteLiee = dettesAccordees.find(d => d.venteAssociee?.toString() === v._id.toString());
+            totalMobileMoneySales += (safeNum(v.prixTotal) - (detteLiee ? safeNum(detteLiee.montant) : 0));
+        }
+    });
+
+    // Fintech sur les recouvrements
+    const totalMobileMoneyRecoveries = Math.round(remboursements
+        .filter(p => mobileModes.includes(p.modePaiement))
+        .reduce((sum, p) => sum + safeNum(p.montant), 0));
+
+    const totalMobileMoney = Math.round(totalMobileMoneySales + totalMobileMoneyRecoveries);
 
     // 2. Dépenses de la session
     const depenses = await Depense.find({ ouvertureCaisse: sessionOid }).lean();
     const totalDepenses = Math.round(depenses.reduce((acc, d) => acc + safeNum(d.montant), 0));
 
-    // 3. Recouvrements (Dettes payées durant cette session)
-    const remboursements = await DebtPayment.find({ ouvertureCaisse: sessionOid, statut: 'VALIDEE' }).lean();
-    const totalRecouvrement = Math.round(remboursements.reduce((sum, p) => sum + safeNum(p.montant), 0));
-
-    const cashEnCaisse = (totalVentes - totalDettesAccordees) + totalRecouvrement - totalDepenses;
+    // Logique : Le Cash en Caisse (Physique) exclut le Mobile Money et les dettes
+    const cashVentesSeul = totalVentes - totalDettesAccordees - totalMobileMoneySales;
+    const cashRecouvrementSeul = totalRecouvrement - totalMobileMoneyRecoveries;
+    const cashEnCaisse = cashVentesSeul + cashRecouvrementSeul - totalDepenses;
 
     console.log(`[DEBUG SESSION ${ouvertureCaisseId}] Brut: ${totalVentes} | Crédits: ${totalDettesAccordees} | Recouv: ${totalRecouvrement} | Dép: ${totalDepenses} | NET: ${cashEnCaisse}`);
 
     return {
         totalVentes,
-        totalVentesCash: Math.round(totalVentes - totalDettesAccordees),
+        totalVentesCash: Math.round(cashVentesSeul),
+        totalMobileMoney: totalMobileMoney,
+        totalMobileMoneySales: totalMobileMoneySales,
+        totalMobileMoneyRecoveries: totalMobileMoneyRecoveries,
         totalDettesAccordees,
         totalDepenses,
         totalRecouvrement,
-        listeRecouvrements: remboursements,
+        listeRecouvrements: listeRecouvrementsGroupée,
         nombreVentes: ventes.length,
         cashEnCaisse: cashEnCaisse
     };
@@ -105,6 +143,8 @@ exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture,
         fondInitial: ouverture.fondInitial,
         totalVentes: bilan.totalVentes,
         totalDettes: bilan.totalDettesAccordees,
+        totalMobileMoney: bilan.totalMobileMoney,
+        totalMobileMoneyRecoveries: bilan.totalMobileMoneyRecoveries,
         totalRecouvrement: bilan.totalRecouvrement, // Correspond maintenant au schéma
         totalDepensesApprouvees: bilan.totalDepenses, // Correspond maintenant au schéma
         soldeTheorique,
@@ -215,6 +255,7 @@ exports.getReportDetails = async ({ rapportId }) => {
             fondInitial: safeNum(rapport.fondInitial),
             totalVentes: safeNum(rapport.totalVentes),
             totalDettes: safeNum(rapport.totalDettes),
+            totalMobileMoney: safeNum(rapport.totalMobileMoney),
             totalRecouvrement: safeNum(rapport.totalRecouvrement),
             totalDepensesApprouvees: safeNum(rapport.totalDepensesApprouvees),
             soldeTheorique: safeNum(rapport.soldeTheorique),
@@ -267,12 +308,22 @@ exports.getStatutCaisse = async (gerantId) => {
 
 exports.listerDepenses = async (queryFilters) => {
     try {
+        const page = parseInt(queryFilters.page) || 1;
+        const limit = parseInt(queryFilters.limit) || 10;
+
         const filters = {};
         // Nettoyage des filtres pour éviter les chaînes vides
         if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
         if (queryFilters.boutique) filters.boutique = queryFilters.boutique;
 
-        return await Depense.find(filters).populate('gerant boutique').sort({ createdAt: -1 });
+        const totalCount = await Depense.countDocuments(filters);
+        const data = await Depense.find(filters)
+            .populate('gerant boutique')
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit);
+
+        return { data, totalPages: Math.ceil(totalCount / limit), currentPage: page, totalCount };
     } catch (error) {
         console.error("Erreur lors de la récupération des dépenses:", error);
         throw new Error("Impossible de lister les dépenses.");
@@ -280,6 +331,8 @@ exports.listerDepenses = async (queryFilters) => {
 };
 
 exports.listerRapports = async (queryFilters) => {
+    const page = parseInt(queryFilters.page) || 1;
+    const limit = parseInt(queryFilters.limit) || 10;
     const filters = {};
 
     // On ne construit le filtre que pour les valeurs présentes et non vides
@@ -302,19 +355,34 @@ exports.listerRapports = async (queryFilters) => {
         if (Object.keys(dateFilter).length > 0) filters.createdAt = dateFilter;
     }
 
-    const rapports = await RapportCaisse.find(filters).populate('gerant boutique').sort({ createdAt: -1 }).lean();
+    const totalCount = await RapportCaisse.countDocuments(filters);
+    const rapportsRaw = await RapportCaisse.find(filters)
+        .populate('gerant boutique')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean();
     
-    return rapports.map(r => ({
+    const formattedRapports = rapportsRaw.map(r => ({
         ...r,
         fondInitial: safeNum(r.fondInitial),
         totalVentes: safeNum(r.totalVentes),
         totalDettes: safeNum(r.totalDettes),
+        totalMobileMoney: safeNum(r.totalMobileMoney),
+        totalMobileMoneyRecoveries: safeNum(r.totalMobileMoneyRecoveries || 0),
         totalRecouvrement: safeNum(r.totalRecouvrement),
         totalDepensesApprouvees: safeNum(r.totalDepensesApprouvees),
         soldeTheorique: safeNum(r.soldeTheorique),
         montantCloture: safeNum(r.montantCloture),
         ecart: safeNum(r.ecart)
     }));
+
+    return {
+        data: formattedRapports,
+        totalPages: Math.ceil(totalCount / limit),
+        currentPage: page,
+        totalCount
+    };
 };
 
 exports.creerDepense = async ({ montant, motif, justificatif, ouvertureCaisseId, gerantId, boutiqueId }) => {

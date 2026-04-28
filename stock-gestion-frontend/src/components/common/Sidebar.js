@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { Nav, NavDropdown, Badge, Button } from 'react-bootstrap'; // Import Bootstrap Nav components
-import { authAPI } from '../../services/api';
+import { authAPI, venteAPI } from '../../services/api';
 import { useNotifications } from '../../NotificationContext'; // Import notifications context
 import './Sidebar.css';
 
@@ -10,6 +10,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
     const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
     // Le menu s'adapte en fonction du rôle de l'utilisateur
     const [boutiqueName, setBoutiqueName] = useState('');
+    const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
 
     useEffect(() => {
         if (userRole === 'Gérant') {
@@ -23,7 +24,18 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     console.error("Info: Impossible de charger la boutique", error);
                 }
             };
+
+            const fetchPendingOrders = async () => {
+                try {
+                    const res = await venteAPI.getHistorique({ limit: 0, statut: 'commande' });
+                    setPendingOrdersCount(res.data.ventes?.length || 0);
+                } catch (e) { /* ignore */ }
+            };
+
             fetchUserBoutique();
+            fetchPendingOrders();
+            const interval = setInterval(fetchPendingOrders, 60000); // Check every minute
+            return () => clearInterval(interval);
         }
     }, [userRole]);
 
@@ -79,8 +91,8 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     </button>
                     <iconify-icon icon="solar:widget-5-bold-duotone" className="me-2 text-primary" style={{ fontSize: '28px' }}></iconify-icon>
                     <div>
-                        <h3 className="m-0 text-primary fw-bold lh-1">
-                            {userRole === 'Admin' ? 'Admin' : 'Gérant'}
+                        <h3 className="m-0 text-primary fw-bold lh-1" style={{ fontSize: '1.2rem' }}>
+                            {userRole === 'Admin' ? 'Admin' : (userRole === 'Serveur' ? 'Serveur' : 'Gérant')}
                         </h3>
                         {userRole === 'Gérant' && boutiqueName && (
                             <small className="text-muted fw-bold d-block mt-1" style={{ fontSize: '0.85rem' }}>
@@ -196,7 +208,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                             </div>
                         </li>
                     </ul>
-                ) : ( // Vue pour le Gérant
+                ) : userRole === 'Gérant' ? ( // Vue pour le Gérant
                     <ul id="sidebarnav">
                         <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
                         <li className="sidebar-item">
@@ -213,7 +225,18 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/gerant/historique" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to="/gerant/historique?tab=history&filter=pending" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cup-hot-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Commandes Serveurs</span>
+                                {pendingOrdersCount > 0 && (
+                                    <Badge pill bg="danger" className="ms-auto blink-animation">
+                                        {pendingOrdersCount}
+                                    </Badge>
+                                )}
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant/historique?tab=history&filter=finalized" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Historique Ventes</span>
                             </NavLink>
@@ -251,10 +274,32 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                         </li>
 
                     </ul>
+                ) : ( // Vue pour le Serveur
+                    <ul id="sidebarnav">
+                        <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/serveur/dashboard" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:widget-3-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Tableau de Bord</span>
+                            </NavLink>
+                        </li>
+                        <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/serveur/ventes" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cart-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Prendre Commande</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item mt-3 border-top pt-3 d-none d-lg-block">
+                            <div className="sidebar-link text-danger" onClick={handleLogout} style={{ cursor: 'pointer' }}>
+                                <iconify-icon icon="solar:logout-3-linear"></iconify-icon>
+                                <span className="hide-menu fw-bold">Déconnexion</span>
+                            </div>
+                        </li>
+                    </ul>
                 )}
 
-                {/* Utility Nav for Mobile (visible only when sidebar is open on small screens) */}
-                {/* These elements were previously in the Header */}
+                {/* Utility Nav for Mobile */}
                 <div className="d-lg-none mt-auto py-2 border-top"> {/* mt-auto pushes it to the bottom */}
                     <Nav className="flex-column">
                         <Nav.Item>
@@ -336,3 +381,10 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
     );
 };
 export default Sidebar;
+
+
+
+
+ 
+
+   

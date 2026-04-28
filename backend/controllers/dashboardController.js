@@ -225,7 +225,8 @@ exports.getDashboardStats = async (req, res) => {
             {
                 $group: {
                     _id: '$gerant',
-                    totalVendu: { $sum: '$prixTotal' }
+                    totalVendu: { $sum: '$prixTotal' },
+                    totalPourboires: { $sum: '$pourboire' }
                 }
             },
             {
@@ -253,14 +254,16 @@ exports.getDashboardStats = async (req, res) => {
                     id: '$_id',
                     nom: '$gerantDetails.nom',
                     boutiqueNom: '$boutiqueDetails.nom', // Inclure le nom de la boutique
-                    chiffreAffaires: '$totalVendu'
+                    chiffreAffaires: '$totalVendu',
+                    pourboires: '$totalPourboires'
                 }
             }
         ]);
 
         const performanceGerants = performanceGerantsRaw.map(g => ({
             ...g,
-            totalRecouvrements: recoveryMap[g.id?.toString()] || 0
+            totalRecouvrements: recoveryMap[g.id?.toString()] || 0,
+            totalPourboires: g.pourboires || 0
         }));
 
         // 6. Performance par Boutique
@@ -268,7 +271,8 @@ exports.getDashboardStats = async (req, res) => {
             {
                 $group: {
                     _id: '$boutique',
-                    totalVendu: { $sum: '$prixTotal' }
+                    totalVendu: { $sum: '$prixTotal' },
+                    totalPourboires: { $sum: '$pourboire' }
                 }
             },
             {
@@ -285,7 +289,8 @@ exports.getDashboardStats = async (req, res) => {
                 $project: {
                     _id: 0,
                     nom: '$boutiqueDetails.nom',
-                    chiffreAffaires: '$totalVendu'
+                    chiffreAffaires: '$totalVendu',
+                    pourboires: '$totalPourboires'
                 }
             }
         ]);

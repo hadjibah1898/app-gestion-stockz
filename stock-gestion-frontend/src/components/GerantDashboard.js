@@ -3,12 +3,10 @@
 // Affiche les statistiques et performances de la boutique gérée
 // Permet de visualiser les ventes, le stock et les alertes
 // Contient les fonctionnalités de gestion rapide
-// src/components/GerantDashboard.js
-
 import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Alert, Table, Badge, Button, Placeholder } from 'react-bootstrap';
+import { Row, Col, Card, Alert, Table, Badge, Button, Placeholder, Spinner } from 'react-bootstrap';
 import { Link, useOutletContext } from 'react-router-dom';
-import { venteAPI, articleAPI, caisseAPI } from '../services/api';
+import { venteAPI, articleAPI, caisseAPI, mouvementAPI } from '../services/api';
 import Chart from 'react-apexcharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -75,6 +73,8 @@ const GerantDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [isCaisseOpen, setIsCaisseOpen] = useState(false);
+    const [pendingTransfers, setPendingTransfers] = useState([]);
+    const [actionLoading, setActionLoading] = useState(null);
 
     const [salesChartData, setSalesChartData] = useState({
         options: {
@@ -92,17 +92,26 @@ const GerantDashboard = () => {
         const fetchData = async () => {
             try {
                 setLoading(true);
+                const boutiqueId = localStorage.getItem('boutiqueId');
                 // On récupère le statut de la caisse pour les chiffres "Temps réel" de la session
                 // On utilise catch pour gérer le cas où aucune caisse n'est ouverte (403/404) sans bloquer le reste
-                const [historiqueRes, articlesRes, caisseRes] = await Promise.all([
+                const [historiqueRes, articlesRes, caisseRes, mvtsRes] = await Promise.all([
                     venteAPI.getHistorique({ limit: 0 }), // On charge tout l'historique pour les stats
-                    articleAPI.getAll(),
-                    caisseAPI.getStatut().catch(() => ({ data: null }))
+                    articleAPI.getAll({ boutique: boutiqueId }),
+                    caisseAPI.getStatut().catch(() => ({ data: null })),
+                    mouvementAPI.getAll({ type: 'Transfert' })
                 ]);
 
                 const allHistorique = historiqueRes.data.ventes || [];
                 const allArticles = articlesRes.data.data || [];
                 const caisseData = caisseRes?.data;
+                
+                // Filtrer les transferts en transit vers CETTE boutique
+                const transfers = (mvtsRes.data.data || []).filter(m => 
+                    m.statutTransfert === 'EXPEDIE' && 
+                    (m.boutiqueDestination?._id || m.boutiqueDestination) === boutiqueId
+                );
+                setPendingTransfers(transfers);
 
                 // Mettre à jour l'état de la caisse
                 setIsCaisseOpen(!!caisseData);
@@ -159,6 +168,21 @@ const GerantDashboard = () => {
 
         fetchData();
     }, []);
+
+    const handleConfirmReceipt = async (mvtId) => {
+        setActionLoading(mvtId);
+        try {
+            // Appel API pour confirmer la réception (À ajouter dans api.js)
+            await mouvementAPI.confirmerReception(mvtId);
+            setPendingTransfers(prev => prev.filter(t => t._id !== mvtId));
+            // Rafraîchir les articles pour voir le nouveau stock
+            window.location.reload(); 
+        } catch (err) {
+            alert(err.response?.data?.message || "Erreur de réception");
+        } finally {
+            setActionLoading(null);
+        }
+    };
 
     if (loading) {
         return <GerantDashboardSkeleton />;
@@ -243,6 +267,32 @@ const GerantDashboard = () => {
         <div className="p-4">
             {error && <Alert variant="danger">{error}</Alert>}
 
+            {/* Alerte de Transferts en attente */}
+            {pendingTransfers.length > 0 && (
+                <Alert variant="info" className="shadow-sm rounded-4 border-0 mb-4 animate__animated animate__pulse animate__infinite">
+                    <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            <iconify-icon icon="solar:delivery-bold-duotone" className="me-2 align-middle fs-4"></iconify-icon>
+                            <strong>Colis en route :</strong> Vous avez {pendingTransfers.length} transfert(s) du Dépôt Principal à réceptionner.
+                        </div>
+                        <div className="d-flex gap-2">
+                            {pendingTransfers.map(t => (
+                                <Button 
+                                    key={t._id}
+                                    variant="primary" 
+                                    size="sm" 
+                                    className="rounded-pill fw-bold"
+                                    onClick={() => handleConfirmReceipt(t._id)}
+                                    disabled={actionLoading === t._id}
+                                >
+                                    {actionLoading === t._id ? <Spinner size="sm" /> : `Valider Bon #${t._id.slice(-4).toUpperCase()}`}
+                                </Button>
+                            ))}
+                        </div>
+                    </div>
+                </Alert>
+            )}
+
             <Row className="align-items-center justify-content-between mb-4 g-3">
                 <Col xs={12} md="auto">
                     <h3 className="fw-bold  mb-0">Tableau de Bord Gérant</h3>
@@ -252,6 +302,10 @@ const GerantDashboard = () => {
                     <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                         <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                         Rapport
+                    </Button>
+                    <Button as={Link} to="/gerant/equipe" variant="outline-primary" className="rounded-pill px-4 shadow-sm">
+                        <iconify-icon icon="solar:users-group-rounded-bold" className="me-2 align-middle" style={{fontSize: '20px'}}></iconify-icon>
+                        Mon Équipe
                     </Button>
                     {!isCaisseOpen ? (
                         <Button as={Link} to="/gerant/caisse" variant="success" className="rounded-pill px-4 shadow-sm">
@@ -369,5 +423,6 @@ const GerantDashboard = () => {
         </div>
     );
 };
+
 
 export default GerantDashboard;

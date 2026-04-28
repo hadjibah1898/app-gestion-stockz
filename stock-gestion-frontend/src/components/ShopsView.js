@@ -59,6 +59,8 @@ const ShopsView = () => {
     active: true,
     type: 'Secondaire',
     vendeurs: [],
+    tipPercentage: 5,
+    tipsEnabled: true,
     latitude: 9.6412,
     longitude: -13.5784
   });
@@ -176,6 +178,8 @@ const ShopsView = () => {
         active: true, 
         type: 'Secondaire', 
         vendeurs: [],
+        tipPercentage: 5,
+        tipsEnabled: true,
         latitude: 9.6412, 
         longitude: -13.5784 
       });
@@ -325,7 +329,27 @@ const ShopsView = () => {
   };
 
   const columns = [
-    { key: 'nom', label: 'Nom' },
+    { 
+      key: 'nom', 
+      label: 'Nom',
+      render: (nom, boutique) => (
+        <div className="d-flex align-items-center flex-wrap gap-2">
+          <div className="d-flex align-items-center">
+            <iconify-icon 
+              icon={boutique.type === 'Centrale' ? "solar:home-2-bold" : "solar:shop-2-linear"} 
+              className={`me-2 fs-5 ${boutique.type === 'Centrale' ? 'text-primary' : 'text-muted'}`}
+            ></iconify-icon>
+            <span className={boutique.type === 'Centrale' ? 'fw-bold text-primary' : ''}>{nom}</span>
+          </div>
+          {boutique.isSessionOpen && (
+            <Badge bg="success" pill className="small shadow-sm d-flex align-items-center gap-1 py-1 px-2" style={{ fontSize: '0.7rem' }}>
+              <iconify-icon icon="solar:play-circle-bold"></iconify-icon>
+              Caisse Ouverte
+            </Badge>
+          )}
+        </div>
+      )
+    },
     { key: 'adresse', label: 'Adresse' },
     {
       key: 'type',
@@ -343,6 +367,25 @@ const ShopsView = () => {
         <Badge pill bg={value ? 'success' : 'danger'}>
           {value ? 'Active' : 'Inactive'}
         </Badge>
+      )
+    },
+    {
+      key: 'tipPercentage',
+      label: 'Pourboire (%)',
+      render: (val, boutique) => (
+        !boutique.tipsEnabled ? (
+            <Badge bg="secondary" pill className="fw-normal px-3">
+                🚫 Désactivé (Manuel)
+            </Badge>
+        ) : (
+            boutique.serverCount > 0 ? (
+                <Badge bg="info-subtle" text="info" pill className="fw-bold px-3">
+                    {val !== undefined ? val : 5}%
+                </Badge>
+            ) : (
+                <span className="text-muted small italic">Inactif (Pas de serveur)</span>
+            )
+        )
       )
     },
     { 
@@ -638,6 +681,32 @@ const ShopsView = () => {
                 <option value="Secondaire">Secondaire</option>
                 <option value="Centrale">Dépôt Principal</option>
               </Form.Select>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Check
+                type="switch"
+                id="tips-enabled-switch"
+                label="Autoriser les pourboires pour cette boutique"
+                name="tipsEnabled"
+                checked={currentBoutique.tipsEnabled}
+                onChange={handleChange}
+              />
+              <Form.Text className="text-muted">Si désactivé, aucun pourboire ne sera calculé, même si des serveurs sont créés.</Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-bold">Pourcentage Pourboire (%)</Form.Label>
+              <Form.Control
+                type="number"
+                name="tipPercentage"
+                value={currentBoutique.tipPercentage}
+                onChange={handleChange}
+                min="0"
+                max="100"
+                required
+              />
+              <Form.Text className="text-muted">Définit le taux de pourboire automatique pour les serveurs de cette boutique.</Form.Text>
             </Form.Group>
 
             <Form.Group className="mb-3">

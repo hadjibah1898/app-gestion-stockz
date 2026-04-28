@@ -6,45 +6,58 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Spinner, Alert, Form, Row, Col, Badge, Button, Modal, Pagination, OverlayTrigger, Tooltip, Table } from 'react-bootstrap';
-import { mouvementAPI, boutiqueAPI } from '../services/api';
+import { mouvementAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
 import { generateMovementsSummary } from '../utils/pdfUtils';
 
 const StockMovementsView = () => {
     const [mouvements, setMouvements] = useState([]);
     const [boutiques, setBoutiques] = useState([]);
+    const [fournisseurs, setFournisseurs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [filters, setFilters] = useState({ type: '', boutique: '', startDate: '', endDate: '' });
+    const [filters, setFilters] = useState({ type: '', boutique: '', fournisseur: '', startDate: '', endDate: '' });
     const [successMessage, setSuccessMessage] = useState('');
     
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 10;
+    const [totalPages, setTotalPages] = useState(1);
+    const itemsPerPage = 15; // Aligné sur la limite par défaut du backend
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [movementToCancel, setMovementToCancel] = useState(null);
     const [selectedIds, setSelectedIds] = useState([]);
 
-    // Logique de pagination déplacée ici pour être utilisée par les colonnes
-    const indexOfLastItem = currentPage * itemsPerPage;
-    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-    const currentMouvements = mouvements.slice(indexOfFirstItem, indexOfLastItem);
-    const totalPages = Math.ceil(mouvements.length / itemsPerPage);
-
     const fetchMouvements = useCallback(async () => {
         try {
             setLoading(true);
-            const [mouvementsRes, boutiquesRes] = await Promise.all([
-                mouvementAPI.getAll(filters),
-                boutiqueAPI.getAll()
+            const params = {
+                ...filters,
+                page: currentPage,
+                limit: itemsPerPage
+            };
+            const [mouvementsRes, boutiquesRes, fournisseursRes] = await Promise.all([
+                mouvementAPI.getAll(params),
+                boutiqueAPI.getAll(),
+                fournisseurAPI.getAll()
             ]);
-            setMouvements(mouvementsRes.data);
+
+            // Utilisation des métadonnées du backend
+            if (mouvementsRes.data && mouvementsRes.data.data) {
+                setMouvements(mouvementsRes.data.data);
+                setTotalPages(mouvementsRes.data.totalPages || 1);
+            } else {
+                // Fallback si l'API renvoie encore un tableau simple (compatibilité)
+                setMouvements(mouvementsRes.data || []);
+                setTotalPages(1);
+            }
+
             setBoutiques(boutiquesRes.data);
+            setFournisseurs(fournisseursRes.data.data || fournisseursRes.data || []);
         } catch (err) {
             setError(err.response?.data?.message || "Erreur lors du chargement des mouvements.");
         } finally {
             setLoading(false);
         }
-    }, [filters]);
+    }, [filters, currentPage]);
 
     useEffect(() => {
         fetchMouvements();
@@ -63,7 +76,7 @@ const StockMovementsView = () => {
 
     const handleSelectAll = (checked) => {
         if (checked) {
-            setSelectedIds(currentMouvements.map(m => m._id));
+            setSelectedIds(mouvements.map(m => m._id));
         } else {
             setSelectedIds([]);
         }
@@ -98,18 +111,33 @@ const StockMovementsView = () => {
         }
     };
 
-    const handleExportPDF = () => {
-        generateMovementsSummary(mouvements);
+    const handleExportPDF = async () => {
+        try {
+            setLoading(true);
+            // Récupérer TOUS les mouvements correspondant aux filtres (limit: 0)
+            const res = await mouvementAPI.getAll({ ...filters, limit: 0 });
+            const allData = res.data.data || res.data || [];
+            generateMovementsSummary(allData);
+        } catch (err) {
+            setError("Erreur lors de la préparation du PDF.");
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const handleExportExcel = () => {
-        const dataToExport = mouvements.map(mvt => ({
+    const handleExportExcel = async () => {
+        setLoading(true);
+        const res = await mouvementAPI.getAll({ ...filters, limit: 0 });
+        const allData = res.data.data || res.data || [];
+        
+        const dataToExport = allData.map(mvt => ({
             'Date': new Date(mvt.createdAt).toLocaleString('fr-FR'),
             'Type': mvt.type,
             'Origine': mvt.fournisseur?.nom || mvt.boutiqueSource?.nom || 'N/A',
             'Destination': mvt.boutiqueDestination?.nom || (mvt.type === 'Vente' ? 'Client' : 'N/A'),
             'Articles': mvt.articles.map(a => `${a.nomArticle} (${a.quantite})`).join(', '),
             'Opérateur': mvt.operateur?.nom || 'Système',
+            'Transporteur': mvt.nomTransporteur || '-',
             'Détails': mvt.details || '-',
             'Statut': mvt.isCancelled ? 'Annulé' : 'Validé'
         }));
@@ -138,7 +166,7 @@ const StockMovementsView = () => {
                 <Form.Check 
                     type="checkbox" 
                     onChange={(e) => handleSelectAll(e.target.checked)} 
-                    checked={currentMouvements.length > 0 && selectedIds.length === currentMouvements.length}
+                    checked={mouvements.length > 0 && selectedIds.length === mouvements.length}
                 />
             ),
             render: (_, item) => (
@@ -186,6 +214,11 @@ const StockMovementsView = () => {
             key: 'operateur',
             label: 'Opérateur',
             render: (op) => op?.nom || 'Système'
+        },
+        {
+            key: 'nomTransporteur',
+            label: 'Transporteur',
+            render: (val) => val || '-'
         },
         {
             key: 'details',
@@ -249,7 +282,7 @@ const StockMovementsView = () => {
             <Card className="border-0 shadow-sm rounded-4 mb-4">
                 <Card.Body>
                     <Row className="g-3">
-                        <Col md={3}>
+                        <Col md={2}>
                             <Form.Label>Type de mouvement</Form.Label>
                             <Form.Select name="type" value={filters.type} onChange={handleFilterChange}>
                                 <option value="">Tous les types</option>
@@ -261,7 +294,7 @@ const StockMovementsView = () => {
                             </Form.Select>
                         </Col>
                         <Col md={3}>
-                            <Form.Label>Boutique concernée</Form.Label>
+                            <Form.Label>Boutique</Form.Label>
                             <Form.Select name="boutique" value={filters.boutique} onChange={handleFilterChange}>
                                 <option value="">Toutes les boutiques</option>
                                 {boutiques.map(b => (
@@ -270,6 +303,15 @@ const StockMovementsView = () => {
                             </Form.Select>
                         </Col>
                         <Col md={3}>
+                            <Form.Label>Fournisseur</Form.Label>
+                            <Form.Select name="fournisseur" value={filters.fournisseur} onChange={handleFilterChange}>
+                                <option value="">Tous les fournisseurs</option>
+                                {fournisseurs.map(f => (
+                                    <option key={f._id} value={f._id}>{f.nom}</option>
+                                ))}
+                            </Form.Select>
+                        </Col>
+                        <Col md={2}>
                             <Form.Label>Date début</Form.Label>
                             <Form.Control type="date" name="startDate" value={filters.startDate} onChange={handleFilterChange} />
                         </Col>
@@ -294,8 +336,8 @@ const StockMovementsView = () => {
                             </tr>
                         </thead>
                         <tbody>
-                            {currentMouvements.length > 0 ? (
-                                currentMouvements.map((item, index) => {
+                            {mouvements.length > 0 ? (
+                                mouvements.map((item, index) => {
                                     const isCancelled = item.isCancelled;
                                     return (
                                         <tr key={item._id || index} className={isCancelled ? 'bg-light text-muted' : ''}>
@@ -318,13 +360,31 @@ const StockMovementsView = () => {
                     {totalPages > 1 && (
                         <div className="d-flex justify-content-center p-3 border-top">
                             <Pagination className="mb-0">
+                                <Pagination.First onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
                                 <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
-                                {[...Array(totalPages)].map((_, idx) => (
-                                    <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
-                                        {idx + 1}
-                                    </Pagination.Item>
-                                ))}
+                                
+                                {(() => {
+                                    const pages = [];
+                                    for (let i = 1; i <= totalPages; i++) {
+                                        if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                                            pages.push(i);
+                                        }
+                                    }
+                                    return pages.map((p, idx) => (
+                                        <React.Fragment key={p}>
+                                            {idx > 0 && pages[idx - 1] !== p - 1 && <Pagination.Ellipsis disabled />}
+                                            <Pagination.Item 
+                                                active={p === currentPage} 
+                                                onClick={() => setCurrentPage(p)}
+                                            >
+                                                {p}
+                                            </Pagination.Item>
+                                        </React.Fragment>
+                                    ));
+                                })()}
+
                                 <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
+                                <Pagination.Last onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
                             </Pagination>
                         </div>
                     )}

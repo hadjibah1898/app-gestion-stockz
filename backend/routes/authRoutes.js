@@ -21,8 +21,6 @@ router.put('/notifications/mark-all-read', protect, authController.markAllNotifi
 // --- Routes Admin ---
 // Créer un gérant
 router.post('/create-manager', protect, authorize('Admin'), validateAuth, authController.createManager);
-// Obtenir tous les utilisateurs
-router.get('/users', protect, authorize('Admin'), authController.getUsers);
 router.get('/users/trash', protect, authorize('Admin'), authController.getDeletedUsers);
 
 // Routes de modification et suppression des gérants
@@ -31,5 +29,11 @@ router.put('/managers/:id/restore', protect, authorize('Admin'), validateObjectI
 
 // Route pour l'historique complet des notifications (Admin)
 router.get('/admin/notifications', protect, authorize('Admin'), authController.getAllNotifications);
+
+// Autorise l'Admin à tout voir, et le Gérant à accéder à la liste (le contrôleur filtrera ensuite)
+router.get('/users', protect, authorize('Admin', 'Gérant'), authController.getUsers);
+
+// Autorise le Gérant à créer un compte (Serveur)
+router.post('/users', protect, authorize('Admin', 'Gérant'), authController.register);
 
 module.exports = router;

@@ -12,6 +12,7 @@ import IntelligentSupplyModal from './common/IntelligentSupplyModal'; // Importe
 import XLSX from 'xlsx-js-style';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
+import { useMemo } from 'react';
 import autoTable from 'jspdf-autotable';
 import logo from '../assets/logo.png';
 
@@ -22,11 +23,23 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [centralShopId, setCentralShopId] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation(); // Pour récupérer les données de redirection
-  const [filterBoutique, setFilterBoutique] = useState(boutiqueId || '');
+  const [filterBoutique, setFilterBoutique] = useState(boutiqueId || (userRole !== 'Admin' ? localStorage.getItem('boutiqueId') : ''));
   const [searchTerm, setSearchTerm] = useState(''); // État pour la barre de recherche
   const [filterFournisseur, setFilterFournisseur] = useState(''); // Nouvel état pour le filtre fournisseur
+  const [filterStatus, setFilterStatus] = useState(''); // Nouvel état pour le filtre état du stock
   const [showPromoOnly, setShowPromoOnly] = useState(false); // État pour le filtre promo
-  const [sortBy, setSortBy] = useState(''); // État pour le tri
+  
+  // État pour le tri avec persistance
+  const [sortConfig, setSortConfig] = useState(() => {
+    const savedSort = localStorage.getItem('articlesViewSort');
+    return savedSort ? JSON.parse(savedSort) : { key: 'nom', direction: 'asc' };
+  });
+
+  // Sauvegarder le tri dès qu'il change
+  useEffect(() => {
+    localStorage.setItem('articlesViewSort', JSON.stringify(sortConfig));
+  }, [sortConfig]);
+
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -50,7 +63,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     dateFinPromo: '',
     remise: 0,
     datePeremption: '',
-    categorie: 'Divers'
+    categorie: 'Divers',
+    seuilAlerte: 10
   });
 
   const [availableCategories, setAvailableCategories] = useState([
@@ -133,11 +147,32 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     setLoading(true);
     setError('');
 
-    let sortParam = '';
-    let orderParam = 'asc';
-    if (sortBy === 'datePeremptionAsc') { sortParam = 'datePeremption'; orderParam = 'asc'; }
-    else if (sortBy === 'datePeremptionDesc') { sortParam = 'datePeremption'; orderParam = 'desc'; }
-    else if (sortBy === 'nomAsc') { sortParam = 'nom'; orderParam = 'asc'; }
+    // Préparer les paramètres de tri pour l'API
+    let sortParam = sortConfig.key;
+    let orderParam = sortConfig.direction;
+
+    // Le backend ne gère pas encore les tries complexes comme "margeUnitaire",
+    // donc pour ces cas, on doit soit les trier en frontend après réception,
+    // soit ajuster le backend pour qu'il les supporte.
+    // Pour l'instant, on envoie uniquement les clés directes du modèle.
+    const allowedBackendSortKeys = ['nom', 'code', 'prixAchat', 'prixVente', 'quantite', 'datePeremption'];
+    if (!allowedBackendSortKeys.includes(sortParam)) {
+        sortParam = 'nom'; // Revenir à un tri par défaut si la clé n'est pas supportée par le backend
+        orderParam = 'asc';
+    }
+
+    // Logique de tri côté client si la colonne triée n'est pas gérée par le backend
+    // ou si on a des calculs complexes (marge, valeur stock)
+    const applyClientSideSort = (articlesArray) => {
+        const sorted = [...articlesArray].sort((a, b) => {
+            // Ici, vous pouvez implémenter une logique de tri complexe pour les colonnes calculées si nécessaire
+            // Pour les colonnes simples gérées par le backend, ce tri est redondant mais inoffensif.
+            // Exemple: pour 'nom' ou 'quantite', le backend devrait déjà avoir fait le travail.
+            // Cette partie serait utile pour des colonnes comme 'valeurStock' si le backend ne la trie pas.
+            return 0; // Pour l'instant, pas de tri client côté article, on se repose sur le backend.
+        });
+        return sorted;
+    };
 
     const params = {
       page: currentPage,
@@ -145,8 +180,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       search: searchTerm,
       boutique: filterBoutique,
       fournisseur: filterFournisseur,
-      sort: sortParam,
-      order: orderParam
+      status: filterStatus,
+      sort: sortParam, // Utiliser le paramètre validé (incluant le fallback)
+      order: orderParam // Utiliser le paramètre validé (incluant le fallback)
     };
 
     try {
@@ -158,7 +194,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         
         // Handle paginated response or simple array
         if (articlesRes.data && articlesRes.data.data) {
-            setArticles(articlesRes.data.data);
+            setArticles(applyClientSideSort(articlesRes.data.data)); // Appliquer un tri client si nécessaire
             setTotalPages(articlesRes.data.totalPages);
         } else {
             setArticles(articlesRes.data || []);
@@ -177,11 +213,27 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       } finally {
         setLoading(false);
       }
-  }, [userRole, currentPage, searchTerm, filterBoutique, filterFournisseur, sortBy]);
+  }, [userRole, currentPage, searchTerm, filterBoutique, filterFournisseur, filterStatus, sortConfig]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Fonction pour gérer le changement de tri
+  const handleSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+        direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+};
+
+  const getSortIcon = (key) => {
+    if (sortConfig.key !== key) return <iconify-icon icon="solar:sort-vertical-linear" className="ms-1 align-middle opacity-50"></iconify-icon>;
+    return sortConfig.direction === 'asc' 
+        ? <iconify-icon icon="solar:sort-from-top-to-bottom-bold" className="ms-1 align-middle text-primary"></iconify-icon>
+        : <iconify-icon icon="solar:sort-from-bottom-to-top-bold" className="ms-1 align-middle text-primary"></iconify-icon>;
+};
 
   // Effet pour gérer l'ouverture automatique de la modale d'approvisionnement depuis le Dashboard
   useEffect(() => {
@@ -384,9 +436,32 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     }
   };
 
-  const handleExportPDF = () => {
-    const doc = new jsPDF();
-    let finalY = 0;
+  const handleExportPDF = async () => {
+    try {
+      setLoading(true);
+      // 1. On récupère l'intégralité des articles correspondant aux filtres (limit: 0)
+      const params = {
+        limit: 0,
+        search: searchTerm,
+        boutique: filterBoutique,
+        fournisseur: filterFournisseur,
+        status: filterStatus
+      };
+      const res = await articleAPI.getAll(params);
+      let allArticles = res.data.data || res.data || [];
+
+      // 2. Application du filtre local promo si actif
+      if (showPromoOnly) {
+        allArticles = allArticles.filter(a => a.promoActive && a.promo > 0);
+      }
+
+      if (allArticles.length === 0) {
+        alert("Aucun article à exporter pour ces critères.");
+        return;
+      }
+
+      const doc = new jsPDF();
+      let finalY = 0;
 
     // --- 1. EN-TÊTE ---
     doc.addImage(logo, 'PNG', 14, 8, 40, 15);
@@ -402,9 +477,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     finalY = 35;
 
     // Calcul des statistiques globales pour le PDF
-    const totalArticles = filteredArticles.reduce((acc, curr) => acc + curr.quantite, 0);
-    const totalValeurAchat = filteredArticles.reduce((acc, curr) => acc + (curr.prixAchat * curr.quantite), 0);
-    const totalValeurVente = filteredArticles.reduce((acc, curr) => acc + (curr.prixVente * curr.quantite), 0);
+    const totalArticles = allArticles.reduce((acc, curr) => acc + curr.quantite, 0);
+    const totalValeurAchat = allArticles.reduce((acc, curr) => acc + (curr.prixAchat * curr.quantite), 0);
+    const totalValeurVente = allArticles.reduce((acc, curr) => acc + (curr.prixVente * curr.quantite), 0);
 
     // Affichage des résumés dans un cadre
     doc.setFillColor(245, 247, 250);
@@ -436,7 +511,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     const tableColumn = ["Nom", "Code", "Boutique", "P. Achat", "P. Vente", "Qté", "Valeur Stock"];
     const tableRows = [];
 
-    filteredArticles.forEach(article => {
+    allArticles.forEach(article => {
       const valeurStock = article.prixAchat * article.quantite;
       const articleData = [
         article.nom,
@@ -492,15 +567,21 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
     }
 
-    const fileName = title ? `${title.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf` : "articles.pdf";
-    doc.save(fileName);
+      const fileName = title ? `${title.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.pdf` : "articles.pdf";
+      doc.save(fileName);
+    } catch (err) {
+      console.error("Erreur export PDF:", err);
+      setError("Impossible de générer le PDF complet.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleExportExcel = async () => {
     try {
       setLoading(true);
       // Récupération de tous les articles sans pagination
-      const params = { limit: 0, search: searchTerm, boutique: filterBoutique, fournisseur: filterFournisseur };
+      const params = { limit: 0, search: searchTerm, boutique: filterBoutique, fournisseur: filterFournisseur, status: filterStatus };
       const res = await articleAPI.getAll(params);
       const allData = res.data.data || res.data || [];
 
@@ -551,7 +632,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   // Client-side filtering removed/simplified as we now do server-side filtering
   // We still keep the promo filter client-side or we could move it to backend too
   let filteredArticles = articles.filter(article => {
-    const matchPromo = !showPromoOnly || (article.promoActive && article.promo > 0);
+    // Le filtrage promo sera fait par le backend si l'API est mise à jour pour cela, sinon il reste client-side
+    const matchPromo = !showPromoOnly || (article.promoActive && (article.promo > 0 || article.remise > 0)); // Inclure aussi les remises manuelles
     return matchPromo;
   });
 
@@ -571,14 +653,17 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     }
   };
 
+  // Adapter le composant TableComponent pour qu'il gère le tri via la prop `onSort`
+  // ou utiliser un tableau HTML natif pour gérer les clics sur les en-têtes.
+  // Pour cet exemple, nous allons modifier le `render` de chaque colonne.
   const columns = [
     ...(filterFournisseur ? [{
       key: 'select',
       label: (
-        <Form.Check 
-            type="checkbox" 
-            onChange={handleSelectAll} 
-            checked={filteredArticles.length > 0 && selectedArticles.length === filteredArticles.length}
+        <Form.Check
+          type="checkbox"
+          onChange={handleSelectAll}
+          checked={filteredArticles.length > 0 && selectedArticles.length === filteredArticles.length}
         />
       ),
       render: (_, article) => <Form.Check type="checkbox" checked={selectedArticles.includes(article._id)} onChange={() => handleSelectOne(article._id)} />
@@ -586,10 +671,20 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     {
       key: 'image',
       label: 'Image',
-      render: (img) => img ? <img src={img} alt="produit" className="rounded shadow-sm" style={{width: '40px', height: '40px', objectFit: 'cover'}} /> : <div className="bg-light rounded d-flex align-items-center justify-content-center text-muted small" style={{width: '40px', height: '40px'}}><iconify-icon icon="solar:camera-linear"></iconify-icon></div>
+      render: (img) => img ? <img src={img} alt="produit" className="rounded shadow-sm" style={{ width: '40px', height: '40px', objectFit: 'cover' }} /> : <div className="bg-light rounded d-flex align-items-center justify-content-center text-muted small" style={{ width: '40px', height: '40px' }}><iconify-icon icon="solar:camera-linear"></iconify-icon></div>
     },
-    { key: 'code', label: 'Code' },
-    { key: 'nom', label: 'Nom' },
+    {
+      key: 'code',
+      label: <>Code {getSortIcon('code')}</>,
+      headerClassName: 'cursor-pointer',
+      onClick: () => handleSort('code')
+    },
+    {
+      key: 'nom',
+      label: <>Nom {getSortIcon('nom')}</>,
+      headerClassName: 'cursor-pointer',
+      onClick: () => handleSort('nom')
+    },
     { 
       key: 'categorie', 
       label: 'Catégorie',
@@ -612,7 +707,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     // La colonne Fournisseur est visible uniquement pour l'Admin
     ...(userRole === 'Admin' ? [{
         key: 'fournisseur',
-        label: 'Fournisseur',
+        label: <>Fournisseur {getSortIcon('fournisseur')}</>,
+        headerClassName: 'cursor-pointer',
+        onClick: () => handleSort('fournisseur'),
         render: (fournisseur) => {
             if (!fournisseur) {
                 return <Badge bg="secondary">Non spécifié</Badge>;
@@ -624,6 +721,22 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             );
         }
     }] : []),
+    ...(userRole !== 'Serveur' ? [{
+        key: 'prixAchat',
+        label: <>P. Achat {getSortIcon('prixAchat')}</>,
+        headerClassName: 'cursor-pointer text-end',
+        cellClassName: 'text-end',
+        onClick: () => handleSort('prixAchat'),
+        render: (price) => price.toLocaleString() + ' GNF'
+    }] : []),
+    {
+        key: 'prixVente',
+        label: <>P. Vente {getSortIcon('prixVente')}</>,
+        headerClassName: 'cursor-pointer text-end',
+        cellClassName: 'text-end',
+        onClick: () => handleSort('prixVente'),
+        render: (price) => price.toLocaleString() + ' GNF'
+    },
     {
       key: 'promo',
       label: 'Promo/Remise',
@@ -647,6 +760,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     { 
       key: 'datePeremption',
       label: 'Péremption',
+      headerClassName: 'cursor-pointer',
+      onClick: () => handleSort('datePeremption'),
+      // Le rendu reste le même
       render: (date) => {
         if (!date) return '-';
         const d = new Date(date);
@@ -664,11 +780,17 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     { 
       key: 'quantite', 
       label: 'Quantité',
-      render: (value) => (
-        <Badge bg={value > 10 ? 'success' : value > 0 ? 'warning' : 'danger'}>
+      headerClassName: 'cursor-pointer text-center',
+      cellClassName: 'text-center',
+      onClick: () => handleSort('quantite'),
+      render: (value, article) => {
+        const seuil = article.seuilAlerte || 10;
+        return (
+          <Badge bg={value > seuil ? 'success' : value > 0 ? 'warning' : 'danger'}>
           {value} unités
         </Badge>
-      )
+        );
+      }
     },
     { 
       key: 'actions',
@@ -696,18 +818,25 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
   // Function to handle page change
   const handlePageChange = (pageNumber) => {
-      setCurrentPage(pageNumber);
+    setCurrentPage(pageNumber);
   };
 
   // Pagination Items
-  let paginationItems = [];
-  for (let number = 1; number <= totalPages; number++) {
-    paginationItems.push(
-      <Pagination.Item key={number} active={number === currentPage} onClick={() => handlePageChange(number)}>
-        {number}
-      </Pagination.Item>,
-    );
-  }
+  // Pagination Items (Smart pagination)
+  const renderPaginationItems = useMemo(() => {
+    const pages = [];
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+        pages.push(i);
+      }
+    }
+    return pages.map((p, idx) => (
+      <React.Fragment key={p}>
+        {idx > 0 && pages[idx - 1] !== p - 1 && <Pagination.Ellipsis disabled />}
+        <Pagination.Item active={p === currentPage} onClick={() => handlePageChange(p)}>{p}</Pagination.Item>
+      </React.Fragment>
+    ));
+  }, [currentPage, totalPages]);
 
   const handleSupplySuccess = () => {
     setSuccessMessage("Approvisionnement enregistré avec succès !");
@@ -767,7 +896,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       {/* Filtres */}
       <Row className="mb-4 align-items-center g-3">
-        <Col md={3}>
+        <Col md={2}>
           <Form.Control
             type="text"
             placeholder="Rechercher par nom ou code..."
@@ -776,7 +905,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           />
         </Col>
         {userRole === 'Admin' && !boutiqueId && (
-          <Col md={filterBoutique === centralShopId ? 2 : 3}>
+          <Col md={2}>
             <Form.Select 
               value={filterBoutique} 
               onChange={(e) => {
@@ -797,7 +926,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         )}
         {/* Le filtre par fournisseur est visible si on est admin ET soit sur la page centrale, soit on a sélectionné la centrale */}
         {userRole === 'Admin' && (boutiqueId === centralShopId || filterBoutique === centralShopId) && (
-          <Col md={3}>
+          <Col md={2}>
             <Form.Select 
               value={filterFournisseur} 
               onChange={(e) => {
@@ -813,18 +942,32 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
             </Form.Select>
           </Col>
         )}
-        <Col md={filterBoutique === centralShopId ? 2 : 3}>
+        <Col md={2}>
             <Form.Select 
-              value={sortBy} 
-              onChange={(e) => setSortBy(e.target.value)}
+              value={filterStatus} 
+              onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
             >
-              <option value="">Tri par défaut</option>
-              <option value="datePeremptionAsc">Péremption (Plus proche)</option>
-              <option value="datePeremptionDesc">Péremption (Plus lointaine)</option>
-              <option value="boutiqueAsc">Boutique (A-Z)</option>
-              <option value="boutiqueDesc">Boutique (Z-A)</option>
+              <option value="">Tous les états</option>
+              <option value="low_stock">⚠️ Stock Faible (≤ 10)</option>
+              <option value="out_of_stock">🚫 En Rupture (0)</option>
+              <option value="expired">💀 Périmés</option>
+              <option value="expiring_soon">⏰ Expire bientôt (30j)</option>
             </Form.Select>
         </Col>
+        {(sortConfig.key !== 'nom' || sortConfig.direction !== 'asc') && (
+          <Col md="auto">
+            <Button 
+              variant="outline-secondary" 
+              size="sm"
+              onClick={() => setSortConfig({ key: 'nom', direction: 'asc' })} 
+              className="rounded-pill px-3 shadow-sm"
+              title="Remettre le tri par défaut (Alphabétique)"
+            >
+              <iconify-icon icon="solar:refresh-circle-bold" className="me-1 align-middle"></iconify-icon>
+              Tri par défaut
+            </Button>
+          </Col>
+        )}
         <Col md="auto">
           <Form.Check 
             type="switch"
@@ -854,7 +997,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 <Pagination>
                     <Pagination.First onClick={() => handlePageChange(1)} disabled={currentPage === 1} />
                     <Pagination.Prev onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1} />
-                    {paginationItems.slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))} 
+                    {renderPaginationItems}
                     <Pagination.Next onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages} />
                     <Pagination.Last onClick={() => handlePageChange(totalPages)} disabled={currentPage === totalPages} />
                 </Pagination>
@@ -1031,6 +1174,18 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                 onChange={handleChange}
                 min={new Date().toISOString().split('T')[0]} // Empêche la sélection d'une date passée
               />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-bold">Seuil d'alerte stock</Form.Label>
+              <Form.Control
+                type="number"
+                name="seuilAlerte"
+                value={currentArticle.seuilAlerte}
+                onChange={handleChange}
+                min="0"
+                disabled={userRole !== 'Admin'}
+              />
+              <Form.Text className="text-muted">Quantité critique pour les alertes de cette boutique (Défaut: 10).</Form.Text>
             </Form.Group>
 
             {/* Section Promotion & Remise (Admin Uniquement) */}

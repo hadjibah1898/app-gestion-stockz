@@ -4,14 +4,27 @@
 // Affiche les alertes de stock faible et les mouvements récents
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Card, Spinner, Alert, Table, Badge, Form, Row, Col, Button, Modal } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Card, Spinner, Alert, Table, Badge, Form, Row, Col, Button } from 'react-bootstrap';
 import { articleAPI, boutiqueAPI, fournisseurAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import logo from '../assets/logo.png';
-import IntelligentSupplyModal from './common/IntelligentSupplyModal';
+
+// Style pour l'animation de clignotement
+const blinkAnimationStyle = `
+.blink-animation {
+    animation: blinker 1.5s linear infinite;
+}
+@keyframes blinker {
+    50% { opacity: 0.3; }
+}`;
+
+const styleSheet = document.createElement("style");
+styleSheet.type = "text/css";
+styleSheet.innerText = blinkAnimationStyle;
+document.head.appendChild(styleSheet);
 
 const formatCurrency = (value) => {
     if (typeof value !== 'number') return '...';
@@ -20,34 +33,45 @@ const formatCurrency = (value) => {
 };
 
 const StockStatusView = () => {
-    const [articlesByBoutique, setArticlesByBoutique] = useState({});
     const [allArticles, setAllArticles] = useState([]);
     const [boutiques, setBoutiques] = useState([]);
     const [fournisseurs, setFournisseurs] = useState([]);
     const [centralShopId, setCentralShopId] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Filtres
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'rupture', 'reapprovisionnement', 'en-stock'
     const [filterBoutique, setFilterBoutique] = useState('all'); // 'all' or boutique._id
     const [filterFournisseur, setFilterFournisseur] = useState('all');
 
-    // Sélection et Modales
-    const [selectedArticles, setSelectedArticles] = useState([]);
-    const [preSelectedSupplier, setPreSelectedSupplier] = useState('');
-    const [showSupplyModal, setShowSupplyModal] = useState(false);
-    const [showTransferModal, setShowTransferModal] = useState(false);
-    const [transferItems, setTransferItems] = useState([]);
-    const [transferLoading, setTransferLoading] = useState(false);
+    // État pour le tri
+    const [sortConfig, setSortConfig] = useState(() => {
+        // Récupérer le tri sauvegardé au chargement
+        const savedSort = localStorage.getItem('stockStatusSort');
+        return savedSort ? JSON.parse(savedSort) : { key: 'nom', direction: 'asc' };
+    });
+
+    // Sauvegarder le tri dès qu'il change
+    useEffect(() => {
+        localStorage.setItem('stockStatusSort', JSON.stringify(sortConfig));
+    }, [sortConfig]);
 
     const fetchData = useCallback(async () => {
             try {
                 setLoading(true);
-                // Ajout du chargement des catégories (gérer l'erreur si l'API n'existe pas encore)
+                
+                const params = {
+                    limit: 0, // On récupère tout ce qui correspond aux filtres pour le calcul des totaux
+                    search: searchTerm,
+                    boutique: filterBoutique !== 'all' ? filterBoutique : undefined,
+                    fournisseur: filterFournisseur !== 'all' ? filterFournisseur : undefined,
+                    status: filterStatus !== 'all' ? filterStatus : undefined
+                };
+
                 const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
-                    articleAPI.getAll(),
+                    articleAPI.getAll(params),
                     boutiqueAPI.getAll(),
                     fournisseurAPI.getAll()
                 ]);
@@ -59,18 +83,7 @@ const StockStatusView = () => {
                 const centrale = allBoutiques.find(b => b.type === 'Centrale');
                 if (centrale) setCentralShopId(centrale._id);
 
-                // Group articles by boutique
-                const groupedArticles = articles.reduce((acc, article) => {
-                    const boutiqueId = article.boutique?._id || 'unassigned';
-                    if (!acc[boutiqueId]) {
-                        acc[boutiqueId] = [];
-                    }
-                    acc[boutiqueId].push(article);
-                    return acc;
-                }, {});
-
                 setAllArticles(articles);
-                setArticlesByBoutique(groupedArticles);
                 setBoutiques(allBoutiques);
                 setFournisseurs(allFournisseurs);
 
@@ -79,25 +92,35 @@ const StockStatusView = () => {
             } finally {
                 setLoading(false);
             }
-    }, []);
+    }, [filterBoutique, filterFournisseur, filterStatus, searchTerm]); // Déclenche un fetch uniquement quand les filtres changent
 
     useEffect(() => {
         fetchData();
     }, [fetchData]);
 
-    useEffect(() => {
-        setSelectedArticles([]);
-    }, [filterBoutique, filterFournisseur]);
+    const resetAllFilters = () => {
+        setSearchTerm('');
+        setFilterStatus('all');
+        setFilterBoutique('all');
+        setFilterFournisseur('all');
+        setSortConfig({ key: 'nom', direction: 'asc' });
+    };
 
-    const filterArticlesByStatus = (articles) => {
-        if (filterStatus === 'all') return articles;
-        
-        return articles.filter(article => {
-            if (filterStatus === 'rupture') return article.quantite <= 0;
-            if (filterStatus === 'reapprovisionnement') return article.quantite > 0 && article.quantite <= 10;
-            if (filterStatus === 'en-stock') return article.quantite > 10;
-            return true;
-        });
+    const handleSort = (key) => {
+        let direction = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortIcon = (key) => {
+        if (sortConfig.key !== key) {
+            return <iconify-icon icon="solar:sort-vertical-linear" className="ms-1 align-middle opacity-50"></iconify-icon>;
+        }
+        return sortConfig.direction === 'asc' 
+            ? <iconify-icon icon="solar:sort-from-top-to-bottom-bold" className="ms-1 align-middle text-primary"></iconify-icon>
+            : <iconify-icon icon="solar:sort-from-bottom-to-top-bold" className="ms-1 align-middle text-primary"></iconify-icon>;
     };
 
     const getStatusBadge = (quantite, seuil = 10) => {
@@ -110,93 +133,33 @@ const StockStatusView = () => {
         return <Badge bg="success">En Stock</Badge>;
     };
 
-    const handleSelectAll = (articles) => {
-        if (selectedArticles.length === articles.length) {
-            setSelectedArticles([]);
-        } else {
-            setSelectedArticles(articles.map(a => a._id));
-        }
-    };
+    // Calcul du résumé financier global (Basé sur les articles actuellement filtrés)
+    const financialTotals = useMemo(() => {
+        return allArticles.reduce((acc, a) => {
+            const qty = a.quantite || 0;
+            acc.buy += (qty * (a.prixAchat || 0));
+            acc.sell += (qty * (a.prixVente || 0));
+            return acc;
+        }, { buy: 0, sell: 0 });
+    }, [allArticles]);
 
-    const handleSelectOne = (articleId) => {
-        if (selectedArticles.includes(articleId)) {
-            setSelectedArticles(selectedArticles.filter(id => id !== articleId));
-        } else {
-            setSelectedArticles([...selectedArticles, articleId]);
-        }
-    };
-
-    const handleOpenTransferModal = () => {
-        const itemsToTransfer = selectedArticles.map(id => {
-            const article = allArticles.find(a => a._id === id);
-            const centralArticle = allArticles.find(a => a.boutique?._id === centralShopId && a.nom === article.nom);
-            return {
-                ...article,
-                quantiteToTransfer: 10, // Default quantity
-                stockCentral: centralArticle ? centralArticle.quantite : 0,
-            };
-        });
-        setTransferItems(itemsToTransfer);
-        setShowTransferModal(true);
-    };
-
-    const handleTransferItemChange = (id, newQuantity) => {
-        setTransferItems(prev => prev.map(item => 
-            item._id === id ? { ...item, quantiteToTransfer: parseInt(newQuantity) || 0 } : item
-        ));
-    };
-
-    const handleConfirmTransfer = async () => {
-        setTransferLoading(true);
-        setError('');
-
-        const articlesPayload = transferItems
-            .filter(item => item.quantiteToTransfer > 0 && item.quantiteToTransfer <= item.stockCentral)
-            .map(item => ({
-                articleId: item._id, // ID of the article in the secondary shop
-                quantite: item.quantiteToTransfer
-            }));
+    // Optimisation : Groupement des articles mémorisé
+    const { groupedArticles, outOfStockMap } = useMemo(() => {
+        const outOfStock = {};
+        const grouped = allArticles.reduce((acc, article) => {
+            const bId = article.boutique?._id || 'unassigned';
+            if (!acc[bId]) acc[bId] = [];
+            acc[bId].push(article);
+            if (article.quantite <= 0) outOfStock[bId] = true;
+            return acc;
+        }, {});
         
-        if (articlesPayload.length === 0) {
-            setError("Aucun article avec une quantité valide à transférer.");
-            setTransferLoading(false);
-            return;
-        }
-
-        try {
-            const res = await articleAPI.restock({ targetId: filterBoutique, articles: articlesPayload });
-            setSuccess(res.data.message);
-            setShowTransferModal(false);
-            fetchData(); // Refresh data
-            setSelectedArticles([]);
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors du transfert.");
-        } finally {
-            setTransferLoading(false);
-        }
-    };
-
-    const handleSupplySuccess = () => {
-        setSuccess("Approvisionnement réussi !");
-        setShowSupplyModal(false);
-        fetchData();
-        setSelectedArticles([]);
-        setTimeout(() => setSuccess(''), 4000);
-    };
-
-    const handleOpenSupplyModal = () => {
-        const articlesForSupply = allArticles.filter(a => selectedArticles.includes(a._id));
-        const uniqueSuppliers = [...new Set(articlesForSupply.map(a => a.fournisseur?._id).filter(Boolean))];
-        if (uniqueSuppliers.length === 1) {
-            setPreSelectedSupplier(uniqueSuppliers[0]);
-        } else {
-            setPreSelectedSupplier(''); // Reset if multiple or no suppliers
-        }
-        setShowSupplyModal(true);
-    };
+        return { groupedArticles: grouped, outOfStockMap: outOfStock };
+    }, [allArticles]);
 
     const handleExportExcel = () => {
+        if (allArticles.length === 0) return alert("Aucune donnée à exporter.");
+
         const dataToExport = allArticles.map(a => ({
             'Boutique': a.boutique?.nom || 'N/A',
             'Code': a.code || '-',
@@ -207,7 +170,7 @@ const StockStatusView = () => {
             'Prix Vente (GNF)': a.prixVente,
             'Marge Unitaire (GNF)': a.prixVente - a.prixAchat,
             'Valeur Stock Achat (GNF)': a.quantite * a.prixAchat,
-            'Statut': a.quantite <= 0 ? 'Rupture' : (a.quantite <= 10 ? 'Faible' : 'OK')
+            'Statut': a.quantite <= 0 ? 'Rupture' : (a.quantite <= (a.seuilAlerte || 10) ? 'Faible' : 'OK')
         }));
 
         const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -217,7 +180,9 @@ const StockStatusView = () => {
     };
 
     const handleExportPDF = () => {
-        const doc = new jsPDF({ orientation: 'landscape' });
+        if (allArticles.length === 0) return alert("Aucune donnée à exporter.");
+
+        const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
         
         // En-tête
         try { doc.addImage(logo, 'PNG', 14, 8, 40, 15); } catch (e) {}
@@ -230,11 +195,25 @@ const StockStatusView = () => {
         doc.setTextColor(100);
         doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 60, 22);
 
-        // Statistiques globales
-        const totalValue = allArticles.reduce((sum, a) => sum + (a.quantite * a.prixAchat), 0);
-        doc.setFontSize(11);
-        doc.setTextColor(0);
-        doc.text(`Valeur Totale du Stock (Achat) : ${formatCurrency(totalValue)}`, 14, 35);
+        // Résumé financier global pour le PDF
+        const fin = allArticles.reduce((acc, a) => {
+            const qty = a.quantite || 0;
+            acc.buy += (qty * (a.prixAchat || 0));
+            acc.sell += (qty * (a.prixVente || 0));
+            return acc;
+        }, { buy: 0, sell: 0 });
+
+        // Cadre gris clair pour le résumé financier
+        doc.setFillColor(245, 247, 250); // Fond gris très clair
+        doc.setDrawColor(220, 220, 220); // Bordure grise
+        doc.roundedRect(14, 28, 269, 10, 1, 1, 'FD'); // FD = Fill then Stroke
+
+        doc.setFontSize(10).setTextColor(50).setFont("helvetica", "bold");
+        // Positionnement horizontal mieux réparti sur la largeur A4 paysage (297mm)
+        doc.text(`Valeur Achat : ${formatCurrency(fin.buy)}`, 20, 34.5);
+        doc.text(`Valeur Vente : ${formatCurrency(fin.sell)}`, 110, 34.5);
+        doc.setTextColor(41, 128, 185); // Bleu pour la marge
+        doc.text(`Marge Estimée : ${formatCurrency(fin.sell - fin.buy)}`, 200, 34.5);
 
         const tableColumn = ["Boutique", "Produit", "Code", "Fournisseur", "Qté", "P. Achat", "P. Vente", "Valeur Stock", "Statut"];
         const tableRows = allArticles.map(a => [
@@ -246,13 +225,13 @@ const StockStatusView = () => {
             formatCurrency(a.prixAchat),
             formatCurrency(a.prixVente),
             formatCurrency(a.quantite * a.prixAchat),
-            a.quantite <= 0 ? 'Rupture' : (a.quantite <= 10 ? 'Faible' : 'En Stock')
+            a.quantite <= 0 ? 'Rupture' : (a.quantite <= (a.seuilAlerte || 10) ? 'Faible' : 'En Stock')
         ]);
 
         autoTable(doc, {
             head: [tableColumn],
             body: tableRows,
-            startY: 40,
+            startY: 42,
             theme: 'grid',
             styles: { fontSize: 8, cellPadding: 2 },
             headStyles: { fillColor: [41, 128, 185], halign: 'center' },
@@ -297,13 +276,62 @@ const StockStatusView = () => {
                         Exporter PDF
                     </Button>
                 </div>
-                {success && <Alert variant="success" className="mb-0 py-2 flex-shrink-0">{success}</Alert>}
+                {/* {success && <Alert variant="success" className="mb-0 py-2 flex-shrink-0">{success}</Alert>} */}
             </div>
+
+            {/* Résumé Financier Dynamique */}
+            <Row className="mb-4 g-3">
+                <Col md={4}>
+                    <Card className="border-0 shadow-sm bg-danger-subtle text-danger h-100">
+                        <Card.Body className="d-flex align-items-center justify-content-between p-4">
+                            <div>
+                                <h6 className="mb-1 text-uppercase small fw-bold opacity-75">Valeur Stock (Achat)</h6>
+                                <h4 className="fw-bold mb-0">{formatCurrency(financialTotals.buy)}</h4>
+                            </div>
+                            <iconify-icon icon="solar:cart-large-minimalistic-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col md={4}>
+                    <Card className="border-0 shadow-sm bg-success-subtle text-success h-100">
+                        <Card.Body className="d-flex align-items-center justify-content-between p-4">
+                            <div>
+                                <h6 className="mb-1 text-uppercase small fw-bold opacity-75">Valeur Potentielle (Vente)</h6>
+                                <h4 className="fw-bold mb-0">{formatCurrency(financialTotals.sell)}</h4>
+                            </div>
+                            <iconify-icon icon="solar:tag-price-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col md={4}>
+                    <Card className="border-0 shadow-sm bg-primary-subtle text-primary h-100">
+                        <Card.Body className="d-flex align-items-center justify-content-between p-4">
+                            <div>
+                                <h6 className="mb-1 text-uppercase small fw-bold opacity-75">Marge Globale Estimée</h6>
+                                <h4 className="fw-bold mb-0">{formatCurrency(financialTotals.sell - financialTotals.buy)}</h4>
+                            </div>
+                            <iconify-icon icon="solar:graph-up-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
+                        </Card.Body>
+                    </Card>
+                </Col>
+            </Row>
 
             <Card className="border-0 shadow-sm rounded-4 mb-4">
                 <Card.Body>
-                    <Row className="g-3 align-items-end">
-                        <Col md={filterBoutique === centralShopId ? 4 : 6}>
+                    <Row className="g-3 align-items-center">
+                        <Col md={3}>
+                            <Form.Group>
+                                <Form.Label className="small fw-bold">Rechercher</Form.Label>
+                                <Form.Control 
+                                    type="text"
+                                    placeholder="Nom ou code article..."
+                                    value={searchTerm}
+                                    onChange={e => setSearchTerm(e.target.value)}
+                                    className="rounded-pill"
+                                />
+                            </Form.Group>
+                        </Col>
+                        <Col md={filterBoutique === centralShopId ? 2 : 3}>
                             <Form.Group>
                                 <Form.Label className="small fw-bold">Filtrer par boutique</Form.Label>
                                 <Form.Select value={filterBoutique} onChange={e => {
@@ -321,7 +349,7 @@ const StockStatusView = () => {
                         </Col>
                         {/* Le filtre par fournisseur n'est visible que si la boutique centrale est sélectionnée */}
                         {filterBoutique === centralShopId ? (
-                            <Col md={4}>
+                            <Col md={2}>
                                 <Form.Group>
                                     <Form.Label className="small fw-bold">Filtrer par fournisseur</Form.Label>
                                     <Form.Select 
@@ -334,7 +362,7 @@ const StockStatusView = () => {
                                 </Form.Group>
                             </Col>
                         ) : null}
-                        <Col md={filterBoutique === centralShopId ? 4 : 6}>
+                        <Col md={filterBoutique === centralShopId ? 2 : 3}>
                             <Form.Group>
                                 <Form.Label className="small fw-bold">Filtrer par état du stock</Form.Label>
                                 <Form.Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
@@ -345,6 +373,20 @@ const StockStatusView = () => {
                                 </Form.Select>
                             </Form.Group>
                         </Col>
+                        <Col md="auto" className="ms-auto d-flex gap-2 align-self-end pb-1">
+                            {(sortConfig.key !== 'nom' || sortConfig.direction !== 'asc' || filterStatus !== 'all' || filterBoutique !== 'all' || searchTerm !== '') && (
+                                <Button 
+                                    variant="outline-danger" 
+                                    size="sm"
+                                    onClick={resetAllFilters}
+                                    className="rounded-pill shadow-sm d-flex align-items-center"
+                                    title="Réinitialiser tous les filtres et le tri"
+                                >
+                                    <iconify-icon icon="solar:restart-bold" className="me-1 align-middle"></iconify-icon>
+                                    Réinitialiser
+                                </Button>
+                            )}
+                        </Col>
                     </Row>
                 </Card.Body>
             </Card>
@@ -352,17 +394,40 @@ const StockStatusView = () => {
             {boutiques
                 .filter(boutique => filterBoutique === 'all' || boutique._id === filterBoutique)
                 .map(boutique => {
-                    const boutiqueArticles = articlesByBoutique[boutique._id] || [];
+                    const boutiqueArticles = groupedArticles[boutique._id] || [];
                     const totalStockValue = boutiqueArticles.reduce((sum, article) => sum + (article.quantite * article.prixAchat), 0);
-                    const isSingleView = filterBoutique !== 'all';
                     const isCentral = boutique.type === 'Centrale';
-                    let filteredBoutiqueArticles = filterArticlesByStatus(boutiqueArticles);
                     
+                    // Application du tri sur les articles de la boutique
+                    const sortedBoutiqueArticles = [...boutiqueArticles].sort((a, b) => {
+                        let aValue, bValue;
+                        
+                        switch (sortConfig.key) {
+                            case 'nom': aValue = a.nom.toLowerCase(); bValue = b.nom.toLowerCase(); break;
+                            case 'code': aValue = (a.code || '').toLowerCase(); bValue = (b.code || '').toLowerCase(); break;
+                            case 'fournisseur': aValue = (a.fournisseur?.nom || '').toLowerCase(); bValue = (b.fournisseur?.nom || '').toLowerCase(); break;
+                            case 'quantite': aValue = a.quantite; bValue = b.quantite; break;
+                            case 'prixAchat': aValue = a.prixAchat; bValue = b.prixAchat; break;
+                            case 'prixVente': aValue = a.prixVente; bValue = b.prixVente; break;
+                            case 'valeurStock': aValue = a.quantite * a.prixAchat; bValue = b.quantite * b.prixAchat; break;
+                            case 'margeUnitaire': aValue = a.prixVente - a.prixAchat; bValue = b.prixVente - b.prixAchat; break;
+                            case 'margePourcent': 
+                                aValue = a.prixVente > 0 ? ((a.prixVente - a.prixAchat) / a.prixVente) : 0;
+                                bValue = b.prixVente > 0 ? ((b.prixVente - b.prixAchat) / b.prixVente) : 0;
+                                break;
+                            default: aValue = a[sortConfig.key]; bValue = b[sortConfig.key];
+                        }
+
+                        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+                        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+                        return 0;
+                    });
+
                     if (filterFournisseur !== 'all' && boutique._id === centralShopId) {
-                        filteredBoutiqueArticles = filteredBoutiqueArticles.filter(a => a.fournisseur?._id === filterFournisseur);
+                        // Le filtrage par fournisseur est déjà fait par le backend si filterBoutique est centralShopId
                     }
 
-                    const columnCount = (isSingleView ? 1 : 0) + 11 + (isCentral ? 1 : 0);
+                    const columnCount = 11 + (isCentral ? 1 : 0);
 
                     return (
                         <Card key={boutique._id} className="border-0 shadow-sm rounded-4 mb-4">
@@ -370,68 +435,41 @@ const StockStatusView = () => {
                             <div>
                                 <h5 className="fw-bold mb-0">{boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill>Dépôt Principal</Badge>}</h5>
                                 <Badge bg="primary-subtle" text="primary-emphasis" className="p-2 fs-6 mt-1">
+                                    {outOfStockMap[boutique._id] && (
+                                        <span className="blink-animation me-2">
+                                            <iconify-icon icon="solar:danger-triangle-bold" className="me-1"></iconify-icon>
+                                            Besoin de réapprovisionnement
+                                        </span>
+                                    )}
                                     Valeur totale: {formatCurrency(totalStockValue)}
                                 </Badge>
                             </div>
-                            {isSingleView && selectedArticles.length > 0 && (
-                                <div>
-                                    {boutique.type === 'Centrale' ? (
-                                        <Button variant="success" onClick={handleOpenSupplyModal}>
-                                            <iconify-icon icon="solar:box-up-bold" className="me-2"></iconify-icon>
-                                            Approvisionner ({selectedArticles.length})
-                                        </Button>
-                                    ) : (
-                                        <Button variant="primary" onClick={handleOpenTransferModal}>
-                                            <iconify-icon icon="solar:box-minimalistic-bold" className="me-2"></iconify-icon>
-                                            Réapprovisionner ({selectedArticles.length})
-                                        </Button>
-                                    )}
-                                </div>
-                            )}
                         </Card.Header>
                         <Card.Body className="p-0">
                             <Table responsive hover className="align-middle mb-0">
                                 <thead className="bg-body-tertiary">
                                     <tr>
-                                        {isSingleView && (
-                                            <th className="ps-4 border-0">
-                                                <Form.Check 
-                                                    type="checkbox"
-                                                    checked={filteredBoutiqueArticles.length > 0 && selectedArticles.length === filteredBoutiqueArticles.length}
-                                                    onChange={() => handleSelectAll(filteredBoutiqueArticles)}
-                                                />
-                                            </th>
-                                        )}
                                         <th className="ps-4 border-0 text-muted small text-uppercase">Img</th>
-                                        <th className="ps-4 border-0 text-muted small text-uppercase">Code</th>
-                                        <th className="ps-4 border-0 text-muted small text-uppercase">Produit</th>
-                                        {isCentral && <th className="ps-4 border-0 text-muted small text-uppercase">Fournisseur</th>}
-                                        <th className="text-center border-0 text-muted small text-uppercase">unite Disponible</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Prix d'Achat</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Prix de Vente</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Marge Unitaire</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Marge (%)</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase">Valeur Stock</th>
+                                        <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('code')}>Code {getSortIcon('code')}</th>
+                                        <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('nom')}>Produit {getSortIcon('nom')}</th>
+                                        {isCentral && <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('fournisseur')}>Fournisseur {getSortIcon('fournisseur')}</th>}
+                                        <th className="text-center border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('quantite')}>unite Disponible {getSortIcon('quantite')}</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('prixAchat')}>Prix d'Achat {getSortIcon('prixAchat')}</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('prixVente')}>Prix de Vente {getSortIcon('prixVente')}</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('margeUnitaire')}>Marge Unitaire {getSortIcon('margeUnitaire')}</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('margePourcent')}>Marge (%) {getSortIcon('margePourcent')}</th>
+                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('valeurStock')}>Valeur Stock {getSortIcon('valeurStock')}</th>
                                         <th className="text-center border-0 text-muted small text-uppercase">Seuil d'Alerte</th>
                                         <th className="text-center pe-4 border-0 text-muted small text-uppercase">Statut</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {boutiqueArticles.length > 0 ? filteredBoutiqueArticles.map(article => {
+                                    {sortedBoutiqueArticles.length > 0 ? sortedBoutiqueArticles.map(article => {
                                         const margeUnitaire = article.prixVente - article.prixAchat;
                                         const margePourcentage = article.prixVente > 0 ? (margeUnitaire / article.prixVente) * 100 : 0;
 
                                         return (
                                             <tr key={article._id}>
-                                                {isSingleView && (
-                                                    <td className="ps-4">
-                                                        <Form.Check 
-                                                            type="checkbox"
-                                                            checked={selectedArticles.includes(article._id)}
-                                                            onChange={() => handleSelectOne(article._id)}
-                                                        />
-                                                    </td>
-                                                )}
                                                 <td className="ps-4">{article.image ? <img src={article.image} alt="" className="rounded shadow-sm" style={{width: '35px', height: '35px', objectFit: 'cover'}} /> : <span className="text-muted small">-</span>}</td>
                                                 <td className="ps-4 text-muted small">{article.code || '-'}</td>
                                                 <td className="ps-4 fw-bold">{article.nom}</td>
@@ -442,8 +480,8 @@ const StockStatusView = () => {
                                                 <td className="text-end text-primary fw-bold">{formatCurrency(margeUnitaire)}</td>
                                                 <td className="text-end text-primary">{margePourcentage.toFixed(1)}%</td>
                                                 <td className="text-end fw-bold">{formatCurrency(article.quantite * article.prixAchat)}</td>
-                                                <td className="text-center text-muted">10</td>
-                                                <td className="text-center pe-4">{getStatusBadge(article.quantite)}</td>
+                                                <td className="text-center text-muted">{article.seuilAlerte || 10}</td>
+                                                <td className="text-center pe-4">{getStatusBadge(article.quantite, article.seuilAlerte)}</td>
                                             </tr>
                                         );
                                     }) : (
@@ -461,66 +499,6 @@ const StockStatusView = () => {
             {(!boutiques || boutiques.length === 0) && (
                 <Alert variant="info">Aucune boutique n'a été configurée.</Alert>
             )}
-
-            {/* Modales */}
-            <IntelligentSupplyModal
-                show={showSupplyModal}
-                onHide={() => setShowSupplyModal(false)}
-                onSuccess={handleSupplySuccess}
-                articlesToSupply={allArticles.filter(a => selectedArticles.includes(a._id))}
-                preSelectedFournisseurId={preSelectedSupplier}
-            />
-
-            <Modal show={showTransferModal} onHide={() => setShowTransferModal(false)} size="lg">
-                <Modal.Header closeButton>
-                    <Modal.Title>Réapprovisionner la boutique</Modal.Title>
-                </Modal.Header>
-                <Modal.Body>
-                    <Alert variant="info" className="small">
-                        Transfert depuis le <strong>Dépôt Principal</strong> vers <strong>{boutiques.find(b => b._id === filterBoutique)?.nom}</strong>.
-                    </Alert>
-                    {error && <Alert variant="danger">{error}</Alert>}
-                    <Table striped hover>
-                        <thead>
-                            <tr>
-                                <th>Article</th>
-                                <th className="text-center">Stock Central</th>
-                                <th style={{ width: '150px' }}>Quantité à transférer</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {transferItems.map(item => (
-                                <tr key={item._id}>
-                                    <td className="align-middle">{item.nom}</td>
-                                    <td className="align-middle text-center">
-                                        <Badge bg={item.stockCentral > 0 ? 'success' : 'danger'}>{item.stockCentral}</Badge>
-                                    </td>
-                                    <td>
-                                        <Form.Control
-                                            type="number"
-                                            min="0"
-                                            max={item.stockCentral}
-                                            value={item.quantiteToTransfer}
-                                            onChange={(e) => handleTransferItemChange(item._id, e.target.value)}
-                                            isInvalid={item.quantiteToTransfer > item.stockCentral}
-                                            disabled={item.stockCentral === 0}
-                                        />
-                                        <Form.Control.Feedback type="invalid">
-                                            Stock insuffisant
-                                        </Form.Control.Feedback>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </Table>
-                </Modal.Body>
-                <Modal.Footer>
-                    <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
-                    <Button variant="primary" onClick={handleConfirmTransfer} disabled={transferLoading}>
-                        {transferLoading ? <Spinner size="sm" /> : 'Valider le transfert'}
-                    </Button>
-                </Modal.Footer>
-            </Modal>
         </div>
     );
 };

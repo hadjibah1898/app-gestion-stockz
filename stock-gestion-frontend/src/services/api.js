@@ -109,6 +109,8 @@ export const venteAPI = {
   validateRemise: (id) => api.post(`ventes/${id}/validate-remise`),
   rejectRemise: (id) => api.post(`ventes/${id}/reject-remise`),
   genererTicket: (id) => api.get(`ventes/${id}/ticket`),
+  updateGroupStatus: (orderGroupId, data) => api.patch(`ventes/group/${orderGroupId}/status`, data),
+  updateStatus: (id, data) => api.patch(`ventes/${id}/status`, data),
   telechargerTicket: (filename) => api.get(`ventes/ticket/download/${filename}`, { responseType: 'blob' }),
 };
 
@@ -143,6 +145,7 @@ export const caisseAPI = {
 export const mouvementAPI = {
   getAll: (params) => api.get('mouvements', { params }),
   cancel: (id) => api.post(`mouvements/${id}/cancel`),
+  confirmerReception: (id) => api.post(`mouvements/${id}/receive`),
 };
 
 export const dashboardAPI = {

@@ -17,7 +17,7 @@ exports.createBoutique = async (req, res) => {
             }
         }
 
-        const { nom, adresse, active, type, vendeurs, latitude, longitude } = req.body;
+        const { nom, adresse, active, type, vendeurs, latitude, longitude, tipPercentage, tipsEnabled } = req.body;
         
         // 2. Préparation et filtrage des gérants
         let managersToCheck = Array.isArray(vendeurs) ? vendeurs : (vendeurs ? [vendeurs] : []);
@@ -46,6 +46,8 @@ exports.createBoutique = async (req, res) => {
             active: active !== undefined ? active : true,
             type: type || 'Secondaire',
             vendeurs: managersToCheck,
+            tipPercentage: tipPercentage !== undefined ? Math.min(Math.max(Number(tipPercentage), 0), 100) : 5,
+            tipsEnabled: tipsEnabled !== undefined ? tipsEnabled : true,
             latitude: (latitude !== undefined && latitude !== "") ? Number(latitude) : 9.6412,
             longitude: (longitude !== undefined && longitude !== "") ? Number(longitude) : -13.5784,
             createur: req.user.id
@@ -131,7 +133,18 @@ exports.updateBoutique = async (req, res) => {
             await User.updateMany({ _id: { $in: newManagers } }, { $set: { boutique: boutiqueId } });
         }
 
-        const { nom, adresse, active, type, latitude, longitude } = req.body;
+        // SÉCURITÉ : Bloquer le changement de taux si une caisse est ouverte dans cette boutique
+        if (req.body.tipPercentage !== undefined && Number(req.body.tipPercentage) !== boutiqueToUpdate.tipPercentage) {
+            const sessionActive = await mongoose.model('OuvertureCaisse').findOne({ 
+                boutique: boutiqueId, 
+                statut: 'OUVERTE' 
+            });
+            if (sessionActive) {
+                return res.status(400).json({ message: "Action refusée : Une caisse est actuellement ouverte dans cette boutique. Clôturez la session avant de modifier le taux de pourboire." });
+            }
+        }
+
+        const { nom, adresse, active, type, latitude, longitude, tipPercentage, tipsEnabled } = req.body;
 
         const updateObject = {
             $set: {
@@ -139,6 +152,8 @@ exports.updateBoutique = async (req, res) => {
                 adresse: adresse || boutiqueToUpdate.adresse,
                 active: active !== undefined ? active : boutiqueToUpdate.active,
                 type: type || boutiqueToUpdate.type,
+                tipPercentage: tipPercentage !== undefined ? Math.min(Math.max(Number(tipPercentage), 0), 100) : boutiqueToUpdate.tipPercentage,
+                tipsEnabled: tipsEnabled !== undefined ? tipsEnabled : boutiqueToUpdate.tipsEnabled,
                 vendeurs: newManagers,
                 latitude: (latitude !== "" && !isNaN(Number(latitude))) ? Number(latitude) : boutiqueToUpdate.latitude,
                 longitude: (longitude !== "" && !isNaN(Number(longitude))) ? Number(longitude) : boutiqueToUpdate.longitude,
@@ -213,8 +228,42 @@ exports.getAllBoutiques = async (req, res) => {
                     as: 'vendeurs'
                 }
             },
-            { $addFields: { articleCount: { $size: '$articles' } } },
-            { $project: { articles: 0 } }
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: '_id',
+                    foreignField: 'boutique',
+                    as: 'allUsers'
+                }
+            },
+            {
+                $lookup: {
+                    from: 'ouverturecaisses',
+                    let: { bId: '$_id' },
+                    pipeline: [
+                        { $match: { $expr: { $and: [{ $eq: ['$boutique', '$$bId'] }, { $eq: ['$statut', 'OUVERTE'] }] } } },
+                        { $project: { _id: 1 } },
+                        { $limit: 1 }
+                    ],
+                    as: 'openSession'
+                }
+            },
+            { 
+                $addFields: { 
+                    articleCount: { $size: '$articles' },
+                    isSessionOpen: { $gt: [{ $size: '$openSession' }, 0] },
+                    serverCount: {
+                        $size: {
+                            $filter: {
+                                input: "$allUsers",
+                                as: "u",
+                                cond: { $eq: ["$$u.role", "Serveur"] }
+                            }
+                        }
+                    }
+                } 
+            },
+            { $project: { articles: 0, allUsers: 0, openSession: 0 } }
         ]);
         res.status(200).json(boutiques);
     } catch (error) {

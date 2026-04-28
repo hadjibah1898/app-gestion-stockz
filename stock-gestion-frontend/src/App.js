@@ -13,6 +13,7 @@ import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
 import { authAPI } from './services/api';
 import GerantDashboard from './components/GerantDashboard';
+import ServersView from './components/ServersView';
 import ManagersView from './components/ManagersView';
 import ShopsView from './components/ShopsView';
 import ArticlesView from './components/ArticlesView';
@@ -31,6 +32,8 @@ import AdminCaisseView from './components/AdminCaisseView';
 import DebtManagementView from './components/DebtManagementView';
 import './App.css';
 import setupAxiosInterceptors from './utils/axiosConfig';
+import ServeurDashboard from './components/ServeurDashboard';
+
 
 // Le Layout principal qui inclut la Sidebar et la zone de contenu
 const MainLayout = ({ userName, userRole, handleLogout, theme, toggleTheme, isSidebarOpen, toggleSidebar }) => (
@@ -102,10 +105,13 @@ function App() {
     setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
   };
 
-  const handleLogin = (newToken, role, name, mustChange) => {
+  const handleLogin = (newToken, role, name, boutique, mustChange) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('userRole', role);
     localStorage.setItem('userName', name);
+    if (boutique) {
+      localStorage.setItem('boutiqueId', typeof boutique === 'object' ? boutique._id : boutique);
+    }
     if (mustChange) localStorage.setItem('mustChangePassword', 'true');
     
     setUserRole(role);
@@ -121,6 +127,7 @@ function App() {
     localStorage.removeItem('token');
     localStorage.removeItem('userRole');
     localStorage.removeItem('userName');
+    localStorage.removeItem('boutiqueId');
     localStorage.removeItem('mustChangePassword');
     // Redirection forcée pour garantir un état propre et la redirection vers la page de connexion.
     window.location.href = '/login';
@@ -159,7 +166,7 @@ function App() {
       {isApiLoading && <div className="top-loading-bar"></div>}
       <div id="main-wrapper" data-bs-theme={theme}>
         <Routes>
-          <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
+          <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={userRole === 'Admin' ? "/admin" : (userRole === 'Serveur' ? "/serveur" : "/gerant")} />} />
 
           {/* Routes Protégées pour l'Admin */}
           <Route path="/admin" element={
@@ -182,6 +189,7 @@ function App() {
             <Route path="creances" element={<DebtManagementView />} />
             <Route path="audit" element={<AuditLogView />} /> {/* Ajouter la nouvelle route */}
           </Route>
+          
 
           {/* Routes Protégées pour le Gérant */}
           <Route path="/gerant" element={
@@ -192,6 +200,7 @@ function App() {
             <Route index element={<GerantDashboard />} />
             <Route path="articles" element={<ArticlesView userRole="Gérant" />} />
             <Route path="ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
+            <Route path="equipe" element={<ServersView />} />
             <Route path="historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
             <Route path="clients" element={<ClientsView userRole="Gérant" />} />
             <Route path="notifications" element={<NotificationsHistoryView />} />
@@ -199,16 +208,27 @@ function App() {
             <Route path="caisse" element={<CaisseView />} />
           </Route>
 
+          {/* Routes Protégées pour le Serveur */}
+          <Route path="/serveur" element={
+            <ProtectedRoute userRole={userRole} requiredRole="Serveur">
+              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+            </ProtectedRoute>
+          }>
+            <Route index element={<Navigate to="dashboard" />} />
+            <Route path="dashboard" element={<ServeurDashboard />} />
+            <Route path="ventes" element={<VentesView userRole="Serveur" initialTab="sale" key="sale" />} />
+          </Route>
+
           {/* Routes Partagées (Profil) */}
           <Route path="/profile" element={
-            <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant']}>
+            <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant', 'Serveur']}>
               <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
           }>
             <Route index element={<ProfileView />} />
           </Route>
 
-          <Route path="/" element={<Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : "/gerant")} />} />
+          <Route path="/" element={<Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : (userRole === 'Serveur' ? "/serveur" : "/gerant"))} />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         {userRole && <NotificationToasts />}
@@ -288,14 +308,10 @@ function App() {
   );
 }
 
-
 const AppWrapper = () => (
   <Router>
     <App />
   </Router>
 );
-
-
-
 
 export default AppWrapper;

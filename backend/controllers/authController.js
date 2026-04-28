@@ -7,10 +7,24 @@ const { logAction } = require('../services/auditLogService');
 
 exports.register = async (req, res) => {
     try {
-        const { nom, email, password } = req.body;
-        const user = new User({ nom, email, password });
+        const { nom, email, password, role, boutique } = req.body;
+        
+        let userRole = role || 'Gérant';
+        let userBoutique = boutique || null;
+
+        // SÉCURITÉ : Si l'utilisateur connecté est un Gérant, il crée forcément un Serveur
+        // rattaché à SA propre boutique.
+        if (req.user && req.user.role === 'Gérant') {
+            userRole = 'Serveur';
+            // On s'assure de récupérer l'ID (ObjectId ou String)
+            userBoutique = req.user.boutique?._id || req.user.boutique;
+        } else if (!userBoutique && boutique) {
+            userBoutique = boutique;
+        }
+
+        const user = new User({ nom, email, password, role: userRole, boutique: userBoutique });
         await user.save();
-        res.status(201).json({ message: "Utilisateur créé avec succès" });
+        res.status(201).json({ message: "Utilisateur créé avec succès", user });
     } catch (error) {
         res.status(400).json({ message: error.message });
     }
@@ -39,9 +53,9 @@ exports.login = async (req, res) => {
             return res.status(403).json({ message: "Votre compte est désactivé. Veuillez contacter l'administrateur." });
         }
 
-        if (user.role === 'Gérant' && !user.boutique) {
+        if (['Gérant', 'Serveur'].includes(user.role) && !user.boutique) {
             await logAction({ req, user, action: 'LOGIN_FAILURE', entity: 'User', details: { email: email, reason: 'Aucune boutique associée' }, status: 'FAILURE', errorMessage: 'Aucune boutique associée' });
-            return res.status(403).json({ message: "Accès refusé : Aucune boutique n'est associée à ce compte." });
+            return res.status(403).json({ message: `Accès refusé : Aucune boutique n'est associée à votre compte ${user.role.toLowerCase()}.` });
         }
 
         const token = jwt.sign(
@@ -61,7 +75,7 @@ exports.login = async (req, res) => {
             status: 'SUCCESS'
         });
 
-        res.json({ token, role: user.role, nom: user.nom, mustChangePassword: user.mustChangePassword });
+        res.json({ token, role: user.role, nom: user.nom, boutique: user.boutique, mustChangePassword: user.mustChangePassword });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -211,24 +225,6 @@ exports.changePassword = async (req, res) => {
     }
 };
 
-exports.getUsers = async (req, res) => {
-    try {
-        const { search, role } = req.query;
-        const query = { deleted: { $ne: true } };
-        if (role) query.role = role;
-        if (search) {
-            query.$or = [
-                { nom: { $regex: search, $options: 'i' } },
-                { email: { $regex: search, $options: 'i' } }
-            ];
-        }
-        const users = await User.find(query).select('-password').populate('boutique').sort({ createdAt: -1 });
-        res.status(200).json(users);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
 exports.getDeletedUsers = async (req, res) => {
     try {
         const users = await User.find({ deleted: true }).select('-password').populate('boutique');
@@ -280,6 +276,22 @@ exports.getAllNotifications = async (req, res) => {
     try {
         const notifications = await Notification.find().populate('recipient', 'nom email role').sort({ createdAt: -1 }).limit(100);
         res.status(200).json(notifications);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+exports.getUsers = async (req, res) => {
+    try {
+        let query = {};
+
+        // SÉCURITÉ : Si c'est un gérant, il ne peut voir que les serveurs de SA boutique
+        if (req.user.role === 'Gérant') {
+            query.boutique = req.user.boutique;
+            query.role = 'Serveur'; 
+        }
+
+        const users = await User.find(query).populate('boutique', 'nom');
+        res.status(200).json(users);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

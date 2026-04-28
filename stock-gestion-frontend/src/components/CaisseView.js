@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Form, Spinner, Alert, Row, Col, InputGroup, Modal, Tabs, Tab, Table, Badge } from 'react-bootstrap';
 import { useLocation } from 'react-router-dom';
-import { caisseAPI, clientAPI } from '../services/api';
+import { caisseAPI, clientAPI, venteAPI } from '../services/api';
 import jsPDF from 'jspdf';
 
 import autoTable from 'jspdf-autotable';
@@ -64,6 +64,11 @@ const CaisseView = () => {
     const [closingCaisse, setClosingCaisse] = useState(false);
     const [isCorrection, setIsCorrection] = useState(false); // État pour savoir si on est en mode correction
     const [currentRapportForCorrection, setCurrentRapportForCorrection] = useState(null); // Stocker le rapport en cours de correction
+
+    // États pour le détail Fintech dans la modale de clôture
+    const [showActiveFintechDetails, setShowActiveFintechDetails] = useState(false);
+    const [activeFintechData, setActiveFintechData] = useState({ sales: [], recoveries: [] });
+    const [loadingFintechDetails, setLoadingFintechDetails] = useState(false);
 
     const fetchStatut = useCallback(async () => {
         try {
@@ -131,6 +136,41 @@ const CaisseView = () => {
             loadStatistiquesSession();
         }
     }, [showCloseModal, caisseStatut]);
+
+    // Réinitialiser les détails Fintech à la fermeture de la modale
+    useEffect(() => {
+        if (!showCloseModal) {
+            setShowActiveFintechDetails(false);
+            setActiveFintechData({ sales: [], recoveries: [] });
+        }
+    }, [showCloseModal]);
+
+    const toggleActiveFintechDetails = async () => {
+        const source = currentRapportForCorrection || caisseStatut;
+        if (!showActiveFintechDetails && source) {
+            setLoadingFintechDetails(true);
+            try {
+                const sessionId = source.ouvertureCaisse?._id || source.ouvertureCaisse || source._id;
+                const [ventesRes, dettesRes] = await Promise.all([
+                    venteAPI.getHistorique({ limit: 0 }),
+                    clientAPI.getDebtHistory()
+                ]);
+
+                const mobileModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
+                const fintechSales = (ventesRes.data.ventes || [])
+                    .filter(v => (v.ouvertureCaisse?._id || v.ouvertureCaisse) === sessionId && mobileModes.includes(v.modePaiement) && !v.isCancelled);
+                const fintechRecoveries = (dettesRes.data || [])
+                    .filter(p => (p.ouvertureCaisse?._id || p.ouvertureCaisse) === sessionId && mobileModes.includes(p.modePaiement) && p.statut === 'VALIDEE');
+
+                setActiveFintechData({ sales: fintechSales, recoveries: fintechRecoveries });
+            } catch (err) {
+                console.error("Erreur chargement détails Fintech:", err);
+            } finally {
+                setLoadingFintechDetails(false);
+            }
+        }
+        setShowActiveFintechDetails(!showActiveFintechDetails);
+    };
 
     const handleStartCorrection = (rapport) => {
         setMontantCloture(rapport.montantCloture);
@@ -212,11 +252,13 @@ const CaisseView = () => {
             const stats = {
                 f: source.fondInitial || 0,
                 v: source.totalVentes ?? source.session?.totalVentes ?? 0,
+                m_sales: source.totalMobileMoneySales ?? source.session?.totalMobileMoneySales ?? ((source.totalMobileMoney ?? source.session?.totalMobileMoney ?? 0) - (source.totalMobileMoneyRecoveries ?? source.session?.totalMobileMoneyRecoveries ?? 0)),
+                m_rec: source.totalMobileMoneyRecoveries ?? source.session?.totalMobileMoneyRecoveries ?? 0,
                 d: source.totalDettesAccordees ?? source.session?.totalDettesAccordees ?? source.totalDettes ?? 0,
                 r: source.totalRecouvrement ?? source.session?.totalRecouvrement ?? 0,
                 dep: source.totalDepenses ?? source.session?.totalDepenses ?? 0
             };
-            soldeTheorique = Math.round(stats.f + (stats.v - stats.d) + stats.r - stats.dep);
+            soldeTheorique = Math.round(stats.f + (stats.v - stats.d - stats.m_sales) + (stats.r - stats.m_rec) - stats.dep);
         }
         
         const ecartCalcule = montantClotureNum - soldeTheorique;
@@ -267,24 +309,38 @@ const CaisseView = () => {
         if (isCorrection && currentRapportForCorrection) {
             // Cas Correction : On utilise les données figées du rapport
             const r = currentRapportForCorrection;
+            const m_total = r.totalMobileMoney || 0;
+            const m_rec = r.totalMobileMoneyRecoveries || 0;
+            const m_sales = m_total - m_rec;
+
             return { 
                 fondInitial: r.fondInitial || 0, totalVentes: r.totalVentes || 0, 
-                totalVentesCash: Math.round((r.totalVentes || 0) - (r.totalDettes || 0)),
+                totalVentesCash: Math.round((r.totalVentes || 0) - (r.totalDettes || 0) - m_sales),
+                totalVentesFintech: m_sales,
+                totalMobileMoneyRecoveries: m_rec,
                 totalDettes: r.totalDettes || 0, totalDepenses: r.totalDepensesApprouvees || 0, 
+                totalMobileMoney: m_total, 
+                totalRecouvrementCash: Math.round((r.totalRecouvrement || 0) - m_rec),
                 soldeTheorique: r.soldeTheorique || 0, totalRecouvrement: r.totalRecouvrement || 0 
             };
         } else {
             const source = statistiquesSession || caisseStatut;
             const v = source?.totalVentes ?? source?.session?.totalVentes ?? 0;
             const d = source?.totalDettesAccordees ?? source?.session?.totalDettesAccordees ?? source?.totalDettes ?? 0;
+            const m_total = source?.totalMobileMoney ?? source?.session?.totalMobileMoney ?? 0;
+            const m_rec = source?.totalMobileMoneyRecoveries ?? source?.session?.totalMobileMoneyRecoveries ?? 0;
+            const m_sales = m_total - m_rec;
             const r = source?.totalRecouvrement ?? source?.session?.totalRecouvrement ?? 0;
             const dep = source?.totalDepenses ?? source?.session?.totalDepenses ?? 0;
             const f = source?.fondInitial ?? 0;
 
             return { 
-                fondInitial: f, totalVentes: v, totalVentesCash: Math.round(v - d), totalDettes: d, 
+                fondInitial: f, totalVentes: v, totalVentesCash: Math.round(v - d - m_sales), totalDettes: d, 
+                totalVentesFintech: m_sales,
+                totalMobileMoneyRecoveries: m_rec,
+                totalMobileMoney: m_total, totalRecouvrementCash: Math.round(r - m_rec),
                 totalDepenses: dep, totalRecouvrement: r, 
-                soldeTheorique: Math.round(f + (v - d) + r - dep) 
+                soldeTheorique: Math.round(f + (v - d - m_sales) + (r - m_rec) - dep) 
             };
         }
     };
@@ -464,19 +520,116 @@ const CaisseView = () => {
                         <Card className="mb-3 bg-light border-2">
                             <Card.Body className="p-3">
                                 <div className="d-flex justify-content-between mb-2">
-                                    <span className="text-muted">Fond initial</span>
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:phone-calling-bold" className="me-2" style={{ color: '#FF6600' }}></iconify-icon>
+                                        Ventes (Fintech)
+                                    </span>
+                                    <span className="fw-bold" style={{ color: '#FF6600' }}>+ {(displayValues.totalVentesFintech || 0).toLocaleString()} GNF</span>
+                                </div>
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:phone-calling-bold" className="me-2" style={{ color: '#FF6600' }}></iconify-icon>
+                                        Recouvrement (Fintech)
+                                    </span>
+                                    <span className="fw-bold" style={{ color: '#FF6600' }}>+ {(displayValues.totalMobileMoneyRecoveries || 0).toLocaleString()} GNF</span>
+                                </div>
+                                <div className="d-flex justify-content-between mb-2 pt-2 border-top border-warning border-opacity-50 align-items-center">
+                                    <span className="fw-bold d-flex align-items-center" style={{ color: '#FF6600' }}>
+                                        <iconify-icon icon="solar:phone-calling-bold" className="me-2"></iconify-icon>
+                                        Total Flux Fintech
+                                    </span>
+                                    <div className="text-end">
+                                        <span className="fw-bold d-block" style={{ color: '#FF6600' }}>{(displayValues.totalMobileMoney || 0).toLocaleString()} GNF</span>
+                                        {((displayValues.totalMobileMoney || 0) > 0) && (
+                                            <Button 
+                                                variant="link" 
+                                                size="sm" 
+                                                className="p-0 text-decoration-none x-small fw-bold" 
+                                                style={{ color: '#FF6600', fontSize: '0.7rem' }}
+                                                onClick={toggleActiveFintechDetails}
+                                            >
+                                                {showActiveFintechDetails ? 'Masquer détails' : 'Voir transactions'}
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Section détails Fintech active */}
+                                {showActiveFintechDetails && (
+                                    <div className="mb-3 animate__animated animate__fadeIn">
+                                        {loadingFintechDetails ? (
+                                            <div className="text-center py-2"><Spinner size="sm" style={{ color: '#FF6600' }} /></div>
+                                        ) : (
+                                            <div className="border rounded bg-white overflow-auto" style={{ maxHeight: '150px' }}>
+                                                <Table size="sm" hover className="mb-0 x-small" style={{ fontSize: '0.75rem' }}>
+                                                    <thead className="bg-light sticky-top">
+                                                        <tr>
+                                                            <th className="ps-2">Heure</th>
+                                                            <th>Type</th>
+                                                            <th className="text-end pe-2">Montant</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {activeFintechData.sales.map(v => (
+                                                            <tr key={v._id}>
+                                                                <td className="ps-2 text-muted">{new Date(v.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
+                                                                <td>Vente ({v.modePaiement === 'Orange Money' ? 'OM' : v.modePaiement === 'MobiCash' ? 'Mobi' : 'Card'})</td>
+                                                                <td className="text-end pe-2 fw-bold" style={{ color: '#FF6600' }}>{(v.prixTotal || 0).toLocaleString()}</td>
+                                                            </tr>
+                                                        ))}
+                                                        {activeFintechData.recoveries.map(p => (
+                                                            <tr key={p._id}>
+                                                                <td className="ps-2 text-muted">{new Date(p.datePaiement || p.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
+                                                                <td className="text-info">Recouv. ({p.modePaiement === 'Orange Money' ? 'OM' : 'Mobi'})</td>
+                                                                <td className="text-end pe-2 fw-bold text-info">{(p.montant || 0).toLocaleString()}</td>
+                                                            </tr>
+                                                        ))}
+                                                        {activeFintechData.sales.length === 0 && activeFintechData.recoveries.length === 0 && (
+                                                            <tr><td colSpan="3" className="text-center py-2 text-muted">Aucune transaction numérique.</td></tr>
+                                                        )}
+                                                    </tbody>
+                                                </Table>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <hr className="my-3 opacity-25" />
+
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:vault-bold" className="me-2"></iconify-icon>
+                                        Fond initial
+                                    </span>
                                     <span className="fw-bold">{(displayValues.fondInitial || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <div className="d-flex justify-content-between mb-2">
-                                    <span className="text-muted">Ventes au comptant (Cash)</span>
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:banknote-bold" className="me-2 text-success"></iconify-icon>
+                                        Ventes au comptant (Cash)
+                                    </span>
                                     <span className="fw-bold text-success">+ {(displayValues.totalVentesCash || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <div className="d-flex justify-content-between mb-2">
-                                    <span className="text-muted">Dettes accordées (Crédit)</span>
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:hand-money-bold" className="me-2 text-info"></iconify-icon>
+                                        Recouvrements (Cash)
+                                    </span>
+                                    <span className="fw-bold text-info">+ {(displayValues.totalRecouvrementCash || 0).toLocaleString()} GNF</span>
+                                </div>
+
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:notebook-bold" className="me-2 text-warning"></iconify-icon>
+                                        Dettes accordées (Crédit)
+                                    </span>
                                     <span className="fw-bold text-warning">- {(displayValues.totalDettes || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <div className="d-flex justify-content-between">
-                                    <span className="text-muted">Total Dépenses</span>
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:wallet-minus-bold" className="me-2 text-danger"></iconify-icon>
+                                        Total Dépenses
+                                    </span>
                                     <span className="fw-bold text-danger">- {(displayValues.totalDepenses || 0).toLocaleString()} GNF</span>
                                 </div>
                                 <hr/>
@@ -490,7 +643,7 @@ const CaisseView = () => {
                                                 <tbody>
                                                     {statistiquesSession.listeRecouvrements.map((p, i) => (
                                                         <tr key={i}>
-                                                            <td className="ps-2">{p.client?.nom || 'Client'}</td>
+                                                            <td className="ps-2 fw-bold">{p.client?.nom || 'Client Inconnu'}</td>
                                                             <td className="text-end pe-2 fw-bold text-info">{(p.montant || 0).toLocaleString()} GNF</td>
                                                         </tr>
                                                     ))}
@@ -501,7 +654,10 @@ const CaisseView = () => {
                                 )}
 
                                 <div className="d-flex justify-content-between align-items-center">
-                                    <span className="fw-bold text-danger">Total Espèces Attendu</span>
+                                    <span className="fw-bold text-danger d-flex align-items-center">
+                                        <iconify-icon icon="solar:safe-square-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
+                                        Total Espèces Attendu
+                                    </span>
                                     <span className="fw-bold fs-5 text-danger">{(displayValues.soldeTheorique || 0).toLocaleString()} GNF</span>
                                 </div>
                             </Card.Body>
@@ -876,6 +1032,8 @@ const RapportsTab = ({ onCorrect }) => {
     const [selectedRapport, setSelectedRapport] = useState(null);
     const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [detailedReportData, setDetailedReportData] = useState(null); // Nouvel état pour les détails du rapport
+    const [filterSalesMode, setFilterSalesMode] = useState(null); // 'digital' ou null
+    const [detailsLoading, setDetailsLoading] = useState(false);
 
     // Helper pour formater la monnaie de manière robuste dans le tableau
     const formatTableCurrency = (value) => {
@@ -886,7 +1044,13 @@ const RapportsTab = ({ onCorrect }) => {
 
     useEffect(() => {
         caisseAPI.getMesRapports()
-            .then(res => setRapports(res.data))
+            .then(res => {
+                if (res.data && res.data.data) {
+                    setRapports(res.data.data);
+                } else {
+                    setRapports(res.data || []);
+                }
+            })
             .catch(err => console.error(err))
             .finally(() => setLoading(false));
     }, []);
@@ -895,11 +1059,14 @@ const RapportsTab = ({ onCorrect }) => {
     useEffect(() => {
         const fetchDetailedReport = async () => {
             if (showDetailsModal && selectedRapport) {
+                setDetailsLoading(true);
                 try {
                     const res = await caisseAPI.getReportDetails(selectedRapport._id);
                     setDetailedReportData(res.data);
                 } catch (err) {
                     console.error("Erreur lors du chargement des détails du rapport:", err);
+                } finally {
+                    setDetailsLoading(false);
                 }
             }
         };
@@ -934,10 +1101,11 @@ const RapportsTab = ({ onCorrect }) => {
         
         doc.text("Date", 14, y);
         doc.text("Ventes", 40, y);
-        doc.text("Théorique", 75, y);
-        doc.text("Clôture", 110, y);
-        doc.text("Écart", 145, y);
-        doc.text("Statut", 175, y);
+        doc.text("Numérique", 70, y);
+        doc.text("Théorique", 100, y);
+        doc.text("Clôture", 130, y);
+        doc.text("Écart", 160, y);
+        doc.text("Statut", 185, y);
         
         doc.line(14, y + 2, 196, y + 2);
         y += 10;
@@ -954,6 +1122,7 @@ const RapportsTab = ({ onCorrect }) => {
             
             const date = new Date(r.createdAt).toLocaleDateString('fr-FR');
             const ventes = (r.totalVentes || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
+            const numerique = (r.totalMobileMoney || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
             const theo = (r.soldeTheorique || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
             const cloture = (r.montantCloture || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
             const ecart = (r.ecart || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
@@ -961,10 +1130,11 @@ const RapportsTab = ({ onCorrect }) => {
             
             doc.text(date, 14, y);
             doc.text(ventes, 40, y);
-            doc.text(theo, 75, y);
-            doc.text(cloture, 110, y);
-            doc.text(ecart, 145, y);
-            doc.text(statut, 175, y);
+            doc.text(numerique, 70, y);
+            doc.text(theo, 100, y);
+            doc.text(cloture, 130, y);
+            doc.text(ecart, 160, y);
+            doc.text(statut, 185, y);
             
             y += 8;
         });
@@ -988,7 +1158,8 @@ const RapportsTab = ({ onCorrect }) => {
 
         const v = rapport.totalVentes?.$numberDecimal ? parseFloat( rapport.totalVentes.$numberDecimal) : (parseFloat(rapport.totalVentes) || 0);
         const d = rapport.totalDettes?.$numberDecimal ? parseFloat( rapport.totalDettes.$numberDecimal) : (parseFloat(rapport.totalDettes) || 0);
-        const totalVentesCash = v - d;
+        const m = rapport.totalMobileMoney?.$numberDecimal ? parseFloat(rapport.totalMobileMoney.$numberDecimal) : (parseFloat(rapport.totalMobileMoney) || 0);
+        const totalVentesCash = v - d - m;
 
         // En-tête
         doc.setFontSize(18);
@@ -1010,6 +1181,7 @@ const RapportsTab = ({ onCorrect }) => {
             body: [
                 ['Fond Initial', formatCurrency(rapport.fondInitial)],
                 ['Total Ventes', formatCurrency(rapport.totalVentes)],
+                ['Paiements Numériques', formatCurrency(rapport.totalMobileMoney)],
                 ['Total Dépenses Approuvées', formatCurrency(rapport.totalDepensesApprouvees)],
                 ['Recouvrements Dettes', formatCurrency(rapport.totalRecouvrement || 0)],
                 ['Total Ventes (Chiffre d\'Affaires)', formatCurrency(rapport.totalVentes)],
@@ -1153,6 +1325,7 @@ const RapportsTab = ({ onCorrect }) => {
                         <tr>
                             <th>Date</th>
                             <th>Total Ventes</th>
+                            <th>Paiements Num.</th>
                             <th>Ventes Crédit (Dette)</th>
                             <th>Solde EXACT</th>
                             <th>Montant Clôturé</th>
@@ -1169,6 +1342,7 @@ const RapportsTab = ({ onCorrect }) => {
                                 <tr key={r._id}>
                                     <td>{new Date(r.createdAt).toLocaleDateString()}</td>
                                     <td>{formatTableCurrency(r.totalVentes)}</td>
+                                    <td className="fw-bold" style={{ color: '#FF6600' }}>{formatTableCurrency(r.totalMobileMoney)}</td>
                                     <td className="text-warning fw-bold">
                                         {formatTableCurrency(r.totalDettes)}
                                     </td>
@@ -1202,7 +1376,7 @@ const RapportsTab = ({ onCorrect }) => {
             </Card.Body>
 
             {/* Modale de Détails et Échanges */}
-            <Modal show={showDetailsModal} onHide={() => setShowDetailsModal(false)} centered size="lg">
+            <Modal show={showDetailsModal} onHide={() => { setShowDetailsModal(false); setFilterSalesMode(null); }} centered size="lg">
                 <Modal.Header closeButton>
                     <Modal.Title>Détails du Rapport & Échanges</Modal.Title>
                 </Modal.Header>
@@ -1216,6 +1390,20 @@ const RapportsTab = ({ onCorrect }) => {
                                         <div className="d-flex justify-content-between mb-2">
                                             <span>Total Ventes :</span>
                                             <span className="fw-bold">{selectedRapport.totalVentes.toLocaleString()} GNF</span>
+                                        </div>
+                                        <div
+                                            className={`d-flex justify-content-between mb-2 p-2 rounded transition-all shadow-sm ${filterSalesMode === 'digital' ? 'text-white' : ''}`}
+                                            style={{ 
+                                                cursor: 'pointer',
+                                                backgroundColor: filterSalesMode === 'digital' ? '#FF6600' : '#FFF5EB',
+                                                color: filterSalesMode === 'digital' ? '#FFFFFF' : '#FF6600',
+                                                border: `1px solid ${filterSalesMode === 'digital' ? '#FF6600' : '#FFE0CC'}`
+                                            }}
+                                            onClick={() => setFilterSalesMode(filterSalesMode === 'digital' ? null : 'digital')}
+                                            title="Cliquez pour filtrer les paiements Orange Money / MobiCash"
+                                        >
+                                            <span>📱 Paiements Fintech (OM/Mobi) :</span>
+                                            <span className="fw-bold">{selectedRapport.totalMobileMoney.toLocaleString()} GNF</span>
                                         </div>
                                         <div className="d-flex justify-content-between mb-2">
                                             <span>Solde EXACT :</span>
@@ -1278,6 +1466,83 @@ const RapportsTab = ({ onCorrect }) => {
                                     )}
                                 </Col>
                             </Row>
+
+                            {detailsLoading ? (
+                                <div className="text-center py-4">
+                                    <Spinner animation="border" variant="primary" size="sm" />
+                                    <p className="small text-muted mt-2">Chargement des transactions...</p>
+                                </div>
+                            ) : (
+                            /* Liste des ventes détaillées (Filtrable) */
+                            detailedReportData?.ventes && (
+                                <div className="mt-3 pt-3 border-top">
+                                    <div className="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 className="fw-bold mb-0 text-muted small text-uppercase">Transactions de la session</h6>
+                                        {filterSalesMode && (
+                                            <Badge bg="dark" style={{ cursor: 'pointer' }} onClick={() => setFilterSalesMode(null)}>
+                                                Filtre Numérique Actif (cliquez pour retirer)
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    <div className="border rounded bg-white" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                                        <Table size="sm" hover responsive striped className="mb-0 small align-middle">
+                                            <thead className="bg-light sticky-top" style={{ zIndex: 1 }}>
+                                                <tr>
+                                                    <th className="ps-3">Heure</th>
+                                                    <th>Article</th>
+                                                    <th>Mode</th>
+                                                    <th className="text-end pe-3">Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {detailedReportData.ventes
+                                                    .filter(v => {
+                                                        if (filterSalesMode === 'digital') {
+                                                            return ['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(v.modePaiement);
+                                                        }
+                                                        return true;
+                                                    })
+                                                    .map(vente => (
+                                                    <tr key={vente._id}>
+                                                        <td className="ps-3">{new Date(vente.createdAt).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'})}</td>
+                                                        <td className="fw-bold">{vente.article?.nom || 'N/A'}</td>
+                                                        <td>
+                                                            {(() => {
+                                                                const mode = vente.modePaiement || 'Cash';
+                                                                let bg = 'light';
+                                                                let text = 'dark';
+                                                                let icon = 'solar:money-bag-bold';
+                                                                let label = mode;
+
+                                                                if (mode === 'Orange Money') {
+                                                                    return <Badge style={{ backgroundColor: '#FF6600', color: 'white' }} className="border-0 fw-normal">
+                                                                        <iconify-icon icon="simple-icons:orange" className="me-1 align-middle"></iconify-icon>OM
+                                                                    </Badge>;
+                                                                } else if (mode === 'MobiCash') {
+                                                                    return <Badge style={{ backgroundColor: '#FFCC00', color: 'black' }} className="border-0 fw-normal">
+                                                                        <iconify-icon icon="solar:phone-calling-bold" className="me-1 align-middle"></iconify-icon>Mobi
+                                                                    </Badge>;
+                                                                } else if (mode === 'PayCard') {
+                                                                    return <Badge bg="info" className="border-0 fw-normal">
+                                                                        <iconify-icon icon="solar:card-bold" className="me-1 align-middle"></iconify-icon>PayCard
+                                                                    </Badge>;
+                                                                } else if (mode === 'Cash') {
+                                                                    bg = 'success-subtle'; text = 'success'; icon = 'solar:banknote-2-bold';
+                                                                } else if (mode === 'Dette') {
+                                                                    bg = 'danger-subtle'; text = 'danger'; icon = 'solar:notebook-bold';
+                                                                }
+                                                                return <Badge bg={bg} text={text} className="border-0 fw-normal"><iconify-icon icon={icon} className="me-1 align-middle"></iconify-icon>{label}</Badge>;
+                                                            })()}
+                                                        </td>
+                                                        <td className="text-end pe-3 fw-bold">{(vente.prixTotal || 0).toLocaleString()} GNF</td>
+                                                    </tr>
+                                                ))}
+                                                {detailedReportData.ventes.length === 0 && <tr><td colSpan="4" className="text-center py-3 text-muted">Aucune vente enregistrée.</td></tr>}
+                                            </tbody>
+                                        </Table>
+                                    </div>
+                                </div>
+                            ))}
                         </>
                     )}
                 </Modal.Body>

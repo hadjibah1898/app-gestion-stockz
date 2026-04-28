@@ -11,7 +11,7 @@ const { logAction } = require('./auditLogService');
  */
 
 exports.listerArticles = async (filter = {}, page = 1, limit = 0) => {
-    const { sort, order, search, ...restFilters } = filter;
+    const { sort, order, search, status, ...restFilters } = filter;
     const dbFilters = { ...restFilters };
 
     // Nettoyage des paramètres
@@ -30,6 +30,23 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0) => {
             { nom: { $regex: search, $options: 'i' } },
             { code: { $regex: search, $options: 'i' } }
         ];
+    }
+
+    // Filtrage par état du stock (Optimisation Database)
+    if (status) {
+        if (status === 'low_stock' || status === 'reapprovisionnement') {
+            // Filtre dynamique basé sur le seuil d'alerte de chaque article
+            dbFilters.$expr = { $lte: ["$quantite", { $ifNull: ["$seuilAlerte", 10] }] };
+            dbFilters.quantite = { $gt: 0 };
+        } else if (status === 'out_of_stock' || status === 'rupture') {
+            dbFilters.quantite = { $lte: 0 };
+        } else if (status === 'expired') {
+            dbFilters.datePeremption = { $lt: new Date() };
+        } else if (status === 'expiring_soon') {
+            const soon = new Date();
+            soon.setDate(soon.getDate() + 30);
+            dbFilters.datePeremption = { $gte: new Date(), $lte: soon };
+        }
     }
 
     const totalCount = await Article.countDocuments(dbFilters);
@@ -67,7 +84,8 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0) => {
 exports.modifierArticle = async (id, inputData, user, req) => {
     if (Object.keys(inputData).length === 0) throw new Error("Données de mise à jour vides.");
 
-    const articleExistant = await articleRepository.findById(id);
+    // On utilise Article.findById avec populate pour connaître le type de boutique (Centrale ou Secondaire)
+    const articleExistant = await Article.findById(id).populate('boutique');
     if (!articleExistant) throw new Error("Article introuvable.");
 
     // SÉCURITÉ : Filtrer les champs pour empêcher la modification directe du stock 
@@ -75,7 +93,8 @@ exports.modifierArticle = async (id, inputData, user, req) => {
     const allowedFields = [
         'nom', 'prixAchat', 'prixVente', 'boutique', 'categorie', 'code', 
         'image', 'promo', 'promoActive', 'dateDebutPromo', 'dateFinPromo', 
-        'remise', 'datePeremption', 'fournisseur', 'remiseEnAttente'
+        'remise', 'datePeremption', 'fournisseur', 'remiseEnAttente',
+        'seuilAlerte'
     ];
     
     const data = {};
@@ -162,6 +181,25 @@ exports.modifierArticle = async (id, inputData, user, req) => {
 
     const articleModifie = await articleRepository.update(id, data);
 
+    // --- LOGIQUE DE SYNCHRONISATION DES PRIX (CENTRALE -> SECONDAIRES) ---
+    // Si la modification a lieu sur le Dépôt Principal, on répercute sur les autres boutiques
+    if (articleExistant.boutique && articleExistant.boutique.type === 'Centrale') {
+        const updatesCascades = {};
+        if (data.nom !== undefined) updatesCascades.nom = data.nom;
+        if (data.code !== undefined) updatesCascades.code = data.code;
+        if (data.prixVente !== undefined) updatesCascades.prixVente = Number(data.prixVente);
+        if (data.prixAchat !== undefined) updatesCascades.prixAchat = Number(data.prixAchat);
+        if (data.categorie !== undefined) updatesCascades.categorie = data.categorie;
+        if (data.image !== undefined) updatesCascades.image = data.image;
+
+        if (Object.keys(updatesCascades).length > 0) {
+            await Article.updateMany(
+                { nom: articleExistant.nom, _id: { $ne: id } }, // Tous les articles de même nom sauf celui qu'on vient de modifier
+                { $set: updatesCascades }
+            );
+        }
+    }
+
     // Audit Log
     if (req) {
         await logAction({
@@ -193,7 +231,7 @@ exports.supprimerArticle = async (id) => {
  * --- GESTION DES TRANSFERTS ET STOCKS ---
  */
 
-const performStockTransfer = async (sourceId, targetId, items, user, details = '') => {
+const performStockTransfer = async (sourceId, targetId, items, user, details = '', nomTransporteur = '') => {
     const operateurId = user.id || user._id;
     const userRole = user.role;
 
@@ -226,37 +264,27 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
 
         if (!sourceArticle) throw new Error(`Stock insuffisant pour l'article ID: ${item.articleId}`);
 
-        // 2. Incrémenter ou Créer Destination
-        let targetArticle = await Article.findOne({ nom: sourceArticle.nom, boutique: targetId });
-
-        if (targetArticle) {
-            await Article.updateOne({ _id: targetArticle._id }, { $inc: { quantite: qtyToTransfer } });
-        } else {
-            const newArticleData = sourceArticle.toObject();
-            delete newArticleData._id; delete newArticleData.createdAt; delete newArticleData.updatedAt; delete newArticleData.__v;
-            newArticleData.boutique = targetId;
-            newArticleData.quantite = qtyToTransfer;
-            await Article.create(newArticleData);
-        }
-
         articlesPourMouvement.push({ nomArticle: sourceArticle.nom, quantite: qtyToTransfer });
     }
 
+    // Le stock est déduit de la source, mais pas encore ajouté à la cible.
     return await Mouvement.create({
         type: 'Transfert',
         boutiqueSource: sourceId,
         boutiqueDestination: targetId,
         articles: articlesPourMouvement,
+        statutTransfert: 'EXPEDIE',
+        nomTransporteur,
         operateur: operateurId,
         details: details || `Transfert de ${sourceBoutique.nom} vers ${targetBoutique.nom}`
     });
 };
 
-exports.transfererStock = async (sourceId, targetId, articles, user, details) => {
-    return await performStockTransfer(sourceId, targetId, articles, user, details);
+exports.transfererStock = async (sourceId, targetId, articles, user, details, nomTransporteur) => {
+    return await performStockTransfer(sourceId, targetId, articles, user, details, nomTransporteur);
 };
 
-exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user) => {
+exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user, nomTransporteur) => {
     const centrale = await Boutique.findOne({ type: 'Centrale' });
     if (!centrale) throw new Error("Aucun Dépôt Principal configuré.");
 
@@ -275,7 +303,52 @@ exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user) 
         itemsToTransfer.push({ articleId: sourceArticle._id, quantite: item.quantite });
     }
 
-    return await performStockTransfer(centrale._id, targetBoutiqueId, itemsToTransfer, user, "Réapprovisionnement");
+    return await performStockTransfer(centrale._id, targetBoutiqueId, itemsToTransfer, user, "Réapprovisionnement", nomTransporteur);
+};
+
+/**
+ * Confirme la réception physique des articles par le gérant de la boutique cible.
+ */
+exports.confirmerReceptionTransfert = async (mouvementId, user) => {
+    const mouvement = await Mouvement.findById(mouvementId).populate('boutiqueSource boutiqueDestination');
+    
+    if (!mouvement || mouvement.statutTransfert !== 'EXPEDIE') {
+        throw new Error("Ce transfert n'est pas en attente de réception.");
+    }
+
+    // SÉCURITÉ : Seul un gérant de la boutique de destination (ou un admin) peut valider
+    if (user.role !== 'Admin' && user.boutique.toString() !== mouvement.boutiqueDestination._id.toString()) {
+        throw new Error("Vous n'êtes pas autorisé à réceptionner ce colis pour cette boutique.");
+    }
+
+    for (const item of mouvement.articles) {
+        // Chercher l'article correspondant dans la boutique de destination (par nom)
+        let targetArticle = await Article.findOne({ 
+            nom: item.nomArticle, 
+            boutique: mouvement.boutiqueDestination._id 
+        });
+
+        if (targetArticle) {
+            targetArticle.quantite += item.quantite;
+            await targetArticle.save();
+        } else {
+            // Si l'article n'existe pas encore dans cette boutique, on le crée en copiant les infos de la source
+            const sourceArticle = await Article.findOne({ nom: item.nomArticle, boutique: mouvement.boutiqueSource._id });
+            const newArticleData = sourceArticle.toObject();
+            delete newArticleData._id;
+            newArticleData.boutique = mouvement.boutiqueDestination._id;
+            newArticleData.quantite = item.quantite;
+            await Article.create(newArticleData);
+        }
+    }
+
+    mouvement.statutTransfert = 'RECU';
+    await mouvement.save();
+
+    // Envoyer une notification aux admins
+    await notificationService.sendTransferReceivedAlert(mouvement, user);
+
+    return { success: true, message: `Réception validée. Le stock de ${mouvement.boutiqueDestination.nom} a été mis à jour.` };
 };
 
 /**

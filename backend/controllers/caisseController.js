@@ -108,7 +108,8 @@ exports.creerDepense = async (req, res) => {
 
 exports.listerMesDepenses = async (req, res) => {
     try {
-        const depenses = await caisseService.listerDepenses({ gerant: req.user.id });
+        // Fusion des filtres de gérant avec les paramètres de pagination
+        const depenses = await caisseService.listerDepenses({ ...req.query, gerant: req.user.id });
         res.status(200).json(depenses);
     } catch (error) {
         res.status(500).json({ message: error.message });
