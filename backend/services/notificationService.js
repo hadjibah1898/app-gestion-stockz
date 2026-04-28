@@ -455,3 +455,151 @@ exports.sendDebtPaymentValidatedAlert = async (gerantId, client, montant) => {
         console.error("❌ Erreur lors de l'envoi de la notification de validation de paiement:", error);
     }
 };
+
+/**
+ * Envoie le reçu de paiement de dette par email au client.
+ */
+exports.sendDebtPaymentReceiptEmail = async (payment, client) => {
+    if (!client || !client.email) return;
+
+    try {
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: client.email,
+            subject: `📄 Votre reçu de paiement - Boutique ${payment.boutique?.nom || ''}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #0d6efd; margin-top: 0;">Reçu de Paiement</h2>
+                    </div>
+                    <p>Bonjour <strong>${client.nom}</strong>,</p>
+                    <p>Nous vous confirmons la réception de votre versement pour le règlement de votre dette.</p>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background-color: #fcfcfc;">
+                        <tr style="background-color: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #eee;"><strong>Date :</strong></td>
+                            <td style="padding: 12px; border: 1px solid #eee;">${new Date(payment.datePaiement || payment.createdAt).toLocaleString('fr-FR')}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; border: 1px solid #eee;"><strong>Montant Versé :</strong></td>
+                            <td style="padding: 12px; border: 1px solid #eee; color: #198754; font-weight: bold; font-size: 1.1em;">${payment.montant.toLocaleString('fr-FR')} GNF</td>
+                        </tr>
+                        <tr style="background-color: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #eee;"><strong>Mode de Paiement :</strong></td>
+                            <td style="padding: 12px; border: 1px solid #eee;">${payment.modePaiement}</td>
+                        </tr>
+                        ${payment.transactionRef ? `
+                        <tr>
+                            <td style="padding: 12px; border: 1px solid #eee;"><strong>Réf. Transaction :</strong></td>
+                            <td style="padding: 12px; border: 1px solid #eee;">${payment.transactionRef}</td>
+                        </tr>
+                        ` : ''}
+                    </table>
+
+                    <p style="text-align: center; color: #6c757d; font-size: 0.85em; margin-top: 30px; border-top: 1px solid #eee; pt-20">
+                        Merci de votre fidélité.<br/>
+                        <strong>${payment.boutique?.nom || 'Votre Boutique'}</strong>
+                    </p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi du reçu par email:", error);
+        throw error;
+    }
+};
+
+/**
+ * Alerte les admins qu'un gérant a confirmé la réception d'un transfert.
+ * @param {Object} mouvement - Le mouvement de stock confirmé.
+ * @param {Object} gerant - Le gérant qui a validé la réception.
+ */
+exports.sendTransferReceivedAlert = async (mouvement, gerant) => {
+    try {
+        const admins = await User.find({ role: 'Admin' });
+        if (admins.length === 0) return;
+
+        const adminEmails = admins.map(u => u.email).filter(Boolean);
+
+        // Assurez-vous que les champs sont peuplés pour le message
+        const sourceNom = mouvement.boutiqueSource?.nom || 'Dépôt Principal';
+        const destNom = mouvement.boutiqueDestination?.nom || 'Boutique Cible';
+
+        const message = `🚚 Réception confirmée : Le gérant ${gerant.nom} a validé la réception du transfert #${mouvement._id.toString().slice(-6).toUpperCase()} de ${sourceNom} vers ${destNom}.`;
+        const link = `/admin/mouvements?filter=${mouvement._id}`; // Lien vers le mouvement spécifique
+
+        // 1. Envoi par email
+        if (adminEmails.length > 0) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: adminEmails,
+                subject: `✅ Réception de Transfert Confirmée par ${gerant.nom}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
+                        <h2 style="color: #198754; margin-top: 0;">Réception de Transfert Confirmée</h2>
+                        <p>${message}</p>
+                        <p>Vous pouvez consulter le mouvement détaillé en cliquant ci-dessous :</p>
+                        <div style="text-align: center; margin: 20px 0;">
+                            <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}${link}" style="background-color: #0d6efd; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Voir le Mouvement</a>
+                        </div>
+                    </div>
+                `
+            });
+            console.log(`📧 Alerte réception transfert envoyée aux admins : ${mouvement._id}`);
+        }
+
+        // 2. Création de la notification in-app
+        const notificationPromises = admins.map(admin =>
+            Notification.create({ recipient: admin._id, message, type: 'success', link })
+        );
+        await Promise.all(notificationPromises);
+        console.log(`📲 Notification in-app de réception transfert envoyée à ${admins.length} admin(s).`);
+
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'alerte de réception de transfert:", error);
+    }
+};
+
+/**
+ * Notifie un serveur que sa commande est prête (Prête pour livraison à table).
+ * @param {Object} vente - La vente concernée.
+ * @param {Object} gérant - L'utilisateur (Gérant/Barman) qui a validé la préparation.
+ */
+exports.sendOrderReadyAlert = async (vente, gerant) => {
+    try {
+        const message = `✅ Commande Prête : Table ${vente.numeroTable || 'N/A'} est disponible au bar (Préparée par ${gerant.nom}).`;
+        
+        await Notification.create({
+            recipient: vente.gerant, // Le serveur propriétaire de la commande
+            message: message,
+            type: 'success',
+            link: '/serveur/dashboard'
+        });
+        console.log(`📲 Notification "Prête" envoyée au serveur : ${vente.gerant}`);
+    } catch (error) {
+        console.error("❌ Erreur notification Commande Prête :", error);
+    }
+};
+
+/**
+ * Notifie un serveur que sa commande a été annulée par le gérant.
+ * @param {Object} vente - La vente annulée.
+ * @param {Object} canceller - L'utilisateur qui a annulé la vente.
+ */
+exports.sendOrderCancelledAlert = async (vente, canceller) => {
+    try {
+        const message = `🚨 Commande Annulée : Votre commande (Table ${vente.numeroTable || 'N/A'}) a été annulée par ${canceller.nom}.`;
+        
+        await Notification.create({
+            recipient: vente.gerant,
+            message: message,
+            type: 'error',
+            link: '/serveur/dashboard'
+        });
+        console.log(`📲 Notification d'annulation envoyée au serveur : ${vente.gerant}`);
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de la notification d'annulation :", error);
+    }
+};

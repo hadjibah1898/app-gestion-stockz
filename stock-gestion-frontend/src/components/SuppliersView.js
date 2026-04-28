@@ -108,8 +108,13 @@ const SuppliersView = () => {
     }
   };
 
-  const handleExportExcel = () => {
-    const dataToExport = fournisseurs.map(f => ({
+  const handleExportExcel = async () => {
+    setLoading(true);
+    // On récupère tous les fournisseurs sans pagination (limit: 0) mais avec la recherche actuelle
+    const res = await fournisseurAPI.getAll({ search: searchTerm, limit: 0 });
+    const allFournisseurs = res.data.data || res.data || [];
+
+    const dataToExport = allFournisseurs.map(f => ({
       'Nom': f.nom,
       'Téléphone': f.telephone,
       'Email': f.email || '-',
@@ -120,22 +125,11 @@ const SuppliersView = () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Fournisseurs");
     XLSX.writeFile(workbook, `export_fournisseurs_${new Date().toISOString().split('T')[0]}.xlsx`);
+    setLoading(false);
   };
 
   // Le filtrage se fait maintenant côté serveur, on peut retirer le filtre côté client.
   const filteredFournisseurs = fournisseurs;
-
-  // Éléments de pagination
-  const paginationItems = [];
-  if (totalPages > 1) {
-    for (let number = 1; number <= totalPages; number++) {
-        paginationItems.push(
-            <Pagination.Item key={number} active={number === currentPage} onClick={() => setCurrentPage(number)}>
-                {number}
-            </Pagination.Item>
-        );
-    }
-  }
 
   const columns = [
     { key: 'nom', label: 'Nom' },
@@ -199,7 +193,30 @@ const SuppliersView = () => {
         </Card.Body>
         {totalPages > 1 && (
             <Card.Footer className="d-flex justify-content-center border-0 pt-0">
-                <Pagination>{paginationItems}</Pagination>
+                <Pagination className="mb-0">
+                    <Pagination.First onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
+                    <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
+                    
+                    {(() => {
+                        const pagesToShow = [];
+                        for (let i = 1; i <= totalPages; i++) {
+                            if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                                pagesToShow.push(i);
+                            }
+                        }
+                        return pagesToShow.map((p, idx) => (
+                            <React.Fragment key={p}>
+                                {idx > 0 && pagesToShow[idx - 1] !== p - 1 && <Pagination.Ellipsis disabled />}
+                                <Pagination.Item active={p === currentPage} onClick={() => setCurrentPage(p)}>
+                                    {p}
+                                </Pagination.Item>
+                            </React.Fragment>
+                        ));
+                    })()}
+
+                    <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
+                    <Pagination.Last onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
+                </Pagination>
             </Card.Footer>
         )}
       </Card>

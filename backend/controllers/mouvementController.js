@@ -4,10 +4,22 @@ const articleService = require('../services/articleService');
 exports.getAllMouvements = async (req, res) => {
     try {
         // Basic filtering example
-        const { type, boutique, startDate, endDate } = req.query;
+        const { type, boutique, startDate, endDate, page = 1, limit = 15 } = req.query;
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+
         const filter = {};
         if (type) filter.type = type;
-        if (boutique) {
+
+        // SÉCURITÉ : Si l'utilisateur est un gérant, il ne peut voir que les mouvements de sa boutique
+        if (req.user.role === 'Gérant') {
+            // On récupère l'ID de la boutique de l'utilisateur connecté
+            const userBoutiqueId = req.user.boutique?._id || req.user.boutique;
+            filter.$or = [
+                { boutiqueSource: userBoutiqueId },
+                { boutiqueDestination: userBoutiqueId }
+            ];
+        } else if (boutique) {
             filter.$or = [
                 { boutiqueSource: boutique },
                 { boutiqueDestination: boutique }
@@ -27,14 +39,31 @@ exports.getAllMouvements = async (req, res) => {
             }
         }
 
+        // Cas spécial Export : Si limit est 0, on renvoie tout sans pagination
+        if (limitNum === 0) {
+            const mouvementsAll = await Mouvement.find(filter)
+                .populate('boutiqueSource boutiqueDestination fournisseur operateur', 'nom')
+                .sort({ createdAt: -1 });
+            
+            return res.status(200).json({ data: mouvementsAll, totalCount: mouvementsAll.length });
+        }
+
+        const totalCount = await Mouvement.countDocuments(filter);
         const mouvements = await Mouvement.find(filter)
             .populate('boutiqueSource', 'nom')
             .populate('boutiqueDestination', 'nom')
             .populate('fournisseur', 'nom')
             .populate('operateur', 'nom')
             .sort({ createdAt: -1 })
-            .limit(200); // Limit to avoid performance issues on large datasets
-        res.status(200).json(mouvements);
+            .skip((pageNum - 1) * limitNum)
+            .limit(limitNum);
+
+        res.status(200).json({
+            data: mouvements,
+            totalPages: Math.ceil(totalCount / limitNum),
+            currentPage: pageNum,
+            totalCount
+        });
     } catch (error) {
         res.status(500).json({ message: "Erreur lors de la récupération des mouvements de stock.", error: error.message });
     }
@@ -54,6 +83,16 @@ exports.cancelMouvement = async (req, res) => {
         } else {
             return res.status(400).json({ message: "Ce type de mouvement ne peut pas être annulé." });
         }
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+exports.confirmerReception = async (req, res) => {
+    try {
+        // Appel du service de confirmation de réception
+        const result = await articleService.confirmerReceptionTransfert(req.params.id, req.user);
         res.status(200).json(result);
     } catch (error) {
         res.status(400).json({ message: error.message });

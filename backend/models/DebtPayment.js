@@ -11,6 +11,8 @@ const debtPaymentSchema = new mongoose.Schema({
     ouvertureCaisse: { type: mongoose.Schema.Types.ObjectId, ref: 'OuvertureCaisse', required: true },
     statut: { type: String, enum: ['VALIDEE', 'ANNULEE'], default: 'VALIDEE' },
     datePaiement: { type: Date, default: Date.now },
+    modePaiement: { type: String, default: 'Cash' },
+    transactionRef: { type: String },
     commentaire: { type: String }
 }, { timestamps: true });
 
@@ -31,7 +33,7 @@ DebtPayment.payDette = async (req, res) => {
             return res.status(403).json({ message: "Action interdite : Seul un gérant peut encaisser un remboursement." });
         }
 
-        const { montant, commentaire } = req.body;
+        const { montant, modePaiement, transactionRef, commentaire } = req.body;
         const clientId = req.params.id;
 
         // 1. Validation de l'entrée
@@ -81,6 +83,8 @@ DebtPayment.payDette = async (req, res) => {
             ouvertureCaisse: ouvertureCaisseId,
             statut: 'VALIDEE',
             datePaiement: new Date(),
+            modePaiement: modePaiement || 'Cash',
+            transactionRef: transactionRef,
             commentaire: commentaire || "Remboursement de dette"
         };
 

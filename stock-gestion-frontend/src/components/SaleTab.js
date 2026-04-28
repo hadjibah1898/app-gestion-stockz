@@ -12,6 +12,7 @@ import { PlusIcon, MinusIcon } from './ModernIcons';
 
 const SaleTab = ({
     panier,
+    userRole,
     setPanier,
     clients,
     articles,
@@ -26,17 +27,23 @@ const SaleTab = ({
     selectedArticle,
     setSelectedArticle,
     quantite,
+    numeroTable,
+    setNumeroTable,
     setQuantite, // Renamed prop
     itemRemiseInput, // Renamed prop
     itemRemiseType, // Nouveau prop
     setItemRemiseType, // Nouveau prop
-    setItemRemiseInput, // Renamed prop
+    setItemRemiseInput,
     ajouterAuPanier,
     getEffectivePrice,
     handleImageClick,
     retirerDuPanier,
     montantPaye,
     setMontantPaye,
+    modePaiement,
+    transactionRef, // Nouveau prop
+    setTransactionRef, // Nouveau prop
+    setModePaiement,
     echeanceDette,
     setEcheanceDette,
     calculerTotal,
@@ -48,7 +55,8 @@ const SaleTab = ({
     chargerBrouillon,
     setBrouillons,
     showMobilePanier,
-    setShowMobilePanier
+    setShowMobilePanier,
+    boutiqueConfig // Nouvelle prop reçue
 }) => {
     // Recherche et filtre catégorie
     const [search, setSearch] = useState('');
@@ -174,6 +182,7 @@ const SaleTab = ({
                                     <div className="flex-grow-1" style={{ minWidth: 0 }}>
                                         <div className="d-flex align-items-center justify-content-between">
                                             <div className="fw-bold small text-truncate">{item.article.nom}</div>
+                                            <div className="text-muted x-small">Stock boutique: <Badge bg="light" text="dark" className="border ms-1">{item.article.quantite}</Badge></div>
                                             {item.remiseTemp > 0 && (
                                                 <Badge bg="warning" text="dark" className="ms-2" style={{ fontSize: '0.65rem' }}>
                                                     Remise: -{parseFloat(item.remiseTemp).toLocaleString()} {item.remiseType === 'pourcentage' ? '%' : 'GNF'}
@@ -188,6 +197,7 @@ const SaleTab = ({
                                             <Button variant={item.quantite < item.article.quantite ? "primary" : "outline-secondary"} size="sm" className="rounded-circle shadow-sm border-0 d-flex align-items-center justify-content-center" style={{ width: 28, height: 28 }} onClick={e => { e.stopPropagation(); if (item.quantite < item.article.quantite) setPanier(panier.map(p => p.article._id === item.article._id ? { ...p, quantite: p.quantite + 1, prixTotal: p.prixUnitaire * (p.quantite + 1) } : p)); }}>
                                                 <PlusIcon size={18} color={item.quantite < item.article.quantite ? '#fff' : '#6c757d'} />
                                             </Button>
+                                            {userRole !== 'Serveur' && (
                                             <Button 
                                                 variant={item.remiseTemp > 0 ? "warning" : "outline-secondary"} 
                                                 size="sm" 
@@ -197,6 +207,7 @@ const SaleTab = ({
                                                 <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
                                                 {item.remiseTemp > 0 ? `${parseFloat(item.remiseTemp).toLocaleString()} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
                                             </Button>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="text-end d-flex flex-column justify-content-between h-100" style={{ minWidth: '80px' }}>
@@ -207,17 +218,76 @@ const SaleTab = ({
                             ))}
                         </div>
                         <div className="bg-light p-3 rounded-4 mb-3">
-                            {/* Client */}
-                            <div className="mb-3">
-                                <div className="d-flex justify-content-between align-items-center mb-1">
-                                    <label className="small fw-bold text-muted">Client</label>
-                                    <Button variant="link" size="sm" className="p-0 text-decoration-none" onClick={() => setShowClientModal(true)}>+ Nouveau</Button>
+                            {/* Client (Caché pour Serveur) */}
+                            {userRole !== 'Serveur' && (
+                                <div className="mb-3">
+                                    <div className="d-flex justify-content-between align-items-center mb-1">
+                                        <label className="small fw-bold text-muted">Client</label>
+                                        <Button variant="link" size="sm" className="p-0 text-decoration-none" onClick={() => setShowClientModal(true)}>+ Nouveau</Button>
+                                    </div>
+                                    <Form.Select size="sm" value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)} className="rounded-pill">
+                                        <option value="">Client de passage</option>
+                                        {clients.map(client => <option key={client._id} value={client._id}>{client.nom}</option>)}
+                                    </Form.Select>
                                 </div>
-                                <Form.Select size="sm" value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)} className="rounded-pill">
-                                    <option value="">Client de passage</option>
-                                    {clients.map(client => <option key={client._id} value={client._id}>{client.nom}</option>)}
+                            )}
+
+                            {/* Numéro de Table */}
+                            <div className="mb-3">
+                                <label className="small fw-bold text-muted">Numéro de Table / Emplacement</label>
+                                <InputGroup size="sm">
+                                    <InputGroup.Text className="bg-light border-end-0">
+                                        <iconify-icon icon="solar:chair-bold"></iconify-icon>
+                                    </InputGroup.Text>
+                                    <Form.Control
+                                        type="text"
+                                        placeholder={userRole === 'Serveur' ? "N° de Table (Obligatoire)" : "N° de Table"}
+                                        value={numeroTable}
+                                        onChange={e => setNumeroTable(e.target.value)}
+                                        className="border-start-0 rounded-end-pill"
+                                    />
+                                </InputGroup>
+                            </div>
+
+                            {/* Mode de Paiement */}
+                            <div className="mb-3">
+                                <label className="small fw-bold text-muted">Mode de paiement</label>
+                                <Form.Select 
+                                    size="sm" 
+                                    value={modePaiement} 
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setModePaiement(val);
+                                        // Si on choisit Dette, on initialise le montant payé à 0
+                                        if (val === 'Dette') {
+                                            setMontantPaye('0');
+                                        }
+                                    }}
+                                    className="rounded-pill"
+                                >
+                                    <option value="Cash">💵 Espèces (Cash)</option>
+                                    <option value="Orange Money">🍊 Orange Money</option>
+                                    <option value="MobiCash">🟡 MobiCash (MTN)</option>
+                                    <option value="PayCard">💳 PayCard</option>
+                                    <option value="Virement">🏦 Virement Bancaire</option>
+                                    {userRole !== 'Serveur' && <option value="Dette">📝 Dette (Crédit Total)</option>}
                                 </Form.Select>
                             </div>
+
+                            {/* Référence Transactionnelle (pour paiements numériques) */}
+                            {['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(modePaiement) && (
+                                <Form.Group className="mb-3">
+                                    <Form.Label className="small fw-bold text-muted">Réf. Transaction <span className="text-danger">*</span></Form.Label>
+                                    <Form.Control
+                                        type="text"
+                                        value={transactionRef}
+                                        onChange={e => setTransactionRef(e.target.value)}
+                                        placeholder={`Ex: ID transaction ${modePaiement}`}
+                                        required
+                                        className="rounded-pill"
+                                    />
+                                </Form.Group>
+                            )}
 
                             {/* Sélection Manuelle Rapide (cachée sur mobile car trop chargée dans le volet) */}
                             {!isMobile && (
@@ -229,6 +299,7 @@ const SaleTab = ({
                                     {selectedArticle && (
                                         <div className="d-flex gap-2">
                                             <Form.Control size="sm" type="number" value={quantite} onChange={e => setQuantite(e.target.value)} className="rounded-pill" />
+                                            {userRole !== 'Serveur' && (
                                             <Button 
                                                 variant={itemRemiseInput > 0 ? "warning" : "outline-secondary"} 
                                                 size="sm" 
@@ -238,6 +309,7 @@ const SaleTab = ({
                                                 <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
                                                 {itemRemiseInput > 0 ? `${itemRemiseInput}${itemRemiseType === 'pourcentage' ? '%' : ' GNF'}` : 'Remise'}
                                             </Button>
+                                            )}
                                             <Button variant="primary" size="sm" className="rounded-pill px-3" onClick={() => {
                                                 setCartAnimationTrigger(true); // Déclenche l'animation
                                                 ajouterAuPanier();
@@ -286,12 +358,28 @@ const SaleTab = ({
                                 <span className="fw-bold fs-5">Total TTC</span>
                                 <span className="fw-bold fs-4 text-success">{calculerTotal().toLocaleString()} GNF</span>
                             </div>
+                            {userRole === 'Serveur' && (
+                                <div className="d-flex justify-content-between mt-1 text-primary">
+                                    {articles[0]?.boutique?.tipsEnabled !== false ? (
+                                        <>
+                                            <span className="small fw-bold">
+                                                Pourboire ({articles[0]?.boutique?.tipPercentage || 5}%) estimé
+                                            </span>
+                                            <span className="small fw-bold">
+                                                +{Math.round(calculerTotal() * ((articles[0]?.boutique?.tipPercentage || 5) / 100)).toLocaleString()} GNF
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <span className="small fw-bold text-muted italic">Pourboires désactivés pour cet établissement</span>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <div className="d-flex gap-2 mt-3">
                             <Button variant="outline-warning" className="rounded-pill flex-fill" onClick={mettreEnBrouillon} disabled={panier.length === 0}>Brouillon</Button>
                             <Button variant="success" className="rounded-pill flex-fill" onClick={() => { effectuerVente(); if(isMobile) setShowMobilePanier(false); }} disabled={isSubmitting}>
-                                {isSubmitting ? <Spinner as="span" animation="border" size="sm" /> : 'Valider Espèces'}
+                                {isSubmitting ? <Spinner as="span" animation="border" size="sm" /> : 'Valider la Vente'}
                             </Button>
                         </div>
                     </>
@@ -337,17 +425,20 @@ const SaleTab = ({
                                 onClick={() => setActiveCategory(cat.key)}
                             >
                                 {cat.label}
-                                <OverlayTrigger
-                                    placement="top"
-                                    overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {totalStockValue.toLocaleString()} GNF</Tooltip>}
-                                >
-                                    <Badge 
-                                        bg={activeCategory === cat.key ? 'light' : 'primary'} 
-                                        text={activeCategory === cat.key ? 'dark' : 'white'} pill
+                                {userRole !== 'Serveur' ? (
+                                    <OverlayTrigger
+                                        placement="top"
+                                        overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {totalStockValue.toLocaleString()} GNF</Tooltip>}
                                     >
+                                        <Badge bg={activeCategory === cat.key ? 'light' : 'primary'} text={activeCategory === cat.key ? 'dark' : 'white'} pill>
+                                            {count}
+                                        </Badge>
+                                    </OverlayTrigger>
+                                ) : (
+                                    <Badge bg={activeCategory === cat.key ? 'light' : 'primary'} text={activeCategory === cat.key ? 'dark' : 'white'} pill>
                                         {count}
                                     </Badge>
-                                </OverlayTrigger>
+                                )}
                             </Button>
                         );
                     })}
@@ -432,7 +523,7 @@ const SaleTab = ({
                                     </InputGroup>
                                     <div className="d-flex justify-content-between align-items-center">
                                         <Badge bg="secondary" pill>{article.categorie}</Badge>
-                                        <span className="small text-muted">Stock: {article.quantite}</span>
+                                        <Badge bg={article.quantite > (article.seuilAlerte || 10) ? "success-subtle" : "danger-subtle"} text={article.quantite > (article.seuilAlerte || 10) ? "success" : "danger"} className="border">Stock: {article.quantite}</Badge>
                                     </div>
                                 </Card.Body>
                             </Card>

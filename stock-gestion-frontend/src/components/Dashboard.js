@@ -144,11 +144,12 @@ const Dashboard = () => {
         
         setStats(statsData);
         setBoutiques(allBoutiques);
-        setRapports(rapportsRes.data || []);
+        // Extraire le tableau de données du format paginé
+        setRapports(rapportsRes.data.data || rapportsRes.data || []);
         setAllArticles(fetchedArticles); // Sauvegarder tous les articles pour la recherche ultérieure
         
-        // Calcul du stock faible (seuil arbitraire à 10 unités)
-        const lowStockItems = fetchedArticles.filter(a => safeNum(a.quantite) <= 10);
+        // Calcul du stock faible basé sur le seuil d'alerte personnalisé
+        const lowStockItems = fetchedArticles.filter(a => safeNum(a.quantite) <= (a.seuilAlerte || 10));
         setLowStockArticles(lowStockItems);
         
         const count = await getOfflineVentesCount();

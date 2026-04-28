@@ -10,11 +10,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Alert, Spinner, Modal, Button, Badge, Form, Row, Col } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
-import { articleAPI, venteAPI, clientAPI } from '../services/api';
-import { Html5QrcodeScanner } from "html5-qrcode";
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import logo from '../assets/logo.png';
+import { articleAPI, venteAPI, clientAPI } from '../services/api'; // Importez les API nécessaires
+import { Html5QrcodeScanner } from "html5-qrcode"; // Pour le scanner de code-barres
+import { generateReceiptPDF } from '../utils/pdfUtils'; // Importez la fonction de génération de PDF
 import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
 import SaleTab from './SaleTab';
 import HistoryTab from './HistoryTab';
@@ -24,10 +22,11 @@ import ReceiptModal from './ReceiptModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import ScannerModal from './ScannerModal';
 import { playSuccessSound, playBeep } from '../utils/audioUtils';
+import { useVenteLogic } from '../hooks/useVenteLogic'; // Import du hook personnalisé
 import { saveVenteOffline, syncVentes, getOfflineVentesCount } from '../utils/offlineSync';
 
 const VentesView = ({ userRole, initialTab = 'sale' }) => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [articles, setArticles] = useState([]);
   const [historique, setHistorique] = useState([]);
   const [clients, setClients] = useState([]); // Liste des clients
@@ -41,8 +40,11 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [selectedArticle, setSelectedArticle] = useState('');
   const [quantite, setQuantite] = useState(1);
   const [barcode, setBarcode] = useState('');
+  const [numeroTable, setNumeroTable] = useState('');
   const [selectedClientId, setSelectedClientId] = useState(''); // Client sélectionné
   const [montantPaye, setMontantPaye] = useState(''); // Montant payé par le client
+  const [modePaiement, setModePaiement] = useState('Cash'); // Mode de paiement (Cash, Orange Money, Dette, etc.)
+  const [transactionRef, setTransactionRef] = useState(''); // Référence transactionnelle pour paiements électroniques
   const [echeanceDette, setEcheanceDette] = useState(''); // Échéance pour la dette
   const [brouillons, setBrouillons] = useState([]); // État pour les ventes en brouillon
   const [showMobilePanier, setShowMobilePanier] = useState(false); // État pour le panier mobile
@@ -53,6 +55,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [exportDate, setExportDate] = useState({ month: new Date().getMonth() + 1, year: new Date().getFullYear() });
 
   const [isSubmitting, setIsSubmitting] = useState(false); // Pour le feedback sur le bouton de vente
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false); // Nouveau : pour les mises à jour sans Spinner global
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [saleToCancel, setSaleToCancel] = useState(null);
 
@@ -77,7 +80,16 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
   const [showCancelledOnly, setShowCancelledOnly] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
+  const [boutiqueConfig, setBoutiqueConfig] = useState(null); // Stocker le taux et l'état des pourboires
   const itemsPerPage = 15;
+
+  // Utilisation du hook personnalisé pour la logique de vente
+  const { getEffectivePrice } = useVenteLogic();
+
+  // Calcul du total des pourboires pour le serveur (Session en cours)
+  const totalPourboires = useMemo(() => {
+    return historique.filter(v => !v.isCancelled).reduce((sum, v) => sum + (v.pourboire || 0), 0);
+  }, [historique]);
 
   // Liste dynamique des catégories disponibles pour les filtres de vente
   const availableCategories = useMemo(() => {
@@ -91,21 +103,27 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
   const activeTab = searchParams.get('tab') || initialTab;
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (isSilent = false) => {
     try {
-      setLoading(true);
+      if (!isSilent) setLoading(true);
       
       // Paramètres de filtrage : Si c'est un gérant, on filtre par son ID
       const params = { 
         page: currentPage, 
         limit: itemsPerPage, 
         showCancelledOnly: showCancelledOnly,
-        // On envoie l'ID du gérant au backend pour filtrage
-        gerantId: userRole === 'Gérant' ? localStorage.getItem('userId') : undefined 
+        // Le serveur voit ses ventes, le gérant voit toute la boutique
+        gerantId: userRole === 'Serveur' ? localStorage.getItem('userId') : undefined,
+        // Logique de filtrage intelligente par statut
+        statut: searchParams.get('filter') === 'pending' ? (showCancelledOnly ? 'annulee' : 'commande') : undefined,
+        excludeStatut: searchParams.get('filter') === 'finalized' ? 'commande' : undefined
       };
 
+      // Paramètre pour ne charger que les articles de sa propre boutique (pour Gérant et Serveur)
+      const articlesParams = ['Gérant', 'Serveur'].includes(userRole) ? { boutique: localStorage.getItem('boutiqueId') } : {};
+
       const promises = [
-        articleAPI.getAll(),
+        articleAPI.getAll(articlesParams),
         venteAPI.getHistorique(params),
       ];
 
@@ -121,17 +139,72 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       const historiqueRes = results[1];
       const clientsRes = userRole !== 'Admin' ? results[2] : { data: [] };
 
-      setArticles((articlesRes.data.data || []).filter(a => a.quantite > 0));
-      setHistorique(historiqueRes.data.ventes || []);
+      const allArticles = articlesRes.data.data || [];
+      
+      // Récupérer la config de la boutique depuis le premier article (tous sont de la même boutique pour Gérant/Serveur)
+      if (allArticles.length > 0 && ['Gérant', 'Serveur'].includes(userRole)) {
+        setBoutiqueConfig(allArticles[0].boutique);
+      }
+
+      setArticles(allArticles.filter(a => a.quantite > 0));
+      
+      // LOGIQUE DE REGROUPEMENT INTELLIGENTE
+      const rawVentes = historiqueRes.data.ventes || [];
+      const groupedVentes = {};
+      const isPendingView = searchParams.get('filter') === 'pending';
+
+      rawVentes.forEach(vente => {
+        // SI EN ATTENTE : On regroupe par NUMÉRO DE TABLE
+        // SINON (Historique) : On regroupe par TRANSACTION (orderGroupId)
+        const groupId = isPendingView ? (vente.numeroTable || `EMPORTER_${vente._id}`) : (vente.orderGroupId || vente._id);
+
+        if (!groupedVentes[groupId]) {
+          groupedVentes[groupId] = {
+            orderGroupId: groupId,
+            numeroTable: vente.numeroTable,
+            client: vente.client,
+            gerant: vente.gerant,
+            boutique: vente.boutique,
+            createdAt: vente.createdAt ? new Date(vente.createdAt) : new Date(),
+            items: [],
+            totalGroupPrice: 0,
+            hasPending: false,
+            allCancelled: true
+          };
+        }
+        groupedVentes[groupId].items.push(vente);
+        
+        // Calcul intelligent des propriétés du groupe
+        if (!vente.isCancelled) {
+          groupedVentes[groupId].totalGroupPrice += (vente.prixTotal || 0);
+          groupedVentes[groupId].allCancelled = false;
+          if (vente.statut === 'commande') {
+            groupedVentes[groupId].hasPending = true;
+          }
+        }
+      });
+
+      const finalGroups = Object.values(groupedVentes).map(group => ({
+        ...group,
+        isCancelled: group.allCancelled,
+        statut: group.hasPending ? 'commande' : (group.allCancelled ? 'annulee' : 'finalisee')
+      }));
+
+      // Tri : Les commandes les plus anciennes en premier pour la préparation (Premier arrivé, premier servi)
+      const sorted = isPendingView 
+        ? finalGroups.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+        : finalGroups.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      setHistorique(sorted);
       setTotalPages(historiqueRes.data.totalPages || 0);
       setClients(clientsRes.data || []);
     } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors du chargement des données de vente.");
+      setError(err.response?.data?.message || "Erreur de connexion au serveur.");
       setShowErrorModal(true);
     } finally {
-      setLoading(false); //
+      if (!isSilent) setLoading(false);
     }
-  }, [currentPage, showCancelledOnly, userRole]);
+  }, [currentPage, showCancelledOnly, userRole, searchParams]);
 
   useEffect(() => {
     fetchData();
@@ -161,32 +234,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     window.addEventListener('online', handleOnlineStatus);
     return () => window.removeEventListener('online', handleOnlineStatus);
   }, [fetchData]);
-
-  // Fonction utilitaire pour calculer le prix effectif d'un article (avec promo/remise)
-  // Ajout d'un paramètre remise temporaire (pour le panier)
-  const getEffectivePrice = (article, remiseTemp = null, remiseType = 'montant') => {
-    let price = article.prixVente;
-
-    // 1. Remise temporaire (panier) - PRIORITÉ ABSOLUE car saisie manuellement par le gérant
-    if (remiseTemp !== null && !isNaN(remiseTemp) && remiseTemp > 0) {
-      return remiseType === 'pourcentage' ? Math.max(0, price * (1 - remiseTemp / 100)) : Math.max(0, price - remiseTemp);
-    }
-
-    // 2. Promo
-    if (article.promoActive && article.promo > 0) {
-        const now = new Date();
-        const start = article.dateDebutPromo ? new Date(article.dateDebutPromo) : null;
-        const end = article.dateFinPromo ? new Date(article.dateFinPromo) : null;
-        if ((!start || now >= start) && (!end || now <= end)) {
-            return price * (1 - article.promo / 100);
-        }
-    }
-    // 3. Remise article (définitive)
-    if (article.remise > 0) {
-        return price * (1 - article.remise / 100);
-    }
-    return price;
-  };
 
   const ajouterAuPanier = () => {
     if (parseInt(quantite) <= 0) {
@@ -340,6 +387,13 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         }
     }
 
+    // Validation du numéro de table pour le rôle Serveur
+    if (userRole === 'Serveur' && (!numeroTable || !numeroTable.trim())) {
+        setError("Veuillez saisir un numéro de table ou un emplacement pour cette commande.");
+        setShowErrorModal(true);
+        return;
+    }
+
     setIsSubmitting(true);
     const venteData = {
       panier: panier.map(item => ({
@@ -350,8 +404,11 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       })),
       clientId: selectedClientId || null, // Envoyer l'ID du client
       montantPaye: montantPayeFinal, // Envoyer le montant réellement payé
-      echeanceDette: echeanceDette || null, // Envoyer la date d'échéance
-      hasRemise: hasRemise // Indiquer si une remise a été appliquée
+      modePaiement: modePaiement, // Envoyer le mode de paiement sélectionné
+      echeanceDette: (montantPayeFinal < totalVente) ? (echeanceDette || null) : null, // Envoyer la date d'échéance seulement si dette
+      hasRemise: hasRemise, // Indiquer si une remise a été appliquée
+      transactionRef: transactionRef, // Envoyer la référence de transaction
+      numeroTable: numeroTable // Envoyer le numéro de table pour le serveur
     };
 
     try {
@@ -369,6 +426,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       const itemLevelDiscount = subTotal - totalAfterItemDiscounts;
       const finalTotalNet = calculerTotal();
 
+      const isServeur = userRole === 'Serveur';
+
       // 4. Dynamisme : Récupération des informations de la boutique depuis le panier.
       const boutiqueInfo = panier.length > 0 ? panier[0].article.boutique : null;
       const clientObj = clients.find(c => c._id === selectedClientId);
@@ -381,22 +440,30 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           clientName: clientObj ? clientObj.nom : 'Client de passage',
           date: new Date(),
           items: panier,
+          modePaiement: modePaiement, // Inclure pour le ticket
           subTotal: subTotal, // Total before any discounts
           itemLevelDiscount: itemLevelDiscount, // Sum of item-level discounts
           totalNet: finalTotalNet,
           amountPaid: montantPayeFinal,
           change: montantPayeFinal - totalVente,
           echeanceDette: echeanceDette, // Ajout de l'échéance pour le ticket
+          transactionRef: transactionRef // Ajout de la référence de transaction pour le ticket
       };
-      // Stocker les données et afficher la modale de choix au lieu d'imprimer directement
-      setCurrentReceiptData(receiptData);
-      setShowReceiptModal(true);
+
+      // Seul le gérant ou l'admin propose l'impression du ticket final au client
+      if (!isServeur) {
+          setCurrentReceiptData(receiptData);
+          setShowReceiptModal(true);
+      }
       
-        setSuccessMessage('Vente effectuée avec succès !');
+      setSuccessMessage(isServeur ? 'Commande envoyée au bar avec succès !' : 'Vente effectuée avec succès !');
 
       setPanier([]);
       setSelectedClientId(''); // Réinitialiser le client
+      setNumeroTable(''); // Réinitialiser le numéro de table
       setMontantPaye(''); // Réinitialiser le montant payé
+      setModePaiement('Cash'); // Réinitialiser le mode de paiement
+      setTransactionRef(''); // Réinitialiser la référence de transaction
       setEcheanceDette(''); // Réinitialiser l'échéance
       fetchData();
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -462,6 +529,66 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
     setBrouillons(brouillons.filter(b => b.id !== draft.id));
   };
 
+  const handleFinalizeOrder = async (id, nextStatus, isGroup = false) => {
+    try {
+        setIsUpdatingStatus(true);
+        if (isGroup) {
+            await venteAPI.updateGroupStatus(id, { status: nextStatus });
+
+            // Préparation du ticket de caisse pour le groupe si la vente est finalisée
+            if (nextStatus === 'finalisee') {
+                const group = historique.find(g => g.orderGroupId === id);
+                if (group) {
+                    const subTotal = group.items.reduce((acc, item) => acc + ((item.article?.prixVente || (item.prixTotal / item.quantite)) * item.quantite), 0);
+                    
+                    const receiptData = {
+                        shopName: group.boutique?.nom || "Ma Boutique",
+                        address: group.boutique?.adresse || "",
+                        phone: group.boutique?.telephone || "",
+                        transactionId: `GRP-${id.toString().slice(-6).toUpperCase()}`,
+                        cashierName: localStorage.getItem('userName') || userRole,
+                        serverName: group.gerant?.nom || 'N/A', // Ajouter le nom du serveur
+                        clientName: group.client?.nom || 'Client de passage',
+                        date: new Date(),
+                        items: group.items.map(item => ({
+                            article: item.article,
+                            quantite: item.quantite,
+                            prixUnitaire: item.prixTotal / item.quantite,
+                            prixTotal: item.prixTotal
+                        })),
+                        modePaiement: group.items[0]?.modePaiement || 'Cash',
+                        subTotal: subTotal,
+                        itemLevelDiscount: subTotal - group.totalGroupPrice,
+                        totalNet: group.totalGroupPrice,
+                        amountPaid: group.totalGroupPrice,
+                        change: 0
+                    };
+                    setCurrentReceiptData(receiptData);
+                    setShowReceiptModal(true);
+                }
+            }
+            
+            const msg = nextStatus === 'en_preparation' 
+                ? "Commande marquée comme PRÊTE. Le serveur a été notifié." 
+                : "Table encaissée avec succès.";
+            setSuccessMessage(msg);
+        } else {
+            await venteAPI.updateStatus(id, { status: nextStatus });
+            setSuccessMessage(`Commande mise à jour.`);
+        }
+        // Rafraîchissement "silencieux" (sans faire apparaître le Spinner global)
+        await fetchData(true); 
+        setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+        console.error("Détail erreur statut:", err.response?.data || err);
+        const errorMsg = err.response?.data?.message || "Erreur lors de la mise à jour du statut";
+        setError(errorMsg);
+        setShowErrorModal(true);
+    } finally {
+        setIsUpdatingStatus(false);
+    }
+  };
+
   const handleClientCreationSuccess = (createdClient, isEdit) => {
     if (isEdit) return; // Ne devrait pas arriver depuis cette vue
 
@@ -500,135 +627,6 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       setShowCancelModal(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     }
-  };
-
-  // Génération du ticket de caisse (Format ticket thermique)
-  const generateReceiptPDF = (ticketData) => {
-    if (!ticketData) return;
-
-    // Helper pour nettoyer le formatage des nombres pour le PDF
-    const formatPrice = (price) => {
-        return (price || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
-    };
-
-    const doc = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: [80, 150 + (ticketData.items.length * 8)] // Hauteur dynamique
-    });
-
-    const {
-        shopName = 'BOUTIQUE',
-        address = '',
-        phone = '',
-        transactionId = 'N/A',
-        date = new Date(),
-        clientName = 'Client de passage',
-        cashierName = 'N/A',
-        items = [],
-        subTotal = 0, // Total before any discounts
-        itemLevelDiscount = 0, // Sum of item-level discounts
-        totalNet = 0,
-        amountPaid = 0,
-        echeanceDette = null, // Récupération de l'échéance
-    } = ticketData;
-
-    // --- En-tête ---
-    try {
-        doc.addImage(logo, 'PNG', 25, 5, 30, 10);
-    } catch (e) {
-        doc.setFontSize(14);
-        doc.text(shopName || 'BOUTIQUE', 40, 10, { align: 'center' });
-    }
-    
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "normal");
-    doc.text(address || '', 40, 20, { align: 'center' });
-    if (phone) doc.text(`Tel: ${phone}`, 40, 24, { align: 'center' });
-    doc.text("------------------------------------------------", 40, 30, { align: 'center' });
-
-    // --- Infos Transaction ---
-    doc.text(`Ticket: ${transactionId}`, 5, 35);
-    doc.text(`Date: ${new Date(date).toLocaleString('fr-FR')}`, 5, 39);
-    doc.text(`Client: ${clientName}`, 5, 43);
-    doc.text(`Caissier: ${cashierName}`, 5, 47);
-    
-    // --- Tableau Articles ---
-    const tableRows = items.map(item => [
-        item.article.nom.substring(0, 20),
-        item.quantite,
-        formatPrice(item.prixUnitaire),
-        formatPrice(item.prixTotal)
-    ]);
-
-    autoTable(doc, {
-        head: [["Article", "Qté", "P.U.", "Total"]],
-        body: tableRows,
-        startY: 50,
-        theme: 'plain',
-        styles: { fontSize: 7, cellPadding: 1 },
-        headStyles: { fontStyle: 'bold', halign: 'center' },
-        columnStyles: {
-            0: { cellWidth: 25 },
-            1: { halign: 'center' },
-            2: { halign: 'right' },
-            3: { halign: 'right' }
-        },
-        margin: { left: 2, right: 2 }
-    });
-
-    let finalY = doc.lastAutoTable.finalY + 5;
-
-    // --- Totaux ---
-    doc.setFontSize(8);
-    doc.text('Sous-total:', 5, finalY);
-    doc.text(`${formatPrice(subTotal)} GNF`, 75, finalY, { align: 'right' });
-    finalY += 4;
-    
-    if (itemLevelDiscount > 0) {
-        doc.text('Remise (articles):', 5, finalY);
-        doc.text(`- ${formatPrice(itemLevelDiscount)} GNF`, 75, finalY, { align: 'right' });
-        finalY += 4;
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text('TOTAL NET:', 5, finalY);
-    doc.text(`${formatPrice(totalNet)} GNF`, 75, finalY, { align: 'right' });
-    finalY += 5;
-    
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.text('Montant versé:', 5, finalY);
-    doc.text(`${formatPrice(amountPaid)} GNF`, 75, finalY, { align: 'right' });
-    finalY += 5;
-
-    const balance = amountPaid - totalNet;
-
-    if (balance >= 0) {
-        // Cas normal : Monnaie à rendre
-        doc.text('Monnaie rendue:', 5, finalY);
-        doc.text(`${formatPrice(balance)} GNF`, 75, finalY, { align: 'right' });
-    } else {
-        // Cas dette : Reste à payer
-        doc.setFont("helvetica", "bold");
-        doc.text('RESTE A PAYER:', 5, finalY);
-        doc.text(`${formatPrice(Math.abs(balance))} GNF`, 75, finalY, { align: 'right' });
-        
-        if (echeanceDette) {
-            finalY += 5;
-            doc.setFontSize(7);
-            doc.setFont("helvetica", "italic");
-            doc.text(`Echeance le : ${new Date(echeanceDette).toLocaleDateString('fr-FR')}`, 40, finalY, { align: 'center' });
-        }
-    }
-
-    // --- Pied de page ---
-    doc.text("------------------------------------------------", 40, finalY + 10, { align: 'center' });
-    doc.setFont("helvetica", "bold");
-    doc.text("Merci de votre visite !", 40, finalY + 15, { align: 'center' });
-
-    doc.save(`ticket_${transactionId}.pdf`);
   };
 
   const handlePrintReceipt = () => {
@@ -826,12 +824,16 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
         }
       `}</style>
       <div className="d-flex justify-content-between align-items-center mb-4 gap-3">
-        <h3 className="fw-bold mb-0 text-body">
-          {activeTab === 'history' ? (
-            userRole === 'Admin' ? 'Historique Global' : 'Mes Ventes Personnelles'
-          ) : (
-            'Effectuer une Vente'
+        <div className="d-flex align-items-center gap-2">
+          <h3 className="fw-bold mb-0 text-body">{activeTab === 'sale' ? 'Prendre Commande' : 'Mes Commandes'}</h3>
+          {userRole === 'Serveur' && (
+            <Badge bg="success" pill className="ms-2 py-2 px-3 shadow-sm d-flex align-items-center">
+              <iconify-icon icon="solar:hand-stars-bold" className="me-1"></iconify-icon>
+              Mes Pourboires: {totalPourboires.toLocaleString()} GNF
+            </Badge>
           )}
+        </div>
+       
           {offlineCount > 0 && (
             <Badge bg="warning" text="dark" pill className="ms-2 fs-6 align-middle shadow-sm animate__animated animate__bounceIn">
               <iconify-icon icon="solar:cloud-upload-bold-duotone" className="me-1 align-middle"></iconify-icon>
@@ -839,7 +841,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
               <span className="d-none d-sm-inline ms-1 small">hors-ligne</span>
             </Badge>
           )}
-        </h3>
+
+        {/* Bouton pour afficher le calendrier de vente */}
 
         {/* Icône du panier pour mobile dans le header */}
         {activeTab === 'sale' && userRole === 'Gérant' && (
@@ -884,6 +887,13 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
       </Modal>
 
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
+      
+      {searchParams.get('filter') === 'pending' && (
+        <Alert variant="info" className="d-flex justify-content-between align-items-center shadow-sm rounded-4 border-0 mb-4 animate__animated animate__fadeIn">
+            <span><iconify-icon icon="solar:info-circle-bold" className="me-2 align-middle fs-5"></iconify-icon> Mode gestion : Affichage des <strong>commandes serveurs en attente</strong> uniquement.</span>
+            <Button variant="link" size="sm" className="text-decoration-none fw-bold" onClick={() => setSearchParams({ tab: 'history' })}>Voir tout l'historique</Button>
+        </Alert>
+      )}
 
       {userRole === 'Admin' ? (
         <>
@@ -905,15 +915,22 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
             historique={historique}
             showCancelledOnly={showCancelledOnly}
             setShowCancelledOnly={setShowCancelledOnly}
+            currentPage={currentPage}
+            totalPages={totalPages}
             setCurrentPage={setCurrentPage}
             isCancellationAllowed={isCancellationAllowed}
             handleImageClick={handleImageClick}
             setSaleToCancel={setSaleToCancel}
             setShowCancelModal={setShowCancelModal}
+            handleFinalizeOrder={handleFinalizeOrder}
+            isUpdatingStatus={isUpdatingStatus}
+            userRole={userRole}
+            isPendingView={searchParams.get('filter') === 'pending'}
           />
         ) : (
             <SaleTab
               panier={panier}
+              userRole={userRole}
               setPanier={setPanier}
               clients={clients}
               articles={articles}
@@ -929,6 +946,8 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
               setSelectedArticle={setSelectedArticle}
               quantite={quantite}
               setQuantite={setQuantite}
+              numeroTable={numeroTable}
+              setNumeroTable={setNumeroTable}
               itemRemiseInput={itemRemiseInput}
               setItemRemiseInput={setItemRemiseInput}
               itemRemiseType={itemRemiseType} // Nouveau prop
@@ -939,6 +958,10 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
               retirerDuPanier={retirerDuPanier}
               montantPaye={montantPaye}
               setMontantPaye={setMontantPaye}
+              modePaiement={modePaiement}
+              transactionRef={transactionRef} // Nouveau prop
+              setTransactionRef={setTransactionRef} // Nouveau prop
+              setModePaiement={setModePaiement}
               echeanceDette={echeanceDette}
               setEcheanceDette={setEcheanceDette}
               calculerTotal={calculerTotal}
@@ -951,6 +974,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
               setBrouillons={setBrouillons}
               showMobilePanier={showMobilePanier}
               setShowMobilePanier={setShowMobilePanier}
+              boutiqueConfig={boutiqueConfig} // Passer la config à l'onglet de vente
             />
         )
       )}

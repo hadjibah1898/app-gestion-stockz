@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, Spinner, Badge } from 'react-bootstrap';
 import { fournisseurAPI, articleAPI } from '../services/api';
-import { generateSupplyReceipt } from '../utils/pdfUtils'; // Importer la fonction centralisée
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import logo from '../assets/logo.png';
 
 const SupplyModal = ({ show, onHide, onSuccess }) => {
     const [fournisseurs, setFournisseurs] = useState([]);
@@ -162,6 +164,86 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
         setSupplyData({ ...supplyData, items: newItems });
     };
 
+    // Fonction locale pour générer le Bon d'Entrée avec les colonnes demandées
+    const handleGeneratePDF = (mvt, action = 'download') => {
+        const doc = new jsPDF();
+        const formatCurrency = (val) => (val || 0).toLocaleString('fr-FR').replace(/\s/g, ' ') + ' GNF';
+
+        // --- En-tête ---
+        try {
+            doc.addImage(logo, 'PNG', 14, 10, 40, 15);
+        } catch (e) { console.error(e); }
+
+        doc.setFontSize(18).setTextColor(41, 128, 185).setFont("helvetica", "bold");
+        doc.text("BON D'ENTRÉE EN STOCK", 105, 20, { align: 'center' });
+
+        doc.setFontSize(10).setTextColor(100).setFont("helvetica", "normal");
+        doc.text(`N° Bon : #BE-${mvt._id.toString().slice(-6).toUpperCase()}`, 105, 27, { align: 'center' });
+        doc.text(`Date : ${new Date(mvt.createdAt).toLocaleString('fr-FR')}`, 196, 20, { align: 'right' });
+
+        // --- Tableau des produits ---
+        const tableColumn = ["Désignation", "Qté", "P. Achat", "P. Vente", "Total (Achat)"];
+        const tableRows = mvt.articles.map(a => [
+            a.nomArticle,
+            a.quantite,
+            formatCurrency(a.prixAchatUnitaire),
+            formatCurrency(a.prixVenteUnitaire),
+            formatCurrency(a.quantite * a.prixAchatUnitaire)
+        ]);
+
+        // Calcul du grand total
+        const totalGlobal = mvt.articles.reduce((sum, a) => sum + (a.quantite * (a.prixAchatUnitaire || 0)), 0);
+        tableRows.push([
+            { content: 'VALEUR TOTALE DU BON D\'ENTRÉE', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold', fillColor: [240, 240, 240] } },
+            { content: formatCurrency(totalGlobal), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } }
+        ]);
+
+        autoTable(doc, {
+            startY: 40,
+            head: [tableColumn],
+            body: tableRows,
+            theme: 'grid',
+            headStyles: { fillColor: [41, 128, 185], halign: 'center' },
+            columnStyles: {
+                1: { halign: 'center' },
+                2: { halign: 'right' },
+                3: { halign: 'right' },
+                4: { halign: 'right' }
+            }
+        });
+
+        // --- Pied de page : Signatures (Inspiré d'Odoo) ---
+        let finalY = doc.lastAutoTable.finalY + 15;
+        
+        // Sécurité : Si le tableau finit trop bas, on ajoute une page pour les signatures
+        if (finalY > 250) {
+            doc.addPage();
+            finalY = 20;
+        }
+
+        doc.setFontSize(11).setTextColor(0).setFont("helvetica", "bold");
+        doc.text("LE FOURNISSEUR (VISA)", 14, finalY);
+        doc.text("LE RÉCEPTIONNAIRE (DÉPÔT)", 105, finalY);
+        
+        doc.setFontSize(10).setFont("helvetica", "normal").setTextColor(80);
+        doc.text(mvt.fournisseur?.nom || 'N/A', 14, finalY + 7);
+        doc.text(mvt.boutiqueDestination?.nom || 'Dépôt Principal', 105, finalY + 7);
+        
+        doc.setFontSize(9).setTextColor(150);
+        doc.text("Précédé de la mention 'Bon pour livraison'", 14, finalY + 15);
+        doc.text("Précédé de la mention 'Vérifié et Accepté'", 105, finalY + 15);
+
+        // Lignes de signature pour le cachet
+        doc.setDrawColor(200).line(14, finalY + 35, 70, finalY + 35);
+        doc.line(105, finalY + 35, 160, finalY + 35);
+
+        if (action === 'preview') {
+            window.open(doc.output('bloburl'), '_blank');
+        } else {
+            doc.save(`bon_entree_${mvt._id.toString().slice(-6)}.pdf`);
+        }
+    };
+
     const submitSupply = async () => {
         if (!supplyData.fournisseurId) {
             setError("Veuillez sélectionner un fournisseur.");
@@ -201,11 +283,11 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                         <p className="text-muted mb-4">L'inventaire du dépôt principal a été mis à jour. Souhaitez-vous consulter le Bon d'Entrée ?</p>
                         
                         <div className="d-flex justify-content-center gap-3">
-                            <Button variant="outline-primary" className="rounded-pill px-4 py-2 d-flex align-items-center fw-bold" onClick={() => generateSupplyReceipt(movementData, 'preview')}>
+                            <Button variant="outline-primary" className="rounded-pill px-4 py-2 d-flex align-items-center fw-bold" onClick={() => handleGeneratePDF(movementData, 'preview')}>
                                 <iconify-icon icon="solar:eye-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
                                 Aperçu du Bon
                             </Button>
-                            <Button variant="primary" className="rounded-pill px-4 py-2 d-flex align-items-center fw-bold shadow-sm" onClick={() => generateSupplyReceipt(movementData, 'download')}>
+                            <Button variant="primary" className="rounded-pill px-4 py-2 d-flex align-items-center fw-bold shadow-sm" onClick={() => handleGeneratePDF(movementData, 'download')}>
                                 <iconify-icon icon="solar:download-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
                                 Télécharger (PDF)
                             </Button>

@@ -12,6 +12,7 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
     const [centralShopArticles, setCentralShopArticles] = useState([]);
     const [selectedRestockArticles, setSelectedRestockArticles] = useState([]);
     const [restockQuantities, setRestockQuantities] = useState({});
+    const [nomTransporteur, setNomTransporteur] = useState('');
     const [loading, setLoading] = useState(true);
     const [restockLoading, setRestockLoading] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
@@ -45,36 +46,66 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
 
     const generateTransferReceipt = (mvt, action = 'download') => {
         const doc = new jsPDF();
-        doc.addImage(logo, 'PNG', 14, 10, 40, 15);
-        doc.setFontSize(18).setTextColor(25, 118, 210).setFont("helvetica", "bold");
-        doc.text("BON DE TRANSFERT DE STOCK", 105, 20, { align: 'center' });
         
-        doc.setFontSize(10).setTextColor(100).setFont("helvetica", "normal");
-        doc.text(`ID Transfert : #TR-${mvt._id.toString().slice(-6).toUpperCase()}`, 105, 27, { align: 'center' });
-        doc.text(`Date : ${new Date().toLocaleString('fr-FR')}`, 196, 20, { align: 'right' });
+        const drawExemplaire = (label) => {
+            doc.addImage(logo, 'PNG', 14, 10, 40, 15);
+            doc.setFontSize(18).setTextColor(25, 118, 210).setFont("helvetica", "bold");
+            doc.text("BON DE TRANSFERT DE STOCK", 105, 20, { align: 'center' });
+            
+            doc.setFontSize(10).setTextColor(150).setFont("helvetica", "italic");
+            doc.text(label, 105, 25, { align: 'center' });
+            
+            doc.setFontSize(10).setTextColor(100).setFont("helvetica", "normal");
+            doc.text(`ID Transfert : #TR-${mvt._id.toString().slice(-6).toUpperCase()}`, 105, 31, { align: 'center' });
+            doc.text(`Date : ${new Date(mvt.createdAt).toLocaleString('fr-FR')}`, 196, 20, { align: 'right' });
 
-        const infoY = 45;
-        doc.setFontSize(11).setTextColor(0).setFont("helvetica", "bold");
-        doc.text("BOUTIQUE SOURCE (EXPÉDITEUR)", 14, infoY);
-        doc.text("BOUTIQUE CIBLE (RÉCEPTIONNAIRE)", 105, infoY);
+            if (mvt.nomTransporteur) {
+                doc.setFontSize(10).setFont("helvetica", "bold").setTextColor(41, 128, 185);
+                doc.text(`TRANSPORTEUR : ${mvt.nomTransporteur.toUpperCase()}`, 14, 35);
+            }
+
+            autoTable(doc, {
+                startY: mvt.nomTransporteur ? 40 : 38,
+                head: [['Référence', 'Désignation Article', 'Quantité']],
+                body: mvt.articles.map(a => [a.code || '-', a.nomArticle, a.quantite]),
+                theme: 'grid',
+                headStyles: { fillColor: [25, 118, 210], halign: 'center' },
+                columnStyles: {
+                    0: { halign: 'center', cellWidth: 30 },
+                    2: { halign: 'center', cellWidth: 20 }
+                }
+            });
+
+            let finalY = doc.lastAutoTable.finalY + 15;
+            if (finalY > 250) { doc.addPage(); finalY = 20; }
+
+            doc.setFontSize(11).setTextColor(0).setFont("helvetica", "bold");
+            doc.text("L'EXPÉDITEUR (VISA)", 14, finalY);
+            doc.text("LE RÉCEPTIONNAIRE (VISA)", 105, finalY);
+            
+            doc.setFontSize(10).setFont("helvetica", "normal").setTextColor(80);
+            doc.text(mvt.boutiqueSource?.nom || 'Dépôt Principal', 14, finalY + 7);
+            doc.text(mvt.boutiqueDestination?.nom || 'Boutique Cible', 105, finalY + 7);
+            
+            doc.setFontSize(9).setTextColor(150);
+            doc.text("Précédé de la mention 'Expédié conforme'", 14, finalY + 15);
+            doc.text("Précédé de la mention 'Vérifié et Accepté'", 105, finalY + 15);
+
+            if (mvt.nomTransporteur) {
+                doc.setFontSize(9).setTextColor(0);
+                doc.text(`Visa Transporteur : ${mvt.nomTransporteur}`, 14, finalY + 28);
+            }
+
+            doc.setDrawColor(200).line(14, finalY + 35, 70, finalY + 35);
+            doc.line(105, finalY + 35, 160, finalY + 35);
+        };
+
+        // Exemplaire 1
+        drawExemplaire("EXEMPLAIRE BOUTIQUE SOURCE (EXPÉDITION)");
         
-        doc.setFont("helvetica", "normal");
-        doc.text(mvt.boutiqueSource?.nom || 'Dépôt Principal', 14, infoY + 7);
-        doc.text(mvt.boutiqueDestination?.nom || 'N/A', 105, infoY + 7);
-
-        autoTable(doc, {
-            startY: infoY + 20,
-            head: [['Référence', 'Désignation Article', 'Quantité']],
-            body: mvt.articles.map(a => ['-', a.nomArticle, a.quantite]),
-            theme: 'grid',
-            headStyles: { fillColor: [25, 118, 210] }
-        });
-
-        const finalY = doc.lastAutoTable.finalY + 30;
-        doc.setFontSize(10).setFont("helvetica", "bold");
-        doc.text("Visa Expéditeur", 40, finalY, { align: 'center' });
-        doc.text("Visa Réceptionnaire", 150, finalY, { align: 'center' });
-        doc.setDrawColor(200).line(20, finalY + 15, 60, finalY + 15).line(130, finalY + 15, 170, finalY + 15);
+        // Exemplaire 2
+        doc.addPage();
+        drawExemplaire("EXEMPLAIRE BOUTIQUE CIBLE (RÉCEPTION)");
 
         if (action === 'preview') {
             const blob = doc.output('bloburl');
@@ -107,7 +138,8 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
             const res = await articleAPI.transferStock({ 
                 sourceId: centralShop._id,
                 targetId: restockTargetId, 
-                articles: articlesPayload 
+                articles: articlesPayload,
+                nomTransporteur: nomTransporteur
             });
             if (res.data.movement) {
                 setMovementData(res.data.movement); // On bascule vers l'affichage du succès
@@ -126,6 +158,7 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
         setRestockTargetId('');
         setSelectedRestockArticles([]);
         setRestockQuantities({});
+        setNomTransporteur('');
         setMessage({ type: '', text: '' });
         setMovementData(null);
         onHide();
@@ -228,6 +261,16 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
                                 )}
                             </Form.Group>
                         )}
+
+                        <Form.Group className="mb-3">
+                            <Form.Label className="fw-bold">Nom du transporteur</Form.Label>
+                            <Form.Control 
+                                type="text"
+                                value={nomTransporteur}
+                                onChange={(e) => setNomTransporteur(e.target.value)}
+                                placeholder="Ex: Diallo Transport, Taxi-moto N°5, etc."
+                            />
+                        </Form.Group>
 
                         <Form.Group className="mb-3">
                             <Form.Label>Vers la boutique (Destination)</Form.Label>

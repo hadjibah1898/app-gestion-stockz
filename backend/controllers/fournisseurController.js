@@ -167,7 +167,12 @@ exports.approvisionnerCentrale = async (req, res) => {
             type: 'Approvisionnement',
             fournisseur: fournisseur._id,
             boutiqueDestination: depotPrincipal._id,
-            articles: items.map(i => ({ nomArticle: i.nom, quantite: i.quantite, prixAchatUnitaire: i.prixAchat })),
+            articles: items.map(i => ({ 
+                nomArticle: i.nom, 
+                quantite: i.quantite, 
+                prixAchatUnitaire: i.prixAchat,
+                prixVenteUnitaire: i.prixVente || (i.prixAchat * 1.2)
+            })),
             operateur: req.user.id,
             details: `Depuis fournisseur ${fournisseur.nom}`
         });

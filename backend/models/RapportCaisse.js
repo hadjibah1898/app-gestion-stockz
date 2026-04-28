@@ -22,7 +22,17 @@ const rapportCaisseSchema = new mongoose.Schema({
         required: true,
     },
     totalVentes: { 
-        type: Number, // Uniquement les ventes Cash/Mobile Money encaissées
+        type: Number, // Total des ventes de la session (CA brut)
+        required: true,
+        default: 0
+    },
+    totalMobileMoney: { 
+        type: Number, // Somme des paiements via Orange Money/MobiCash/PayCard
+        required: true,
+        default: 0
+    },
+    totalMobileMoneyRecoveries: { 
+        type: Number, // Part des recouvrements de dettes reçue par OM/MobiCash
         required: true,
         default: 0
     },

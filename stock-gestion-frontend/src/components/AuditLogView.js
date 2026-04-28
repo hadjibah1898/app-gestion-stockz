@@ -39,7 +39,8 @@ const AuditLogView = () => {
         'REJECT_DEBT_PAYMENT': 'Rejet Paiement Dette',
         'VALIDATE_CASH_REPORT': 'Validation Rapport Caisse',
         'REJECT_CASH_REPORT': 'Rejet Rapport Caisse',
-        'REQUEST_DISCOUNT': 'Demande de Remise'
+        'REQUEST_DISCOUNT': 'Demande de Remise',
+        'UPDATE_TIP_PERCENTAGE': 'Mise à jour Taux Pourboire'
     };
 
     const fetchLogs = useCallback(async () => {

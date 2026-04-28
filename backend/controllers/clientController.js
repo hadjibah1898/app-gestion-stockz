@@ -3,11 +3,12 @@ const DebtMovement = require('../models/DebtMovement');
 const DebtPayment = require('../models/DebtPayment');
 const OuvertureCaisse = require('../models/OuvertureCaisse');
 const Boutique = require('../models/Boutique');
+const notificationService = require('../services/notificationService');
 
 // @desc    Enregistrer un remboursement de dette
 exports.payDette = async (req, res) => {
     try {
-        const { montant, commentaire } = req.body;
+        const { montant, modePaiement, transactionRef, commentaire } = req.body;
         const client = await Client.findById(req.params.id);
 
         if (!client) return res.status(404).json({ message: "Client introuvable" });
@@ -27,6 +28,8 @@ exports.payDette = async (req, res) => {
             // S'assurer que la boutique est un ID propre
             boutique: req.user.boutique?._id || req.user.boutique || client.boutique,
             statut: 'VALIDEE',
+            modePaiement: modePaiement || 'Cash',
+            transactionRef: transactionRef,
             datePaiement: new Date(),
             commentaire: commentaire || "Remboursement client"
         };
@@ -39,7 +42,7 @@ exports.payDette = async (req, res) => {
             });
         }
 
-        await DebtPayment.create(paymentData);
+        const newPayment = await DebtPayment.create(paymentData);
 
         // Enregistrement dans l'historique des mouvements
         await DebtMovement.create({
@@ -52,7 +55,7 @@ exports.payDette = async (req, res) => {
             boutique: req.user.boutique || client.boutique
         });
 
-        res.status(200).json({ success: true, nouveauSolde: client.dette });
+        res.status(200).json({ success: true, nouveauSolde: client.dette, paiement: newPayment });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -65,10 +68,31 @@ exports.getDebtHistory = async (req, res) => {
         if (req.user.role !== 'Admin') query.boutique = req.user.boutique;
         
         const history = await DebtPayment.find(query)
-            .populate('client', 'nom')
+            .populate('client', 'nom email')
             .populate('gerant', 'nom')
+            .populate('boutique', 'nom')
             .sort({ createdAt: -1 });
         res.status(200).json(history);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Envoyer le reçu de paiement par email
+exports.sendReceiptEmail = async (req, res) => {
+    try {
+        const payment = await DebtPayment.findById(req.params.paymentId).populate('client boutique');
+        
+        if (!payment) return res.status(404).json({ message: "Paiement introuvable" });
+        
+        if (!payment.client) return res.status(404).json({ message: "Données client introuvables pour ce paiement." });
+
+        if (!payment.client.email) {
+            return res.status(400).json({ message: "Le client n'a pas d'adresse email configurée." });
+        }
+
+        await notificationService.sendDebtPaymentReceiptEmail(payment, payment.client);
+        res.status(200).json({ message: "Reçu envoyé avec succès par email." });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

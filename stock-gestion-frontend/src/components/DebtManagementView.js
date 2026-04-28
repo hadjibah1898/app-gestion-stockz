@@ -3,6 +3,7 @@ import { Table, Button, Badge, Card, Form, Modal, Spinner, Tab, Tabs, Alert, Pag
 import { clientAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
+import logo from '../assets/logo.png';
 
 
 const DebtManagementView = () => {
@@ -15,8 +16,11 @@ const DebtManagementView = () => {
     const [showPayModal, setShowPayModal] = useState(false);
     const [selectedDebt, setSelectedDebt] = useState(null);
     const [amount, setAmount] = useState('');
+    const [modePaiement, setModePaiement] = useState('Cash');
+    const [transactionRef, setTransactionRef] = useState('');
     const [submitLoading, setSubmitLoading] = useState(false);
     const [lastPayment, setLastPayment] = useState(null);
+    const [emailLoading, setEmailLoading] = useState(false);
 
     const userRole = localStorage.getItem('userRole');
     const isAdmin = userRole === 'Admin';
@@ -57,16 +61,30 @@ const DebtManagementView = () => {
         setSubmitLoading(true);
         setError('');
         setSuccess('');
+
+        // Validation : Référence obligatoire pour Orange Money
+        if (modePaiement === 'Orange Money' && !transactionRef.trim()) {
+            setError("La référence de transaction est obligatoire pour un paiement Orange Money.");
+            setSubmitLoading(false);
+            return;
+        }
+
         try {
             const montantPaye = Number(amount);
-            await clientAPI.payDette(selectedDebt._id, { montant: montantPaye });
+            const res = await clientAPI.payDette(selectedDebt._id, { montant: montantPaye, modePaiement, transactionRef });
             setShowPayModal(false);
             setAmount('');
+            setModePaiement('Cash');
+            setTransactionRef('');
             
             setLastPayment({
+                id: res.data.paiement?._id,
+                clientEmail: selectedDebt.email,
                 clientName: selectedDebt.nom,
                 amount: amount,
-                oldDebt: selectedDebt.dette
+                oldDebt: selectedDebt.dette,
+                modePaiement: modePaiement,
+                transactionRef: transactionRef
             });
             
             setSuccess("Paiement encaissé avec succès ! Le solde du client et votre caisse ont été mis à jour.");
@@ -81,6 +99,20 @@ const DebtManagementView = () => {
         }
     };
 
+    const handleSendEmailReceipt = async (paymentId) => {
+        if (!paymentId) return;
+        setEmailLoading(true);
+        try {
+            await clientAPI.sendReceiptEmail(paymentId);
+            setSuccess("Le reçu a été envoyé par email au client.");
+            setTimeout(() => setSuccess(''), 5000);
+        } catch (err) {
+            setError(err.response?.data?.message || "Erreur lors de l'envoi de l'email.");
+        } finally {
+            setEmailLoading(false);
+        }
+    };
+
     const sendWhatsApp = (dette) => {
         const message = `Bonjour ${dette.nom}, nous vous rappelons qu'il reste un solde de ${dette.dette.toLocaleString()} GNF à régler. Merci de votre confiance.`;
         window.open(`https://wa.me/${dette.telephone}?text=${encodeURIComponent(message)}`);
@@ -90,54 +122,57 @@ const DebtManagementView = () => {
         const doc = new jsPDF({
             orientation: 'portrait',
             unit: 'mm',
-            format: [80, 120] // Format ticket de caisse (80mm)
+            format: [80, 140] // Hauteur augmentée pour accommoder les nouvelles infos
         });
 
-        // --- CONFIGURATION LOGO ---
-        // Pour ajouter votre logo :
-        // 1. Convertissez votre image en Base64 sur un site comme https://www.base64-image.de/
-        // 2. Collez le code obtenu ci-dessous à la place de la chaîne vide ""
-        const logoBase64 = ""; // Ex: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..."
-
-        if (logoBase64) {
-            try {
-                // x=25, y=2, largeur=30, hauteur=20 (Ajustez selon votre logo)
-                doc.addImage(logoBase64, 'PNG', 25, 2, 30, 20);
-            } catch (e) {
-                console.error("Erreur lors de l'ajout du logo", e);
-            }
+        // --- LOGO ---
+        try {
+            doc.addImage(logo, 'PNG', 25, 5, 30, 10);
+        } catch (e) {
+            console.error("Erreur lors de l'ajout du logo", e);
         }
 
         doc.setFontSize(14);
-        // J'ai décalé le texte vers le bas (y=25) pour laisser la place au logo
-        doc.text("RECU DE PAIEMENT", 40, 25, { align: 'center' });
+        doc.text("RECU DE PAIEMENT", 40, 22, { align: 'center' });
         
         doc.setFontSize(10);
-        doc.text(`Date: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 5, 35);
-        doc.text("------------------------------------------------", 5, 40);
+        doc.text(`Date: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 5, 30);
+        doc.text("------------------------------------------------", 5, 35);
         
-        doc.text(`Client:`, 5, 50);
+        doc.text(`Client:`, 5, 42);
         doc.setFontSize(12);
-        doc.text(`${payment.clientName}`, 5, 56);
+        doc.text(`${payment.clientName}`, 5, 48);
 
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
         
-        doc.text(`Montant Versé:`, 5, 66);
+        doc.text(`Montant Versé:`, 5, 58);
         doc.setFont("helvetica", "bold");
-        // NOTE: La locale 'fr-FR' utilise un espace insécable que les polices PDF standard
-        // de jsPDF ne gèrent pas bien. On le remplace par un espace normal pour éviter les problèmes d'affichage.
-        doc.text(`${parseFloat(payment.amount).toLocaleString('fr-FR').replace(/\s/g, ' ')} GNF`, 75, 66, { align: 'right' });
+        doc.text(`${parseFloat(payment.amount).toLocaleString('fr-FR').replace(/\s/g, ' ')} GNF`, 75, 58, { align: 'right' });
         
         doc.setFont("helvetica", "normal");
-        doc.text(`Reste à payer:`, 5, 76);
+        doc.text(`Mode de Paiement:`, 5, 66);
         doc.setFont("helvetica", "bold");
-        doc.text(`${(payment.oldDebt - parseFloat(payment.amount)).toLocaleString('fr-FR').replace(/\s/g, ' ')} GNF`, 75, 76, { align: 'right' });
+        doc.text(`${payment.modePaiement}`, 75, 66, { align: 'right' });
+
+        if (payment.transactionRef) {
+            doc.setFont("helvetica", "normal");
+            doc.text(`Réf. Transaction:`, 5, 74);
+            doc.setFont("helvetica", "bold");
+            doc.text(`${payment.transactionRef}`, 75, 74, { align: 'right' });
+        }
+
+        const nextY = payment.transactionRef ? 82 : 74;
 
         doc.setFont("helvetica", "normal");
-        doc.text("------------------------------------------------", 5, 86);
+        doc.text(`Reste à payer:`, 5, nextY);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${(payment.oldDebt - parseFloat(payment.amount)).toLocaleString('fr-FR').replace(/\s/g, ' ')} GNF`, 75, nextY, { align: 'right' });
+
+        doc.setFont("helvetica", "normal");
+        doc.text("------------------------------------------------", 5, nextY + 10);
         doc.setFontSize(8);
-        doc.text("Signature & Cachet", 40, 92, { align: 'center' });
+        doc.text("Signature & Cachet", 40, nextY + 16, { align: 'center' });
         
         doc.save(`recu_${payment.clientName.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
     };
@@ -194,12 +229,19 @@ const DebtManagementView = () => {
                 <Alert variant="success" onClose={() => { setSuccess(''); setLastPayment(null); }} dismissible>
                     <div className="d-flex justify-content-between align-items-center">
                         <span>{success}</span>
+                        <div className="d-flex gap-2">
                         {lastPayment && (
                             <Button variant="outline-success" size="sm" onClick={() => generateReceipt(lastPayment)}>
                                 <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
                                 Télécharger le Reçu (Gérant)
                             </Button>
                         )}
+                        {lastPayment?.id && lastPayment.clientEmail && (
+                            <Button variant="outline-primary" size="sm" onClick={() => handleSendEmailReceipt(lastPayment.id)} disabled={emailLoading}>
+                                {emailLoading ? <Spinner size="sm" /> : <><iconify-icon icon="solar:letter-bold" className="me-1"></iconify-icon> Envoyer par Email</>}
+                            </Button>
+                        )}
+                        </div>
                     </div>
                 </Alert>
             )}
@@ -258,7 +300,7 @@ const DebtManagementView = () => {
                         Historique des Paiements
                     </span>
                 }>
-                    <DebtHistoryTab history={history} loading={loading} />
+                    <DebtHistoryTab history={history} loading={loading} onSendEmail={handleSendEmailReceipt} emailLoading={emailLoading} />
                 </Tab>
             </Tabs>
 
@@ -270,6 +312,33 @@ const DebtManagementView = () => {
                     <Modal.Body>
                         <p>Client: <strong className="text-primary">{selectedDebt?.nom}</strong></p>
                         <p>Dette actuelle: <strong className="text-danger">{selectedDebt?.dette.toLocaleString()} GNF</strong></p>
+                        <Form.Group className="mb-3">
+                            <Form.Label>Mode de paiement</Form.Label>
+                            <Form.Select 
+                                value={modePaiement} 
+                                onChange={(e) => setModePaiement(e.target.value)}
+                                className="rounded-pill"
+                            >
+                                <option value="Cash">💵 Espèces (Cash)</option>
+                                <option value="Orange Money">🍊 Orange Money</option>
+                                <option value="MobiCash">🟡 MobiCash (MTN)</option>
+                                <option value="PayCard">💳 PayCard</option>
+                                <option value="Virement">🏦 Virement Bancaire</option>
+                            </Form.Select>
+                        </Form.Group>
+                        {['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(modePaiement) && (
+                            <Form.Group className="mb-3">
+                                <Form.Label>Réf. Transaction {modePaiement === 'Orange Money' && <span className="text-danger">*</span>}</Form.Label>
+                                <Form.Control
+                                    type="text"
+                                    value={transactionRef}
+                                    onChange={(e) => setTransactionRef(e.target.value)}
+                                    placeholder={`ID transaction ${modePaiement}`}
+                                    required={modePaiement === 'Orange Money'}
+                                    className="rounded-pill"
+                                />
+                            </Form.Group>
+                        )}
                         <Form.Group>
                             <Form.Label>Montant versé</Form.Label>
                             <Form.Control
@@ -296,15 +365,16 @@ const DebtManagementView = () => {
     );
 };
 
-const DebtHistoryTab = ({ history, loading }) => {
+const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading }) => {
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
+    const [filterMode, setFilterMode] = useState('all');
     const itemsPerPage = 10;
 
     // Revenir à la première page si la liste change ou si on lance une recherche
     useEffect(() => {
         setCurrentPage(1);
-    }, [history, searchTerm]);
+    }, [history, searchTerm, filterMode]);
 
     const getStatusBadge = (status) => {
         if (status === 'VALIDEE') {
@@ -369,9 +439,11 @@ const DebtHistoryTab = ({ history, loading }) => {
     };
 
     // Filtrage dynamique par nom de client
-    const filteredHistory = history.filter(p => 
-        (p.client?.nom || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredHistory = history.filter(p => {
+        const matchName = (p.client?.nom || '').toLowerCase().includes(searchTerm.toLowerCase());
+        const matchMode = filterMode === 'all' || p.modePaiement === filterMode;
+        return matchName && matchMode;
+    });
 
     // Calculs pour la pagination
     const indexOfLastItem = currentPage * itemsPerPage;
@@ -382,14 +454,26 @@ const DebtHistoryTab = ({ history, loading }) => {
     return (
         <Card className="border-0 shadow-sm rounded-4">
             <Card.Body>
-                <div className="d-flex justify-content-between align-items-center mb-3 gap-3">
+                <div className="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-3">
                     <Form.Control
                         type="text"
                         placeholder="Rechercher par nom de client..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="flex-grow-1"
+                        className="flex-grow-1 rounded-pill"
+                        style={{ minWidth: '200px' }}
                     />
+                    <Form.Select 
+                        value={filterMode} 
+                        onChange={(e) => setFilterMode(e.target.value)}
+                        className="rounded-pill"
+                        style={{ width: 'auto' }}
+                    >
+                        <option value="all">Tous les modes</option>
+                        <option value="Cash">💵 Espèces uniquement</option>
+                        <option value="Orange Money">🍊 Orange Money</option>
+                        <option value="MobiCash">🟡 MobiCash</option>
+                    </Form.Select>
                     <Button variant="outline-danger" onClick={exportToPDF} disabled={loading || filteredHistory.length === 0}>
                         <iconify-icon icon="solar:file-pdf-bold" className="me-2"></iconify-icon>
                         Exporter PDF
@@ -400,17 +484,20 @@ const DebtHistoryTab = ({ history, loading }) => {
                         <tr>
                             <th>Date Versement</th>
                             <th>Client</th>
+                            <th>Mode</th>
+                            <th>Référence</th>
                             <th>Dette Actuelle</th>
                             <th>Montant</th>
                             <th>Statut</th>
                             <th>Encaissé par</th>
                             <th>Boutique</th>
                             <th>Validé le</th>
+                            <th className="text-end">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan="6" className="text-center py-5"><Spinner /></td></tr>
+                            <tr><td colSpan="10" className="text-center py-5"><Spinner /></td></tr>
                         ) : currentItems.length > 0 ? currentItems.map(p => {
                             const datePaiement = p.datePaiement ? new Date(p.datePaiement).toLocaleString('fr-FR') : <span className="text-danger fw-bold">Date Manquante</span>;
                             const dateValidation = p.dateValidation ? new Date(p.dateValidation).toLocaleString('fr-FR') : '-';
@@ -419,16 +506,31 @@ const DebtHistoryTab = ({ history, loading }) => {
                                 <tr key={p._id}>
                                     <td>{datePaiement}</td>
                                     <td>{p.client?.nom || <span className="text-muted">Client supprimé</span>}</td>
+                                    <td>
+                                        {p.modePaiement === 'Orange Money' ? <Badge style={{backgroundColor: '#FF6600'}}>OM</Badge> :
+                                         p.modePaiement === 'MobiCash' ? <Badge style={{backgroundColor: '#FFCC00', color: '#000'}}>Mobi</Badge> :
+                                         p.modePaiement === 'PayCard' ? <Badge bg="info">Card</Badge> :
+                                         p.modePaiement === 'Virement' ? <Badge bg="secondary">Bank</Badge> :
+                                         <Badge bg="success-subtle" text="success">Cash</Badge>}
+                                    </td>
+                                    <td className="small text-muted">{p.transactionRef || '-'}</td>
                                     <td className="text-muted">{detteActuelle.toLocaleString()} GNF</td>
                                     <td className="fw-bold text-success">+{p.montant.toLocaleString()} GNF</td>
                                     <td>{getStatusBadge(p.statut)}</td>
                                     <td className="fw-bold">{p.gerant?.nom || <span className="text-muted">N/A</span>}</td>
                                     <td>{p.boutique?.nom || <span className="text-muted">N/A</span>}</td>
                                     <td>{dateValidation}</td>
+                                    <td className="text-end">
+                                        {p.client?.email && (
+                                            <Button variant="link" size="sm" className="p-0 text-primary" onClick={() => onSendEmail(p._id)} disabled={emailLoading} title="Envoyer le reçu par email">
+                                                <iconify-icon icon="solar:letter-bold" style={{fontSize: '20px'}}></iconify-icon>
+                                            </Button>
+                                        )}
+                                    </td>
                                 </tr>
                             );
                         }) : (
-                            <tr><td colSpan="8" className="text-center text-muted py-5">Aucun paiement trouvé pour cette recherche.</td></tr>
+                            <tr><td colSpan="10" className="text-center text-muted py-5">Aucun paiement trouvé pour cette recherche.</td></tr>
                         )}
                     </tbody>
                 </Table>

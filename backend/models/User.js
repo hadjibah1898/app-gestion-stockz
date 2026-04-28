@@ -7,7 +7,7 @@ const userSchema = new mongoose.Schema({
     password: { type: String, required: true },
     role: { 
         type: String, 
-        enum: ['Admin', 'Gérant'], 
+        enum: ['Admin', 'Gérant', 'Serveur'], 
         default: 'Gérant' // Par défaut, un nouvel inscrit est gérant [cite: 22]
     },
     boutique: { 

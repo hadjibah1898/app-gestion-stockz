@@ -10,12 +10,16 @@ const venteSchema = new mongoose.Schema({
     client: { type: mongoose.Schema.Types.ObjectId, ref: 'Client' },
     statut: { 
         type: String, 
-        enum: ['finalisee', 'en_attente_remise', 'refusee'], 
-        default: 'finalisee' 
+        enum: ['commande', 'en_preparation', 'finalisee', 'annulee'], 
+        default: 'finalisee'
     },
     isCancelled: { type: Boolean, default: false },
     remiseAppliquee: { type: Number, default: 0 },
-    remiseType: { type: String, enum: ['montant', 'pourcentage'], default: 'montant' } // Nouveau champ
+    remiseType: { type: String, enum: ['montant', 'pourcentage'], default: 'montant' }, // Nouveau champ
+    modePaiement: { type: String, default: 'Cash' },
+    transactionRef: { type: String },
+    pourboire: { type: Number, default: 0 },
+    numeroTable: { type: String }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Vente', venteSchema);

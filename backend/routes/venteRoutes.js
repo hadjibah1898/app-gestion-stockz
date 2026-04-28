@@ -7,10 +7,15 @@ const { validateVente } = require('../middleware/validators');
 const validateObjectId = require('../middleware/validateObjectId');
 
 // Routes
-router.post('/', protect, authorize('Gérant'), checkCaisseOuverte, validateVente, venteController.effectuerVente); // Seul un gérant avec une caisse ouverte peut vendre
+router.post('/', protect, authorize('Gérant', 'Serveur'), checkCaisseOuverte, validateVente, venteController.effectuerVente); 
 router.get('/historique', protect, venteController.getHistorique);
 router.get('/logs', protect, authorize('Admin'), venteController.getLogs);
 
 router.post('/:id/cancel', protect, validateObjectId('id'), venteController.annulerVente);
+router.patch('/group/:orderGroupId/status', protect, authorize('Gérant', 'Serveur'), venteController.updateGroupStatus); 
+router.patch('/:id/status', protect, authorize('Gérant', 'Serveur'), validateObjectId('id'), venteController.updateStatus);
+
+// Route de configuration (Admin seulement)
+router.patch('/settings/tips', protect, authorize('Admin'), venteController.updateTipPercentage);
 
 module.exports = router;

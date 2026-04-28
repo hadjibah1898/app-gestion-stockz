@@ -9,6 +9,15 @@ const boutiqueSchema = new mongoose.Schema({
         enum: ['Centrale', 'Secondaire'],
         default: 'Secondaire'
     },
+    tipPercentage: { 
+        type: Number, 
+        default: 5,
+        min: 0 
+    },
+    tipsEnabled: {
+        type: Boolean,
+        default: true
+    },
     // Liste des gérants autorisés à travailler dans cette boutique
     vendeurs: {
         type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', index: false }],

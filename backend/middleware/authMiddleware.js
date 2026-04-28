@@ -21,10 +21,10 @@ exports.protect = async (req, res, next) => {
                 return res.status(401).json({ message: 'Utilisateur introuvable ou compte supprimé.', redirect: '/login' });
             }
             
-            // SÉCURITÉ CRITIQUE : Si c'est un gérant, il doit être rattaché à une boutique
-            if (req.user.role === 'Gérant' && !req.user.boutique) {
-                console.warn(`Gérant bloqué (ID: ${req.user.id}) : Pas de boutique assignée.`);
-                return res.status(403).json({ message: 'Accès refusé : Votre compte gérant n\'est pas rattaché à une boutique. Veuillez contacter l\'administrateur.', redirect: '/login' });
+            // SÉCURITÉ CRITIQUE : Un Gérant ou un Serveur doit être rattaché à une boutique
+            if (['Gérant', 'Serveur'].includes(req.user.role) && !req.user.boutique) {
+                console.warn(`${req.user.role} bloqué (ID: ${req.user.id}) : Pas de boutique assignée.`);
+                return res.status(403).json({ message: `Accès refusé : Votre compte ${req.user.role.toLowerCase()} n'est pas rattaché à une boutique.`, redirect: '/login' });
             }
             next();
         } catch (error) {

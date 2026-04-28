@@ -70,6 +70,11 @@ const articleSchema = new mongoose.Schema({
         type: String,
         trim: true,
         default: 'Divers'
+    },
+    seuilAlerte: {
+        type: Number,
+        default: 10,
+        min: 0
     }
 }, {
     timestamps: true

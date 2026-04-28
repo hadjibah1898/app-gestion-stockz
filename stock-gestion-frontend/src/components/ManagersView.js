@@ -172,13 +172,31 @@ const ManagersView = () => {
         {totalPages > 1 && (
           <div className="d-flex justify-content-center p-3 border-top">
             <Pagination className="mb-0">
-              <Pagination.Prev disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)} />
-              {[...Array(totalPages)].map((_, i) => (
-                <Pagination.Item key={i+1} active={i+1 === currentPage} onClick={() => setCurrentPage(i+1)}>
-                  {i+1}
-                </Pagination.Item>
-              ))}
-              <Pagination.Next disabled={currentPage === totalPages} onClick={() => setCurrentPage(currentPage + 1)} />
+              <Pagination.First onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
+              <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
+
+              {(() => {
+                const pages = [];
+                for (let i = 1; i <= totalPages; i++) {
+                  if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+                    pages.push(i);
+                  }
+                }
+                return pages.map((p, idx) => (
+                  <React.Fragment key={p}>
+                    {idx > 0 && pages[idx - 1] !== p - 1 && <Pagination.Ellipsis disabled />}
+                    <Pagination.Item 
+                      active={p === currentPage} 
+                      onClick={() => setCurrentPage(p)}
+                    >
+                      {p}
+                    </Pagination.Item>
+                  </React.Fragment>
+                ));
+              })()}
+
+              <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
+              <Pagination.Last onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
             </Pagination>
           </div>
         )}
