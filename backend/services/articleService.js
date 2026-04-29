@@ -4,6 +4,7 @@ const Mouvement = require('../models/Mouvement');
 const Notification = require('../models/Notification');
 const Boutique = require('../models/Boutique');
 const Fournisseur = require('../models/Fournisseur');
+const notificationService = require('./notificationService');
 const { logAction } = require('./auditLogService');
 
 /**
@@ -308,8 +309,9 @@ exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user, 
 
 /**
  * Confirme la réception physique des articles par le gérant de la boutique cible.
+ * Supporte désormais la réception partielle (LIVRAISON_PARTIELLE).
  */
-exports.confirmerReceptionTransfert = async (mouvementId, user) => {
+exports.confirmerReceptionTransfert = async (mouvementId, user, itemsRecus = null, commentaire = '') => {
     const mouvement = await Mouvement.findById(mouvementId).populate('boutiqueSource boutiqueDestination');
     
     if (!mouvement || mouvement.statutTransfert !== 'EXPEDIE') {
@@ -321,7 +323,21 @@ exports.confirmerReceptionTransfert = async (mouvementId, user) => {
         throw new Error("Vous n'êtes pas autorisé à réceptionner ce colis pour cette boutique.");
     }
 
+    let isPartial = false;
+
     for (const item of mouvement.articles) {
+        let qteRecue = item.quantite;
+
+        // Vérification d'une éventuelle réception partielle transmise par le frontend
+        // itemsRecus format attendu: [{ nomArticle: 'Nom', quantiteRecue: 8 }]
+        if (itemsRecus && Array.isArray(itemsRecus)) {
+            const recu = itemsRecus.find(r => r.nomArticle === item.nomArticle);
+            if (recu && parseInt(recu.quantiteRecue) < item.quantite) {
+                qteRecue = Math.max(0, parseInt(recu.quantiteRecue));
+                isPartial = true;
+            }
+        }
+
         // Chercher l'article correspondant dans la boutique de destination (par nom)
         let targetArticle = await Article.findOne({ 
             nom: item.nomArticle, 
@@ -329,26 +345,90 @@ exports.confirmerReceptionTransfert = async (mouvementId, user) => {
         });
 
         if (targetArticle) {
-            targetArticle.quantite += item.quantite;
+            targetArticle.quantite += qteRecue;
             await targetArticle.save();
         } else {
             // Si l'article n'existe pas encore dans cette boutique, on le crée en copiant les infos de la source
             const sourceArticle = await Article.findOne({ nom: item.nomArticle, boutique: mouvement.boutiqueSource._id });
+            if (!sourceArticle) throw new Error(`Article source "${item.nomArticle}" introuvable.`);
+
             const newArticleData = sourceArticle.toObject();
             delete newArticleData._id;
             newArticleData.boutique = mouvement.boutiqueDestination._id;
-            newArticleData.quantite = item.quantite;
+            newArticleData.quantite = qteRecue;
             await Article.create(newArticleData);
+        }
+
+        // RESTAURATION DU STOCK SOURCE SI PARTIEL (Le surplus retourne à la source)
+        if (qteRecue < item.quantite) {
+            const surplus = item.quantite - qteRecue;
+            let sourceArticle = await Article.findOne({ nom: item.nomArticle, boutique: mouvement.boutiqueSource._id });
+            if (sourceArticle) {
+                sourceArticle.quantite += surplus;
+                await sourceArticle.save();
+            }
         }
     }
 
-    mouvement.statutTransfert = 'RECU';
+    mouvement.statutTransfert = isPartial ? 'LIVRAISON_PARTIELLE' : 'RECU';
+    if (isPartial) {
+        const motif = commentaire ? ` - Motif: ${commentaire}` : "";
+        mouvement.details = (mouvement.details || "") + ` | Réception partielle validée par ${user.nom}${motif}`;
+    }
     await mouvement.save();
 
     // Envoyer une notification aux admins
     await notificationService.sendTransferReceivedAlert(mouvement, user);
 
-    return { success: true, message: `Réception validée. Le stock de ${mouvement.boutiqueDestination.nom} a été mis à jour.` };
+    const message = isPartial 
+        ? `Réception partielle validée. Le surplus a été retourné automatiquement au ${mouvement.boutiqueSource.nom}.`
+        : `Réception validée. Le stock de ${mouvement.boutiqueDestination.nom} a été mis à jour.`;
+
+    return { success: true, message };
+};
+
+/**
+ * Rejette la réception d'un transfert par le gérant de la boutique cible.
+ * Le stock est alors retourné à la boutique source (Dépôt Principal).
+ */
+exports.rejeterReceptionTransfert = async (mouvementId, user, commentaire = '') => {
+    const mouvement = await Mouvement.findById(mouvementId).populate('boutiqueSource boutiqueDestination');
+    
+    if (!mouvement) throw new Error("Bon de transfert introuvable.");
+
+    if (mouvement.statutTransfert !== 'EXPEDIE') {
+        throw new Error("Ce transfert ne peut plus être rejeté (déjà reçu ou déjà rejeté).");
+    }
+
+    // SÉCURITÉ : Seul un gérant de la boutique de destination (ou un admin) peut rejeter
+    const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
+    const destBoutiqueId = (mouvement.boutiqueDestination?._id || mouvement.boutiqueDestination || '').toString();
+
+    if (user.role !== 'Admin' && userBoutiqueId !== destBoutiqueId) {
+        throw new Error("Action refusée : Vous ne pouvez rejeter que les bons destinés à votre boutique.");
+    }
+
+    // Retour du stock à la boutique SOURCE (Dépôt Principal)
+    for (const item of mouvement.articles) {
+        let sourceArticle = await Article.findOne({ 
+            nom: item.nomArticle, 
+            boutique: mouvement.boutiqueSource._id 
+        });
+
+        if (sourceArticle) {
+            sourceArticle.quantite += item.quantite;
+            await sourceArticle.save();
+        } else {
+            throw new Error(`Échec du retour : L'article "${item.nomArticle}" n'existe plus dans le stock source.`);
+        }
+    }
+
+    mouvement.statutTransfert = 'REJETE';
+    const motif = commentaire ? ` - Motif: ${commentaire}` : "";
+    mouvement.details = (mouvement.details || "") + ` | Rejeté par ${user.nom}${motif}`;
+    await mouvement.save();
+
+    return { success: true, message: `Bon de transfert rejeté. Le stock a été retourné au ${mouvement.boutiqueSource.nom}.` };
 };
 
 /**

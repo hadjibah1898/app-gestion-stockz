@@ -34,7 +34,9 @@ const syncTipPercentage = async () => {
 };
 
 // Lancement de la synchronisation au démarrage du service
-syncTipPercentage();
+mongoose.connection.on('connected', () => {
+    syncTipPercentage();
+});
 
 exports.updateTipConfig = async (newPercentage) => {
     const val = newPercentage / 100;
@@ -418,10 +420,28 @@ exports.updateStatus = async (venteId, newStatus, user, req) => {
         article.quantite -= vente.quantite;
         await article.save();
 
-        // Enregistrement du mouvement de stock
+        // Enregistrement du mouvement de stock (DÉDUCTION)
         await Mouvement.create({
             type: 'Vente',
             boutiqueSource: vente.boutique || user.boutique, // Utilise la boutique du gérant si la vente n'en a pas
+            articles: [{ 
+                nomArticle: article.nom, 
+                quantite: vente.quantite, 
+                prixAchatUnitaire: article.prixAchat 
+            }],
+            operateur: user.id,
+            details: `Validation commande Table ${vente.numeroTable || 'N/A'}`
+        });
+    } else if (newStatus === 'annulee' && vente.statut !== 'commande' && !vente.isCancelled) {
+        // SÉCURITÉ : Si on annule une commande déjà en préparation/finalisée, on RESTAURE le stock
+        const article = await Article.findById(vente.article);
+        article.quantite += vente.quantite;
+        await article.save();
+
+        // Log du retour de stock
+        await Mouvement.create({
+            type: 'Annulation Vente',
+            boutiqueSource: vente.boutique,
             articles: [{ 
                 nomArticle: article.nom, 
                 quantite: vente.quantite, 

@@ -10,6 +10,7 @@
     "apexcharts": "^5.3.6",
     "axios": "^1.13.5",
     "bootstrap": "^5.3.8",
+    "build": "^0.1.4",
     "chart.js": "^4.5.1",
     "framer-motion": "^12.38.0",
     "html5-qrcode": "^2.3.8",
