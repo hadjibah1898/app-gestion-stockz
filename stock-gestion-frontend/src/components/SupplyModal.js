@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, Spinner, Badge } from 'react-bootstrap';
+import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, Spinner, Badge, Card } from 'react-bootstrap';
 import { fournisseurAPI, articleAPI } from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -8,7 +8,7 @@ import logo from '../assets/logo.png';
 const SupplyModal = ({ show, onHide, onSuccess }) => {
     const [fournisseurs, setFournisseurs] = useState([]);
     const [articles, setArticles] = useState([]);
-    const [supplyData, setSupplyData] = useState({ fournisseurId: '', items: [] });
+    const [supplyData, setSupplyData] = useState({ fournisseurId: '', items: [], imageJustificatif: '' });
     const [customCategories, setCustomCategories] = useState([]);
     const [newItem, setNewItem] = useState({ nom: '', quantite: 10, prixAchat: 0, prixVente: 0, image: '', code: '', datePeremption: '', categorie: 'Divers' });
     const [error, setError] = useState('');
@@ -18,7 +18,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
     useEffect(() => {
         if (show) {
             loadData();
-            setSupplyData({ fournisseurId: '', items: [] });
+            setSupplyData({ fournisseurId: '', items: [], imageJustificatif: '' });
             setNewItem({ nom: '', quantite: 10, prixAchat: 0, prixVente: 0, image: '', code: '', datePeremption: '', categorie: 'Divers' });
             setError('');
             setMovementData(null);
@@ -83,6 +83,17 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                     const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
                     setNewItem(prev => ({ ...prev, image: compressedBase64 }));
                 };
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleGlobalJustificatifChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                setSupplyData({ ...supplyData, imageJustificatif: event.target.result });
             };
             reader.readAsDataURL(file);
         }
@@ -252,7 +263,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
         setSubmitLoading(true);
         setError('');
         try {
-            const res = await fournisseurAPI.approvisionner({ fournisseurId: supplyData.fournisseurId, items: supplyData.items });
+            const res = await fournisseurAPI.approvisionner(supplyData);
             if (res.data.movement) { // Le backend renvoie le mouvement peuplé
                 setMovementData(res.data.movement);
             } else {
@@ -295,19 +306,65 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                     </Modal.Body>
                 ) : (
                     <Modal.Body>
-                        <Alert variant="info" className="small">Les articles ajoutés iront au Dépôt Principal.</Alert>
                         {error && <Alert variant="danger">{error}</Alert>}
 
-                        <Form.Group className="mb-4">
-                            <Form.Label>Fournisseur</Form.Label>
-                            <Form.Select 
-                                value={supplyData.fournisseurId}
-                                onChange={(e) => setSupplyData({ ...supplyData, fournisseurId: e.target.value, items: [] })}
-                            >
-                                <option value="">Choisir un fournisseur...</option>
-                                {fournisseurs.map(f => <option key={f._id} value={f._id}>{f.nom}</option>)}
-                            </Form.Select>
-                        </Form.Group>
+                        <Card className="border-0 bg-light rounded-4 mb-4 shadow-sm">
+                            <Card.Body>
+                                <Row className="g-3">
+                                    <Col md={4}>
+                                        <Form.Label className="fw-bold small text-uppercase text-muted">Fournisseur</Form.Label>
+                                        <Form.Select 
+                                            value={supplyData.fournisseurId}
+                                            onChange={(e) => setSupplyData({ ...supplyData, fournisseurId: e.target.value, items: [] })}
+                                            className="rounded-pill border-0 shadow-sm"
+                                        >
+                                            <option value="">Sélectionner...</option>
+                                            {fournisseurs.map(f => <option key={f._id} value={f._id}>{f.nom}</option>)}
+                                        </Form.Select>
+                                    </Col>
+                                    <Col md={4}>
+                                        <Form.Label className="fw-bold small text-uppercase text-muted">Réf. Bon de Livraison (BL)</Form.Label>
+                                        <Form.Control 
+                                            type="text" 
+                                            placeholder="Ex: BL-2024-001" 
+                                            value={supplyData.referenceFournisseur} 
+                                            onChange={e => setSupplyData({...supplyData, referenceFournisseur: e.target.value})}
+                                            className="rounded-pill border-0 shadow-sm"
+                                        />
+                                    </Col>
+                                    <Col md={4}>
+                                        <Form.Label className="fw-bold small text-uppercase text-muted">Date Réception</Form.Label>
+                                        <Form.Control 
+                                            type="date" 
+                                            value={supplyData.dateReception} 
+                                            onChange={e => setSupplyData({...supplyData, dateReception: e.target.value})}
+                                            className="rounded-pill border-0 shadow-sm"
+                                        />
+                                    </Col>
+                                </Row>
+                            </Card.Body>
+                        </Card>
+
+                        {supplyData.fournisseurId && (
+                            <Form.Group className="mb-4">
+                                <Form.Label className="fw-bold text-primary">
+                                    <iconify-icon icon="solar:camera-bold" className="me-1"></iconify-icon> Photo du Bon de Livraison (Justificatif)
+                                </Form.Label>
+                                <Form.Control 
+                                    type="file" 
+                                    accept="image/*" 
+                                    capture="environment" 
+                                    onChange={handleGlobalJustificatifChange} 
+                                    className="bg-light rounded-pill shadow-sm"
+                                />
+                                {supplyData.imageJustificatif && (
+                                    <div className="mt-2 text-center">
+                                        <img src={supplyData.imageJustificatif} alt="Justificatif" className="img-fluid rounded-4 shadow-sm border" style={{maxHeight: '120px'}} />
+                                        <Button variant="link" size="sm" className="text-danger d-block mx-auto mt-1" onClick={() => setSupplyData({...supplyData, imageJustificatif: ''})}>Retirer la photo</Button>
+                                    </div>
+                                )}
+                            </Form.Group>
+                        )}
 
                         {supplyData.fournisseurId && (
                             <div className="p-3 bg-light rounded mb-3">

@@ -1,5 +1,6 @@
 const Mouvement = require('../models/Mouvement');
 const articleService = require('../services/articleService');
+const Boutique = require('../models/Boutique');
 
 exports.getAllMouvements = async (req, res) => {
     try {
@@ -11,14 +12,26 @@ exports.getAllMouvements = async (req, res) => {
         const filter = {};
         if (type) filter.type = type;
 
-        // SÉCURITÉ : Si l'utilisateur est un gérant, il ne peut voir que les mouvements de sa boutique
-        if (req.user.role === 'Gérant') {
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Gérant' || req.user.role === 'Serveur') {
             // On récupère l'ID de la boutique de l'utilisateur connecté
             const userBoutiqueId = req.user.boutique?._id || req.user.boutique;
             filter.$or = [
                 { boutiqueSource: userBoutiqueId },
                 { boutiqueDestination: userBoutiqueId }
             ];
+        } else if (req.user.role === 'Admin') {
+            const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
+            const myIds = myBoutiques.map(b => b._id);
+            
+            if (boutique) {
+                if (!myIds.map(id => id.toString()).includes(boutique.toString())) {
+                    return res.status(403).json({ message: "Accès refusé : Cette boutique ne vous appartient pas." });
+                }
+                filter.$or = [{ boutiqueSource: boutique }, { boutiqueDestination: boutique }];
+            } else {
+                filter.$or = [{ boutiqueSource: { $in: myIds } }, { boutiqueDestination: { $in: myIds } }];
+            }
         } else if (boutique) {
             filter.$or = [
                 { boutiqueSource: boutique },
@@ -71,15 +84,14 @@ exports.getAllMouvements = async (req, res) => {
 
 exports.cancelMouvement = async (req, res) => {
     try {
-        const Mouvement = require('../models/Mouvement');
         const mvt = await Mouvement.findById(req.params.id);
         if (!mvt) return res.status(404).json({ message: "Mouvement introuvable." });
 
         let result;
         if (mvt.type === 'Transfert') {
-            result = await articleService.annulerTransfert(req.params.id, req.user.id);
+            result = await articleService.annulerTransfert(req.params.id, req.user);
         } else if (mvt.type === 'Approvisionnement') {
-            result = await articleService.annulerApprovisionnement(req.params.id, req.user.id);
+            result = await articleService.annulerApprovisionnement(req.params.id, req.user);
         } else {
             return res.status(400).json({ message: "Ce type de mouvement ne peut pas être annulé." });
         }

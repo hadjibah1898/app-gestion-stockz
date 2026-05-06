@@ -78,17 +78,7 @@ exports.getAllArticles = async (req, res) => {
             filter.order = order;
         }
 
-        // SÉCURITÉ : Gérant et Serveur ne voient que les articles de leur boutique
-        if (['Gérant', 'Serveur'].includes(req.user.role)) {
-            // S'il n'a pas de boutique assignée, il ne voit aucun article.
-            if (!req.user.boutique) {
-                return res.status(200).json(page ? { data: [], totalPages: 0 } : []);
-            }
-            // On force le filtre sur sa propre boutique, ignorant tout paramètre externe
-            filter.boutique = req.user.boutique;
-        }
-
-        const articles = await articleService.listerArticles(filter, parseInt(page), parseInt(limit));
+        const articles = await articleService.listerArticles(filter, parseInt(page), parseInt(limit), req.user);
         res.status(200).json(articles);
     } catch (error) {
         console.error("Erreur getAllArticles:", error);
@@ -106,7 +96,7 @@ exports.addArticle = async (req, res) => {
 exports.deleteArticle = async (req, res) => {
     try {
         const { data: articlesFound } = await articleService.listerArticles({ _id: req.params.id });
-        await articleService.supprimerArticle(req.params.id);
+        await articleService.supprimerArticle(req.params.id, req.user);
 
         await logAction({
             req,
@@ -131,7 +121,11 @@ exports.updateArticle = async (req, res) => {
 
         const articleModifie = await articleService.modifierArticle(articleId, articleData, req.user, req);
 
-        res.status(200).json(articleModifie);
+        // Ajout d'infos calculées pour le frontend
+        const marge = articleModifie.prixVente - articleModifie.prixAchat;
+        const margePourcent = articleModifie.prixVente > 0 ? (marge / articleModifie.prixVente) * 100 : 0;
+
+        res.status(200).json({ ...articleModifie.toObject(), marge, margePourcent });
     } catch (error) {
         console.error("❌ Erreur ArticleController (update):", error.message);
         if (error.message.includes("prix de vente") || error.message.includes("Données de mise à jour vides")) {
@@ -169,6 +163,38 @@ exports.transferArticles = async (req, res) => {
 };
 
 /**
+ * --- LOGIQUE DES AJUSTEMENTS (CORRECTIONS & ÉCARTS) ---
+ */
+
+exports.getAdjustments = async (req, res) => {
+    try {
+        const adjustments = await articleService.listerAjustements(req.query, req.user);
+        res.status(200).json(adjustments);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+exports.createAdjustment = async (req, res) => {
+    try {
+        const adjustment = await articleService.demanderAjustement(req.body, req.user);
+        res.status(201).json(adjustment);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+exports.validateAdjustment = async (req, res) => {
+    try {
+        const { decision, commentaire } = req.body;
+        const adjustment = await articleService.validerAjustement(req.params.id, decision, commentaire, req.user.id);
+        res.status(200).json(adjustment);
+    } catch (error) {
+        res.status(400).json({ message: error.message });
+    }
+};
+
+/**
  * @desc    Réapprovisionner une boutique secondaire depuis la boutique centrale
  * @route   POST /api/articles/restock
  * @access  Private/Admin
@@ -191,5 +217,23 @@ exports.restockFromCentral = async (req, res) => {
         res.status(200).json({ message: "Articles réapprovisionnés avec succès.", movement });
     } catch (error) {
         res.status(error.statusCode || 500).json({ message: error.message });
+    }
+};
+
+exports.cancelTransfer = async (req, res) => {
+    try {
+        const result = await articleService.annulerTransfert(req.params.id, req.user);
+        res.status(200).json({ message: "Transfert annulé.", result });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.remindManager = async (req, res) => {
+    try {
+        const result = await articleService.relancerGerantTransfert(req.params.id, req.user);
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
     }
 };

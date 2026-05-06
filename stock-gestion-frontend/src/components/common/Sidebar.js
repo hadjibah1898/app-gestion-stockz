@@ -1,6 +1,6 @@
 // src/components/common/Sidebar.js
 import React, { useState, useEffect } from 'react';
-import { NavLink, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Nav, NavDropdown, Badge, Button } from 'react-bootstrap'; // Import Bootstrap Nav components
 import { authAPI, venteAPI } from '../../services/api';
 import { useNotifications } from '../../NotificationContext'; // Import notifications context
@@ -40,6 +40,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
     }, [userRole]);
 
     const navigate = useNavigate();
+    const location = useLocation();
 
     // Fonction pour fermer le sidebar après un clic sur mobile uniquement
     const handleNavLinkClick = () => {
@@ -92,7 +93,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     <iconify-icon icon="solar:widget-5-bold-duotone" className="me-2 text-primary" style={{ fontSize: '28px' }}></iconify-icon>
                     <div>
                         <h3 className="m-0 text-primary fw-bold lh-1" style={{ fontSize: '1.2rem' }}>
-                            {userRole === 'Admin' ? 'Admin' : (userRole === 'Serveur' ? 'Serveur' : 'Gérant')}
+                            {userRole === 'SuperAdmin' ? 'SuperAdmin' : (userRole === 'Admin' ? 'Admin' : (userRole === 'Serveur' ? 'Serveur' : 'Gérant'))}
                         </h3>
                         {userRole === 'Gérant' && boutiqueName && (
                             <small className="text-muted fw-bold d-block mt-1" style={{ fontSize: '0.85rem' }}>
@@ -102,10 +103,45 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     </div>
                 </div>
             </div>
+{/* Section pour le SuperAdmin uniquement */}
+{userRole === 'SuperAdmin' && (
+    <div className="nav-section mt-3">
+        <small className="text-muted text-uppercase ps-3 fw-bold" style={{ fontSize: '0.65rem' }}>
+            Administration Globale
+        </small>
+        <Nav.Link 
+            as={Link} 
+            to="/admin/audit" 
+            className={`d-flex align-items-center gap-2 px-3 py-2 mt-1 rounded-3 ${location.pathname === '/admin/audit' ? 'active bg-primary text-white' : 'text-dark'}`}
+            onClick={handleNavLinkClick}
+        >
+            <iconify-icon icon="solar:clipboard-list-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
+            <span>Journal d'Audit Global</span>
+        </Nav.Link>
+        <Nav.Link 
+            as={Link} 
+            to="/admin/shops" 
+            className={`d-flex align-items-center gap-2 px-3 py-2 rounded-3 ${location.pathname === '/admin/shops' ? 'active bg-primary text-white' : 'text-dark'}`}
+            onClick={handleNavLinkClick}
+        >
+            <iconify-icon icon="solar:globus-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
+            <span>Vue Multi-Entreprises</span>
+        </Nav.Link>
+        <Nav.Link 
+            as={Link} 
+            to="/admin/users" 
+            className={`d-flex align-items-center gap-2 px-3 py-2 rounded-3 ${location.pathname === '/admin/users' ? 'active bg-primary text-white' : 'text-dark'}`}
+            onClick={handleNavLinkClick}
+        >
+            <iconify-icon icon="solar:users-group-two-rounded-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
+            <span>Gestion Utilisateurs</span>
+        </Nav.Link>
+    </div>
+)}
 
             {/* Navigation Section */}
             <nav className="sidebar-nav scroll-sidebar">
-                {userRole === 'Admin' ? (
+                {(userRole === 'Admin' || userRole === 'SuperAdmin') ? (
                     <ul id="sidebarnav">
                         <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
                         <li className="sidebar-item">

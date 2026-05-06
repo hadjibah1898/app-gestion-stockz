@@ -11,13 +11,13 @@ exports.createBoutique = async (req, res) => {
     try {
         // 1. Unicité de la Boutique Centrale
         if (req.body.type === 'Centrale') {
-            const centraleExists = await Boutique.findOne({ type: 'Centrale' });
+            const centraleExists = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
             if (centraleExists) {
                 return res.status(400).json({ message: "Un Dépôt Principal existe déjà." });
             }
         }
 
-        const { nom, adresse, active, type, vendeurs, latitude, longitude, tipPercentage, tipsEnabled } = req.body;
+        const { nom, adresse, active, type, vendeurs, latitude, longitude, tipPercentage, tipsEnabled, orangeMoneyQrCode, orangeMoneyAccount, mobicashQrCode, mobicashAccount, paycardQrCode, paycardAccount } = req.body;
         
         // 2. Préparation et filtrage des gérants
         let managersToCheck = Array.isArray(vendeurs) ? vendeurs : (vendeurs ? [vendeurs] : []);
@@ -25,7 +25,10 @@ exports.createBoutique = async (req, res) => {
         managersToCheck = managersToCheck.filter(id => id && mongoose.Types.ObjectId.isValid(id));
 
         // Vérification que les utilisateurs sont bien des gérants
-        const validManagers = await User.find({ _id: { $in: managersToCheck }, role: 'Gérant' });
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut assigner que les gérants qu'il a créés
+        const managerFilter = req.user.role === 'Admin' ? { createur: req.user.id } : {};
+        const validManagers = await User.find({ _id: { $in: managersToCheck }, role: 'Gérant', ...managerFilter });
+
         if (validManagers.length !== managersToCheck.length) {
             return res.status(400).json({ message: "Certains utilisateurs sélectionnés ne sont pas des gérants valides." });
         }
@@ -50,7 +53,13 @@ exports.createBoutique = async (req, res) => {
             tipsEnabled: tipsEnabled !== undefined ? tipsEnabled : true,
             latitude: (latitude !== undefined && latitude !== "") ? Number(latitude) : 9.6412,
             longitude: (longitude !== undefined && longitude !== "") ? Number(longitude) : -13.5784,
-            createur: req.user.id
+            createur: req.user.id,
+            orangeMoneyQrCode: orangeMoneyQrCode || '',
+            orangeMoneyAccount: orangeMoneyAccount || '',
+            mobicashQrCode: mobicashQrCode || '',
+            mobicashAccount: mobicashAccount || '',
+            paycardQrCode: paycardQrCode || '',
+            paycardAccount: paycardAccount || ''
         };
 
         const boutique = await Boutique.create(boutiqueData);
@@ -90,10 +99,15 @@ exports.updateBoutique = async (req, res) => {
         
         if (!boutiqueToUpdate) return res.status(404).json({ message: "Boutique introuvable." });
 
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier que ses propres boutiques
+        if (req.user.role === 'Admin' && boutiqueToUpdate.createur.toString() !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Accès refusé : Vous ne pouvez modifier que vos propres boutiques." });
+        }
+
         // 1. Validation du type (Centrale)
         if (req.body.type) {
             if (req.body.type === 'Centrale' && boutiqueToUpdate.type !== 'Centrale') {
-                const centraleExists = await Boutique.findOne({ type: 'Centrale' });
+                const centraleExists = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
                 if (centraleExists) return res.status(400).json({ message: "Un Dépôt Principal existe déjà." });
             }
             if (req.body.type !== 'Centrale' && boutiqueToUpdate.type === 'Centrale') {
@@ -104,6 +118,13 @@ exports.updateBoutique = async (req, res) => {
         // 2. Gestion des gérants (Tableau)
         let newManagers = Array.isArray(req.body.vendeurs) ? req.body.vendeurs : (req.body.vendeurs ? [req.body.vendeurs] : []);
         newManagers = newManagers.filter(id => id && id.length === 24);
+
+        // SÉCURITÉ MULTI-TENANT : Vérifier que les nouveaux gérants appartiennent à l'Admin actuel
+        const managerFilter = req.user.role === 'Admin' ? { createur: req.user.id } : {};
+        const validNewManagers = await User.find({ _id: { $in: newManagers }, role: 'Gérant', ...managerFilter });
+        if (validNewManagers.length !== newManagers.length) {
+            return res.status(400).json({ message: "Certains gérants sélectionnés n'existent pas ou ne vous appartiennent pas." });
+        }
 
         // 3. CONTRAINTE : Un gérant ne gère qu'une seule boutique
         // On vérifie si les gérants choisis sont déjà dans une AUTRE boutique
@@ -144,7 +165,7 @@ exports.updateBoutique = async (req, res) => {
             }
         }
 
-        const { nom, adresse, active, type, latitude, longitude, tipPercentage, tipsEnabled } = req.body;
+        const { nom, adresse, active, type, latitude, longitude, tipPercentage, tipsEnabled, orangeMoneyQrCode, orangeMoneyAccount, mobicashQrCode, mobicashAccount, paycardQrCode, paycardAccount } = req.body;
 
         const updateObject = {
             $set: {
@@ -157,7 +178,13 @@ exports.updateBoutique = async (req, res) => {
                 vendeurs: newManagers,
                 latitude: (latitude !== "" && !isNaN(Number(latitude))) ? Number(latitude) : boutiqueToUpdate.latitude,
                 longitude: (longitude !== "" && !isNaN(Number(longitude))) ? Number(longitude) : boutiqueToUpdate.longitude,
-                dernierModificateur: req.user.id
+                dernierModificateur: req.user.id,
+                orangeMoneyQrCode: orangeMoneyQrCode !== undefined ? orangeMoneyQrCode : boutiqueToUpdate.orangeMoneyQrCode,
+                orangeMoneyAccount: orangeMoneyAccount !== undefined ? orangeMoneyAccount : boutiqueToUpdate.orangeMoneyAccount,
+                mobicashQrCode: mobicashQrCode !== undefined ? mobicashQrCode : boutiqueToUpdate.mobicashQrCode,
+                mobicashAccount: mobicashAccount !== undefined ? mobicashAccount : boutiqueToUpdate.mobicashAccount,
+                paycardQrCode: paycardQrCode !== undefined ? paycardQrCode : boutiqueToUpdate.paycardQrCode,
+                paycardAccount: paycardAccount !== undefined ? paycardAccount : boutiqueToUpdate.paycardAccount,
             },
             $unset: { vendeur: "" } // Nettoyage de l'ancien champ singulier
         };
@@ -182,7 +209,22 @@ exports.updateBoutique = async (req, res) => {
  */
 exports.getAllBoutiques = async (req, res) => {
     try {
+        let filterMatch = {};
+
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            filterMatch.createur = new mongoose.Types.ObjectId(req.user.id);
+        } else if (req.user.role === 'Serveur' || req.user.role === 'Gérant') {
+            // Les gérants/serveurs ne voient que leur propre boutique
+            if (req.user.boutique) {
+                filterMatch._id = new mongoose.Types.ObjectId(req.user.boutique.toString());
+            } else {
+                return res.status(200).json([]); // Aucune boutique rattachée
+            }
+        }
+        
         const boutiques = await Boutique.aggregate([
+            { $match: filterMatch },
             { $sort: { type: 1, nom: 1 } },
             {
                 $lookup: {
@@ -278,6 +320,11 @@ exports.deleteBoutique = async (req, res) => {
     try {
         const boutiqueToDelete = await Boutique.findById(req.params.id).lean();
         if (!boutiqueToDelete) return res.status(404).json({ message: "Boutique introuvable." });
+
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut supprimer que ses propres boutiques
+        if (req.user.role === 'Admin' && boutiqueToDelete.createur.toString() !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Accès refusé : Vous ne pouvez supprimer que vos propres boutiques." });
+        }
         if (boutiqueToDelete.type === 'Centrale') return res.status(400).json({ message: "Action interdite sur le Dépôt Principal." });
 
         const articlesCount = await Article.countDocuments({ boutique: req.params.id });

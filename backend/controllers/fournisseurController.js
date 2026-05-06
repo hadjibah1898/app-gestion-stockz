@@ -8,7 +8,10 @@ const { logAction } = require('../services/auditLogService');
 
 exports.createFournisseur = async (req, res) => {
     try {
-        const fournisseur = await Fournisseur.create(req.body);
+        const fournisseur = await Fournisseur.create({
+            ...req.body,
+            createur: req.user.id
+        });
         res.status(201).json(fournisseur);
     } catch (error) {
         res.status(400).json({ message: "Erreur création fournisseur", error: error.message });
@@ -21,6 +24,11 @@ exports.getAllFournisseurs = async (req, res) => {
         const limit = parseInt(req.query.limit) || 10;
         const { search } = req.query;
         const query = {};
+
+        // SÉCURITÉ MULTI-TENANT : L'Admin ne voit que ses fournisseurs, le SuperAdmin voit tout
+        if (req.user.role === 'Admin') {
+            query.createur = req.user.id;
+        }
 
         if (search) {
             query.nom = { $regex: search, $options: 'i' };
@@ -48,6 +56,12 @@ exports.getAllFournisseurs = async (req, res) => {
 
 exports.updateFournisseur = async (req, res) => {
     try {
+        const fournisseurCheck = await Fournisseur.findById(req.params.id);
+        if (!fournisseurCheck) return res.status(404).json({ message: "Fournisseur introuvable" });
+
+        if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
+        }
         const fournisseur = await Fournisseur.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.status(200).json(fournisseur);
     } catch (error) {
@@ -60,6 +74,13 @@ exports.deleteFournisseur = async (req, res) => {
         const fournisseurId = req.params.id;
 
         // Vérifier si des articles sont liés à ce fournisseur
+        const fournisseurCheck = await Fournisseur.findById(fournisseurId);
+        if (!fournisseurCheck) return res.status(404).json({ message: "Fournisseur introuvable" });
+
+        if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
+        }
+
         const articleCount = await Article.countDocuments({ fournisseur: fournisseurId });
         if (articleCount > 0) {
             return res.status(400).json({ message: `Impossible de supprimer ce fournisseur, il est lié à ${articleCount} article(s). Veuillez d'abord réassigner ces articles à un autre fournisseur.` });
@@ -76,7 +97,7 @@ exports.deleteFournisseur = async (req, res) => {
 
 exports.approvisionnerCentrale = async (req, res) => {
     try {
-        const { fournisseurId, items } = req.body; // items = [{ nom, quantite, prixAchat, prixVente }]
+        const { fournisseurId, items, imageJustificatif, referenceFournisseur, dateReception } = req.body; 
 
         const fournisseur = await Fournisseur.findById(fournisseurId);
         if (!fournisseur) {
@@ -88,7 +109,8 @@ exports.approvisionnerCentrale = async (req, res) => {
         }
 
         // 1. Trouver la Boutique Centrale
-        const depotPrincipal = await Boutique.findOne({ type: 'Centrale' });
+        // SÉCURITÉ : On cherche la centrale de l'administrateur connecté uniquement
+        const depotPrincipal = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
         if (!depotPrincipal) {
             return res.status(404).json({ message: "Aucun Dépôt Principal n'est configuré. Impossible d'approvisionner." });
         }
@@ -167,6 +189,8 @@ exports.approvisionnerCentrale = async (req, res) => {
             type: 'Approvisionnement',
             fournisseur: fournisseur._id,
             boutiqueDestination: depotPrincipal._id,
+            imageJustificatif: imageJustificatif,
+            nomTransporteur: referenceFournisseur, // On utilise ce champ ou un nouveau pour le BL
             articles: items.map(i => ({ 
                 nomArticle: i.nom, 
                 quantite: i.quantite, 
@@ -174,7 +198,7 @@ exports.approvisionnerCentrale = async (req, res) => {
                 prixVenteUnitaire: i.prixVente || (i.prixAchat * 1.2)
             })),
             operateur: req.user.id,
-            details: `Depuis fournisseur ${fournisseur.nom}`
+            details: `Réception BL N°${referenceFournisseur} du ${new Date(dateReception).toLocaleDateString()}`
         });
 
         const populatedMovement = await Mouvement.findById(movement._id).populate('fournisseur boutiqueDestination operateur');

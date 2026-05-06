@@ -9,6 +9,11 @@ const validateObjectId = require('../middleware/validateObjectId');
 // Route pour qu'un gérant demande une remise (notification à l'admin)
 router.post('/:id/demander-remise', protect, authorize('Gérant'), validateObjectId('id'), articleController.demanderRemise);
 
+// Routes des Ajustements (Pertes/Casses) - Doivent être placées AVANT les routes avec :id générique
+router.get('/adjustments', protect, articleController.getAdjustments);
+router.post('/adjustments', protect, authorize('Gérant', 'Admin'), articleController.createAdjustment);
+router.put('/adjustments/:id/validate', protect, authorize('Admin'), validateObjectId('id'), articleController.validateAdjustment);
+
 // Tout le monde peut voir les articles, mais...
 router.get('/', protect, articleController.getAllArticles);
 

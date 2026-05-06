@@ -18,6 +18,7 @@ const clientRoutes = require('./routes/clientRoutes');
 const caisseRoutes = require('./routes/caisseRoutes');
 const auditRoutes = require('./routes/auditRoutes'); 
 
+
 const app = express();
 app.disable('x-powered-by'); // Supprime l'en-tête X-Powered-By pour cacher que le serveur utilise Express
 

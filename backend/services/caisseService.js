@@ -3,6 +3,7 @@ const OuvertureCaisse = require('../models/OuvertureCaisse');
 const Depense = require('../models/Depense');
 const RapportCaisse = require('../models/RapportCaisse');
 const CaisseAdmin = require('../models/CaisseAdmin');
+const Boutique = require('../models/Boutique');
 const Vente = require('../models/Vente');
 const DebtPayment = require('../models/DebtPayment');
 const DebtMovement = require('../models/DebtMovement');
@@ -306,15 +307,33 @@ exports.getStatutCaisse = async (gerantId) => {
     };
 };
 
-exports.listerDepenses = async (queryFilters) => {
+exports.listerDepenses = async (queryFilters, user = null) => {
     try {
         const page = parseInt(queryFilters.page) || 1;
         const limit = parseInt(queryFilters.limit) || 10;
 
         const filters = {};
+
+        // SÉCURITÉ MULTI-TENANT
+        if (user && user.role === 'Admin') {
+            const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
+            const myIds = myBoutiques.map(b => b._id.toString());
+            
+            if (queryFilters.boutique) {
+                if (!myIds.includes(queryFilters.boutique.toString())) {
+                    filters.boutique = { $in: [] }; 
+                } else {
+                    filters.boutique = queryFilters.boutique;
+                }
+            } else {
+                filters.boutique = { $in: myBoutiques.map(b => b._id) };
+            }
+        } else if (queryFilters.boutique) {
+            filters.boutique = queryFilters.boutique;
+        }
+
         // Nettoyage des filtres pour éviter les chaînes vides
         if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
-        if (queryFilters.boutique) filters.boutique = queryFilters.boutique;
 
         const totalCount = await Depense.countDocuments(filters);
         const data = await Depense.find(filters)
@@ -330,14 +349,31 @@ exports.listerDepenses = async (queryFilters) => {
     }
 };
 
-exports.listerRapports = async (queryFilters) => {
+exports.listerRapports = async (queryFilters, user = null) => {
     const page = parseInt(queryFilters.page) || 1;
     const limit = parseInt(queryFilters.limit) || 10;
     const filters = {};
 
+    // SÉCURITÉ MULTI-TENANT
+    if (user && user.role === 'Admin') {
+        const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
+        const myIds = myBoutiques.map(b => b._id.toString());
+        
+        if (queryFilters.boutique) {
+            if (!myIds.includes(queryFilters.boutique.toString())) {
+                filters.boutique = { $in: [] }; 
+            } else {
+                filters.boutique = queryFilters.boutique;
+            }
+        } else {
+            filters.boutique = { $in: myBoutiques.map(b => b._id) };
+        }
+    } else if (queryFilters.boutique) {
+        filters.boutique = queryFilters.boutique;
+    }
+
     // On ne construit le filtre que pour les valeurs présentes et non vides
     if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
-    if (queryFilters.boutique) filters.boutique = queryFilters.boutique;
 
     if (queryFilters.startDate || queryFilters.endDate) {
         const dateFilter = {};

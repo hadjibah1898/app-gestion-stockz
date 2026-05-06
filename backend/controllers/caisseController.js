@@ -108,8 +108,8 @@ exports.creerDepense = async (req, res) => {
 
 exports.listerMesDepenses = async (req, res) => {
     try {
-        // Fusion des filtres de gérant avec les paramètres de pagination
-        const depenses = await caisseService.listerDepenses({ ...req.query, gerant: req.user.id });
+        // Passage de l'utilisateur pour l'isolation gérant
+        const depenses = await caisseService.listerDepenses({ ...req.query, gerant: req.user.id }, req.user);
         res.status(200).json(depenses);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -144,7 +144,7 @@ exports.corrigerRapport = async (req, res) => {
 
 exports.listerRapports = async (req, res) => {
     try {
-        const rapports = await caisseService.listerRapports(req.query);
+        const rapports = await caisseService.listerRapports(req.query, req.user);
         res.status(200).json(rapports);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -153,7 +153,7 @@ exports.listerRapports = async (req, res) => {
 
 exports.listerMesRapports = async (req, res) => {
     try {
-        const rapports = await caisseService.listerRapports({ gerant: req.user.id });
+        const rapports = await caisseService.listerRapports({ gerant: req.user.id }, req.user);
         res.status(200).json(rapports);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -166,6 +166,7 @@ exports.validerRapport = async (req, res) => {
         const rapport = await caisseService.validerRapport({ 
             rapportId: req.params.id, 
             adminId: req.user.id, 
+            role: req.user.role,
             commentairesAdmin 
         });
 

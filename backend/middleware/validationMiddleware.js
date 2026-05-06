@@ -209,8 +209,14 @@ const validateArticleBusinessLogic = async (req, res, next) => {
 const boutiqueSchema = {
     nom: { type: 'string', required: true, min: 3, max: 50 },
     adresse: { type: 'string', required: true, min: 5, max: 100 },
-    telephone: { type: 'string', min: 8, max: 20 },
-    type: { type: 'string', required: true, enum: ['Centrale', 'Secondaire'] }
+    type: { type: 'string', required: true, enum: ['Centrale', 'Secondaire'] },
+    // Nouveaux champs pour les paiements numériques
+    orangeMoneyQrCode: { type: 'string' },
+    orangeMoneyAccount: { type: 'string', max: 50 },
+    mobicashQrCode: { type: 'string' },
+    mobicashAccount: { type: 'string', max: 50 },
+    paycardQrCode: { type: 'string' },
+    paycardAccount: { type: 'string', max: 50 }
 };
 
 const clientSchema = {

@@ -23,10 +23,11 @@ const ThermalTicket = React.forwardRef(({ ticketData }, ref) => {
         items = [],
         subTotal = 0,
         discount = 0,
+        pourboire = 0,
         totalNet = 0,
         amountPaid = 0,
         change = 0,
-    } = ticketData;
+    } = { ...ticketData, discount: ticketData.discount || ticketData.itemLevelDiscount || 0 };
 
     return (
         <div ref={ref} className="bg-white text-black font-mono" style={{ width: '302px', padding: '10px' }}>
@@ -87,6 +88,7 @@ const ThermalTicket = React.forwardRef(({ ticketData }, ref) => {
             <div className="text-xs">
                 <div className="flex justify-between"><span>Sous-total:</span><span>{formatCurrency(subTotal)}</span></div>
                 <div className="flex justify-between"><span>Remise:</span><span>- {formatCurrency(discount)}</span></div>
+                {pourboire > 0 && <div className="flex justify-between"><span>Pourboire Service (Service inclus):</span><span>+ {formatCurrency(pourboire)}</span></div>}
                 <div className="flex justify-between font-bold text-sm my-1"><span>TOTAL NET:</span><span>{formatCurrency(totalNet)}</span></div>
                 <div className="flex justify-between"><span>Montant Payé:</span><span>{formatCurrency(amountPaid)}</span></div>
                 <div className="flex justify-between"><span>Reste à payer:</span><span>{formatCurrency(change)}</span></div>

@@ -24,19 +24,23 @@ const transporter = nodemailer.createTransport({
  */
 exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
+        // On cible uniquement l'Admin qui a créé la boutique de l'article
+        const adminId = article.boutique?.createur || article.boutique;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
 
-        const adminEmails = admins.map(u => u.email).filter(Boolean);
+        const adminEmails = [admin.email].filter(Boolean);
         const message = `Le gérant ${gerant.nom} demande une remise de ${remise}% sur l'article "${article.nom}"${clientNom ? ` pour le client "${clientNom}"` : ''}.`;
         const link = `/admin/articles?openEdit=${article._id}`;
+
+        const admins = [admin]; // Définit l'array pour le .map ci-dessous
 
         // 1. Envoi par email (si des emails sont configurés)
         if (adminEmails.length > 0) {
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: adminEmails,
-                subject: `🔔 Demande de remise à valider : ${article.nom}`,
+            subject: `🔔 Demande de remise à valider : ${article.nom}`,
             html: `
                 <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
                     <h2 style="color: #0d6efd; margin-top: 0;">Demande de remise à valider</h2>
@@ -75,11 +79,14 @@ exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) =
  */
 exports.sendLowStockAlert = async (article) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
+        const adminId = article.boutique?.createur || article.boutique;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
 
-        const adminEmails = admins.map(a => a.email);
+        const adminEmails = [admin.email].filter(Boolean);
         const message = `Le stock de l'article "${article.nom}" est faible (${article.quantite} restants) dans la boutique "${article.boutique?.nom || 'N/A'}".`;
+
+        const admins = [admin];
 
         const mailOptions = {
             from: process.env.EMAIL_USER,
@@ -131,11 +138,14 @@ exports.sendLowStockAlert = async (article) => {
  */
 exports.sendDebtGrantedAlert = async (gerant, client, montantDette, totalVente) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
+        const adminId = client.createur;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
 
-        const adminEmails = admins.map(u => u.email);
+        const adminEmails = [admin.email].filter(Boolean);
         const message = `Le gérant ${gerant.nom} a accordé une dette de ${montantDette.toLocaleString('fr-FR')} GNF au client ${client.nom} sur une vente de ${totalVente.toLocaleString('fr-FR')} GNF.`;
+
+        const admins = [admin];
 
         // 1. Email notification
         await transporter.sendMail({
@@ -183,13 +193,16 @@ exports.sendDebtGrantedAlert = async (gerant, client, montantDette, totalVente) 
  */
 exports.sendDiscountGrantedAlert = async (gerant, remises, totalVente, clientNom) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
+        const adminId = gerant.createur;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
 
-        const adminEmails = admins.map(u => u.email);
+        const adminEmails = [admin.email].filter(Boolean);
         const remisesText = [...new Set(remises)].join(', ');
         const clientText = clientNom ? ` pour le client ${clientNom}` : '';
         const message = `Le gérant ${gerant.nom} a appliqué une remise de ${remisesText} sur une vente de ${totalVente.toLocaleString('fr-FR')} GNF${clientText}.`;
+
+        const admins = [admin];
 
         // 1. Email notification
         await transporter.sendMail({
@@ -223,17 +236,20 @@ exports.sendDiscountGrantedAlert = async (gerant, remises, totalVente, clientNom
  */
 exports.sendNewReportAlert = async (rapport) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
-
         // On s'assure d'avoir les infos peuplées pour le message
         const rapportFull = await RapportCaisse.findById(rapport._id).populate('gerant', 'nom').populate('boutique', 'nom');
         if (!rapportFull) return;
 
-        const adminEmails = admins.map(u => u.email);
+        const adminId = rapportFull.boutique?.createur;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
+
+        const adminEmails = [admin.email].filter(Boolean);
         // MODIFICATION: Message plus détaillé pour l'interaction
         const hasEcart = rapportFull.ecart !== 0;
         const message = `Rapport de ${rapportFull.gerant.nom} (${rapportFull.boutique.nom}). ${hasEcart ? `Écart de ${rapportFull.ecart.toLocaleString('fr-FR')} GNF. Justification: "${rapportFull.commentairesGérant}"` : 'Aucun écart signalé.'}`;
+
+        const admins = [admin];
 
         // 1. Email notification
         await transporter.sendMail({
@@ -518,14 +534,18 @@ exports.sendDebtPaymentReceiptEmail = async (payment, client) => {
  */
 exports.sendTransferReceivedAlert = async (mouvement, gerant) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
+        // On notifie l'Admin propriétaire de la boutique source (celui qui a expédié)
+        const adminId = mouvement.boutiqueSource?.createur;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
 
-        const adminEmails = admins.map(u => u.email).filter(Boolean);
+        const adminEmails = [admin.email].filter(Boolean);
 
         // Assurez-vous que les champs sont peuplés pour le message
         const sourceNom = mouvement.boutiqueSource?.nom || 'Dépôt Principal';
         const destNom = mouvement.boutiqueDestination?.nom || 'Boutique Cible';
+
+        const admins = [admin];
 
         const message = `🚚 Réception confirmée : Le gérant ${gerant.nom} a validé la réception du transfert #${mouvement._id.toString().slice(-6).toUpperCase()} de ${sourceNom} vers ${destNom}.`;
         const link = `/admin/mouvements?filter=${mouvement._id}`; // Lien vers le mouvement spécifique
@@ -559,6 +579,60 @@ exports.sendTransferReceivedAlert = async (mouvement, gerant) => {
 
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi de l'alerte de réception de transfert:", error);
+    }
+};
+
+/**
+ * Alerte l'admin d'une demande d'ajustement de stock (perte/casse)
+ */
+exports.sendAjustementRequestAlert = async (ajst, article, gerant) => {
+    try {
+        const adminId = article.boutique?.createur || article.boutique;
+        const admin = await User.findById(adminId);
+        if (!admin) return;
+
+        const message = `⚠️ Écart déclaré : ${gerant.nom} a signalé une ${ajst.raison} (${ajst.quantite} unités) pour "${article.nom}".`;
+        const link = '/admin/articles?tab=adjustments';
+
+        // Notification in-app
+        await Notification.create({
+            recipient: admin._id,
+            message: message,
+            type: 'warning',
+            link: link
+        });
+
+        // Email
+        if (admin.email) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: admin.email,
+                subject: `⚠️ Perte/Casse à valider : ${article.nom}`,
+                html: `<p>${message}</p><p><strong>Justification :</strong> ${ajst.justification}</p>`
+            });
+        }
+    } catch (error) {
+        console.error("Erreur notification ajustement:", error);
+    }
+};
+
+/**
+ * Notifie le gérant du statut final de sa demande d'ajustement
+ */
+exports.sendAjustementStatusAlert = async (ajst) => {
+    try {
+        const message = ajst.statut === 'VALIDE' 
+            ? `✅ Votre demande d'ajustement pour "${ajst.article.nom}" a été VALIDÉE.` 
+            : `❌ Votre demande d'ajustement pour "${ajst.article.nom}" a été REJETÉE.`;
+        
+        await Notification.create({
+            recipient: ajst.gerant,
+            message: message + (ajst.commentaireAdmin ? ` Motif : ${ajst.commentaireAdmin}` : ""),
+            type: ajst.statut === 'VALIDE' ? 'success' : 'error',
+            link: '/gerant/articles?tab=adjustments'
+        });
+    } catch (error) {
+        console.error("Erreur notification statut ajustement:", error);
     }
 };
 

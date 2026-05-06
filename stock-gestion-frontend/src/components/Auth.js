@@ -38,8 +38,8 @@ const Auth = ({ onLogin }) => {
 
     try {
       const response = await authAPI.login(formData.email, formData.password);
-      const { token, role, nom, boutique, mustChangePassword } = response.data;
-      onLogin(token, role, nom, boutique, mustChangePassword);
+      const { token, id, role, nom, boutique, mustChangePassword } = response.data;
+      onLogin(token, id, role, nom, boutique, mustChangePassword);
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur de connexion');
     } finally {

@@ -127,7 +127,14 @@ DebtPayment.payDette = async (req, res) => {
  */
 DebtPayment.getAllClients = async (req, res) => {
     try {
-        const query = req.user.role === 'Admin' ? {} : { boutique: req.user.boutique };
+        let query = {};
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            query.createur = req.user.id;
+        } else if (req.user.role !== 'SuperAdmin') {
+            query.boutique = req.user.boutique;
+        }
+
         const clients = await Client.find(query)
             .populate('createur', 'nom')
             .sort({ nom: 1 });
@@ -160,14 +167,14 @@ DebtPayment.createClient = async (req, res) => {
  */
 DebtPayment.getDebts = async (req, res) => {
     try {
-        // Note: Cette fonction récupère les clients qui ont une 'dette' (créance) supérieure à 0.
-        // Si les nouvelles dettes accordées n'apparaissent pas ici, assurez-vous que:
-        // 1. Lors de l'octroi d'une nouvelle dette (par exemple, lors d'une vente à crédit), le champ 'dette'
-        //    sur le modèle 'Client' est correctement incrémenté.
-        // 2. Un 'DebtMovement' de type 'CREATION' est enregistré pour la traçabilité.
-        // Cette logique réside généralement dans le processus de création de 'Vente' (par exemple, dans VenteService ou VenteController).
         const query = { dette: { $gt: 0 } };
-        if (req.user.role !== 'Admin') query.boutique = req.user.boutique;
+
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            query.createur = req.user.id;
+        } else if (req.user.role !== 'SuperAdmin') {
+            query.boutique = req.user.boutique;
+        }
 
         const debts = await Client.find(query).populate('boutique', 'nom');
         res.status(200).json(debts);
@@ -181,7 +188,14 @@ DebtPayment.getDebts = async (req, res) => {
  */
 DebtPayment.getDebtHistory = async (req, res) => {
     try {
-        const query = req.user.role === 'Admin' ? {} : { boutique: req.user.boutique };
+        let query = {};
+        if (req.user.role === 'Admin') {
+            const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
+            query.boutique = { $in: myBoutiques.map(b => b._id) };
+        } else if (req.user.role !== 'SuperAdmin') {
+            query.boutique = req.user.boutique;
+        }
+
         const history = await DebtPayment.find(query)
             .populate('client', 'nom')
             .populate('gerant', 'nom')
