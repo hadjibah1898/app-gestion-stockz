@@ -92,9 +92,10 @@ function App() {
   const [isApiLoading, setIsApiLoading] = useState(false); // Nouvel état pour le chargement API
 
   useEffect(() => {
-    // Configure l'intercepteur Axios pour gérer les erreurs 401 (redirection auto)
+    // Configure l'intercepteur Axios pour gérer les erreurs 401 (redirection auto) et le spinner de chargement
     setupAxiosInterceptors(setIsApiLoading);
   }, []); // Exécuter une seule fois au montage
+
 
   useEffect(() => {
     // Apply sidebar-open class to body for mobile overlay
@@ -105,9 +106,10 @@ function App() {
     setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
   };
 
-  const handleLogin = (newToken, role, name, boutique, mustChange) => {
+  const handleLogin = (newToken, id, role, name, boutique, mustChange) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('userRole', role);
+    localStorage.setItem('userId', id); // Sauvegarder l'ID de l'utilisateur
     localStorage.setItem('userName', name);
     if (boutique) {
       localStorage.setItem('boutiqueId', typeof boutique === 'object' ? boutique._id : boutique);
@@ -307,6 +309,7 @@ function App() {
     </NotificationProvider>
   );
 }
+
 
 const AppWrapper = () => (
   <Router>

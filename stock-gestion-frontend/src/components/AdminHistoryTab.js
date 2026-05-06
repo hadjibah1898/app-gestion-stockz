@@ -23,6 +23,8 @@ const AdminHistoryTab = ({
 
     const handleReprint = (group) => {
         const subTotal = group.items.reduce((acc, item) => acc + ((item.article?.prixVente || (item.prixTotal / item.quantite)) * item.quantite), 0);
+        const netGoods = group.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.prixTotal), 0);
+        const totalPourboire = group.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.pourboire || 0)), 0);
         
         const ticketData = {
             shopName: group.boutique?.nom || "Boutique",
@@ -39,9 +41,10 @@ const AdminHistoryTab = ({
                 prixTotal: item.prixTotal
             })),
             subTotal: subTotal,
-            itemLevelDiscount: subTotal - group.totalGroupPrice,
-            totalNet: group.totalGroupPrice,
-            amountPaid: group.totalGroupPrice,
+            itemLevelDiscount: subTotal - netGoods,
+            pourboire: totalPourboire,
+            totalNet: netGoods + totalPourboire,
+            amountPaid: netGoods + totalPourboire,
             change: 0 // Assurez-vous que le change est calculé correctement si nécessaire
         };
         generateReceiptPDF(ticketData);

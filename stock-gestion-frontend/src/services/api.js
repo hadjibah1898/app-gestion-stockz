@@ -90,6 +90,9 @@ export const articleAPI = {
   demanderRemise: (id, data) => api.post(`articles/${id}/demander-remise`, data),
   applyAutoPromo: (data) => api.post('articles/auto-promo', data),
   updateMany: (data) => api.put('articles/update-many', data),
+  getAdjustments: () => api.get('articles/adjustments'),
+  createAdjustment: (data) => api.post('articles/adjustments', data),
+  validateAdjustment: (id, data) => api.put(`articles/adjustments/${id}/validate`, data),
 };
 
 export const fournisseurAPI = {

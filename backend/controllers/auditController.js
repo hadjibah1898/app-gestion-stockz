@@ -1,4 +1,5 @@
 const AuditLog = require('../models/AuditLog');
+const User = require('../models/User');
 
 /**
  * @desc    Récupérer les journaux d'audit avec filtres
@@ -12,7 +13,19 @@ exports.getLogs = async (req, res) => {
         const pageNum = parseInt(page);
         const limitNum = parseInt(limit);
 
-        if (user) {
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            // L'Admin voit ses logs + ceux des utilisateurs qu'il a créés
+            const myUsers = await User.find({ createur: req.user.id }).select('_id');
+            const authorizedUserIds = myUsers.map(u => u._id);
+            authorizedUserIds.push(req.user.id);
+
+            if (user) {
+                query.user = authorizedUserIds.includes(user) ? user : { $in: [] };
+            } else {
+                query.user = { $in: authorizedUserIds };
+            }
+        } else if (user) {
             query.user = user;
         }
         if (action) {

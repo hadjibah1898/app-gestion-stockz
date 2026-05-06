@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const mouvementSchema = new mongoose.Schema({
     type: {
         type: String,
-        enum: ['Approvisionnement', 'Transfert', 'Vente', 'Annulation Vente', 'Modification Prix', 'Reception Transfert'],
+        enum: ['Approvisionnement', 'Transfert', 'Vente', 'Annulation Vente', 'Modification Prix', 'Reception Transfert', 'Ajustement Stock'],
         required: true
     },
     details: { type: String }, // Ex: "Réapprovisionnement", "Retour marchandise", "Vente #123"
@@ -11,6 +11,7 @@ const mouvementSchema = new mongoose.Schema({
     boutiqueDestination: { type: mongoose.Schema.Types.ObjectId, ref: 'Boutique' },
     fournisseur: { type: mongoose.Schema.Types.ObjectId, ref: 'Fournisseur' },
     articles: [{
+        articleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Article' },
         nomArticle: { type: String, required: true },
         quantite: { type: Number, required: true },
         prixAchatUnitaire: { type: Number },

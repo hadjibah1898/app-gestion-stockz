@@ -19,7 +19,11 @@ const fournisseurSchema = new mongoose.Schema({
     produitsProposes: [{
         type: String,
         trim: true
-    }]
+    }],
+    createur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }
 }, {
     timestamps: true
 });

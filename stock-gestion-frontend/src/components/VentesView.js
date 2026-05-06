@@ -430,6 +430,14 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
 
       // 4. Dynamisme : Récupération des informations de la boutique depuis le panier.
       const boutiqueInfo = panier.length > 0 ? panier[0].article.boutique : null;
+      
+      // Calcul du pourboire pour le ticket si c'est un serveur
+      let totalPourboire = 0;
+      if (isServeur && boutiqueInfo && boutiqueInfo.tipsEnabled !== false) {
+          const tipRate = (boutiqueInfo.tipPercentage !== undefined ? boutiqueInfo.tipPercentage : 5) / 100;
+          totalPourboire = Math.round(totalVente * tipRate);
+      }
+
       const clientObj = clients.find(c => c._id === selectedClientId);
       const receiptData = {
           shopName: boutiqueInfo?.nom,
@@ -443,6 +451,7 @@ const VentesView = ({ userRole, initialTab = 'sale' }) => {
           modePaiement: modePaiement, // Inclure pour le ticket
           subTotal: subTotal, // Total before any discounts
           itemLevelDiscount: itemLevelDiscount, // Sum of item-level discounts
+          pourboire: totalPourboire,
           totalNet: finalTotalNet,
           amountPaid: montantPayeFinal,
           change: montantPayeFinal - totalVente,

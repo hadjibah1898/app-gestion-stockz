@@ -7,7 +7,8 @@ const { logAction } = require('../services/auditLogService');
 
 exports.register = async (req, res) => {
     try {
-        const { nom, email, password, role, boutique } = req.body;
+        const { nom, email, boutique } = req.body;
+        let { password, role } = req.body;
         
         let userRole = role || 'Gérant';
         let userBoutique = boutique || null;
@@ -22,10 +23,43 @@ exports.register = async (req, res) => {
             userBoutique = boutique;
         }
 
-        const user = new User({ nom, email, password, role: userRole, boutique: userBoutique });
+        // SÉCURITÉ : Générer un mot de passe aléatoire s'il n'est pas fourni (évite l'erreur 400)
+        if (!password) {
+            password = Math.random().toString(36).slice(-8);
+        }
+
+        // SÉCURITÉ MULTI-TENANT : 
+        // 1. Si Admin crée : createur = Admin. 
+        // 2. Si Gérant crée un Serveur : createur = Créateur du Gérant (l'Admin).
+        const user = new User({ 
+            nom, email, password, role: userRole, boutique: userBoutique,
+            createur: req.user?.role === 'Admin' ? req.user.id : (req.user?.createur || undefined),
+            mustChangePassword: true // Obliger le serveur à changer son passe à la 1ère connexion
+        });
         await user.save();
-        res.status(201).json({ message: "Utilisateur créé avec succès", user });
+
+        // Envoyer l'email de bienvenue (similaire à createManager)
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+        });
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Vos identifiants StockDash (Compte Serveur)',
+            html: `<p>Bonjour ${nom}, votre compte serveur a été créé par votre gérant. <br/> Email: ${email} <br/> Mot de passe temporaire: <b>${password}</b></p>`
+        };
+
+        transporter.sendMail(mailOptions).catch(err => console.error("Erreur email:", err));
+
+        // Retourner le mot de passe temporaire pour affichage immédiat au gérant
+        res.status(201).json({ message: "Utilisateur créé avec succès", user, tempPassword: password });
     } catch (error) {
+        // Gérer le cas de l'email déjà utilisé
+        if (error.code === 11000) {
+            return res.status(400).json({ message: "Cet email est déjà utilisé par un autre compte." });
+        }
         res.status(400).json({ message: error.message });
     }
 };
@@ -75,7 +109,14 @@ exports.login = async (req, res) => {
             status: 'SUCCESS'
         });
 
-        res.json({ token, role: user.role, nom: user.nom, boutique: user.boutique, mustChangePassword: user.mustChangePassword });
+        res.json({ 
+            token, 
+            id: user._id, // Ajouter l'ID de l'utilisateur ici
+            role: user.role, 
+            nom: user.nom, 
+            boutique: user.boutique, 
+            mustChangePassword: user.mustChangePassword 
+        });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -116,6 +157,11 @@ exports.updateManager = async (req, res) => {
     try {
         const user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ message: "Gérant introuvable." });
+
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier que les gérants qu'il a créés
+        if (req.user?.role === 'Admin' && user.role === 'Gérant' && user.createur?.toString() !== req.user.id.toString()) {
+            return res.status(403).json({ message: "Accès refusé : Vous ne pouvez modifier que les gérants que vous avez créés." });
+        }
 
         const beforeUpdate = user.toObject();
 
@@ -169,6 +215,7 @@ exports.createManager = async (req, res) => {
         const user = await User.create({
             nom, email, password, role: 'Gérant',
             boutique: boutique || null,
+            createur: req.user.id, // L'Admin connecté est le créateur de ce gérant
             mustChangePassword: true
         });
 
@@ -274,7 +321,17 @@ exports.updateProfile = async (req, res) => {
 
 exports.getAllNotifications = async (req, res) => {
     try {
-        const notifications = await Notification.find().populate('recipient', 'nom email role').sort({ createdAt: -1 }).limit(100);
+        let query = {};
+        
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user?.role === 'Admin') {
+            const myUsers = await User.find({ createur: req.user.id }).select('_id');
+            const authorizedUserIds = myUsers.map(u => u._id);
+            authorizedUserIds.push(req.user.id);
+            query.recipient = { $in: authorizedUserIds };
+        }
+
+        const notifications = await Notification.find(query).populate('recipient', 'nom email role').sort({ createdAt: -1 }).limit(100);
         res.status(200).json(notifications);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -285,9 +342,14 @@ exports.getUsers = async (req, res) => {
         let query = {};
 
         // SÉCURITÉ : Si c'est un gérant, il ne peut voir que les serveurs de SA boutique
-        if (req.user.role === 'Gérant') {
+        if (req.user?.role === 'Gérant') {
             query.boutique = req.user.boutique;
             query.role = 'Serveur'; 
+        } else if (req.user?.role === 'Admin') {
+            // Un Admin ne voit que les gérants qu'il a créés
+            // (et potentiellement les serveurs de ses gérants, mais la vue ManagersView ne liste que les gérants)
+            query.role = 'Gérant';
+            query.createur = req.user.id;
         }
 
         const users = await User.find(query).populate('boutique', 'nom');

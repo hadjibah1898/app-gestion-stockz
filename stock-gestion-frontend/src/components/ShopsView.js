@@ -61,6 +61,12 @@ const ShopsView = () => {
     vendeurs: [],
     tipPercentage: 5,
     tipsEnabled: true,
+    orangeMoneyQrCode: '',
+    orangeMoneyAccount: '',
+    mobicashQrCode: '',
+    mobicashAccount: '',
+    paycardQrCode: '',
+    paycardAccount: '',
     latitude: 9.6412,
     longitude: -13.5784
   });
@@ -169,7 +175,16 @@ const ShopsView = () => {
         vendeursIds = [typeof boutique.vendeur === 'object' ? boutique.vendeur._id : boutique.vendeur];
       }
 
-      setCurrentBoutique({ ...boutique, vendeurs: vendeursIds });
+      setCurrentBoutique({ 
+        ...boutique, 
+        vendeurs: vendeursIds, 
+        orangeMoneyQrCode: boutique.orangeMoneyQrCode || '',
+        orangeMoneyAccount: boutique.orangeMoneyAccount || '',
+        mobicashQrCode: boutique.mobicashQrCode || '',
+        mobicashAccount: boutique.mobicashAccount || '',
+        paycardQrCode: boutique.paycardQrCode || '',
+        paycardAccount: boutique.paycardAccount || ''
+      });
       setEditMode(true);
     } else {
       setCurrentBoutique({ 
@@ -180,11 +195,40 @@ const ShopsView = () => {
         vendeurs: [],
         tipPercentage: 5,
         tipsEnabled: true,
+        orangeMoneyQrCode: '',
+        orangeMoneyAccount: '',
+        mobicashQrCode: '',
+        mobicashAccount: '',
+        paycardQrCode: '',
+        paycardAccount: '',
         latitude: 9.6412, 
         longitude: -13.5784 
       });
       setEditMode(false);
     }
+    setShowModal(true);
+  };
+  
+  // Fonction pour ouvrir la modale de création d'un Dépôt Principal
+  const handleShowCreateCentralModal = () => {
+    setCurrentBoutique({ 
+      nom: 'Dépôt Principal', // Nom par défaut
+      adresse: 'Adresse du Dépôt Principal', // Adresse par défaut
+      active: true, 
+      type: 'Centrale', // Forcer le type à Centrale
+      vendeurs: [],
+      tipPercentage: 5,
+      tipsEnabled: true,
+      orangeMoneyQrCode: '',
+      orangeMoneyAccount: '',
+      mobicashQrCode: '',
+      mobicashAccount: '',
+      paycardQrCode: '',
+      paycardAccount: '',
+      latitude: 9.6412, 
+      longitude: -13.5784 
+    });
+    setEditMode(false); // Toujours en mode création
     setShowModal(true);
   };
 
@@ -199,6 +243,20 @@ const ShopsView = () => {
       // Conversion en nombre pour les champs de géolocalisation
       [name]: type === 'checkbox' ? checked : (type === 'number' ? (value === "" ? "" : parseFloat(value)) : value)
     });
+  };
+
+  const handleQrCodeChange = (e, field) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setCurrentBoutique({
+          ...currentBoutique,
+          [field]: event.target.result
+        });
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Vérifie si un gérant est déjà assigné à une autre boutique
@@ -232,6 +290,15 @@ const ShopsView = () => {
         vendeurs: currentBoutique.vendeurs.filter(id => id !== '')
       };
       
+      // Empêcher la création de plusieurs boutiques de type 'Centrale' par le même administrateur
+      if (boutiquePayload.type === 'Centrale') {
+        const existingCentrale = boutiques.find(b => b.type === 'Centrale' && b._id !== boutiquePayload._id);
+        if (existingCentrale) {
+          setError("Vous ne pouvez avoir qu'un seul Dépôt Principal (Centrale).");
+          return; // Bloque la soumission du formulaire
+        }
+      }
+
       // Extraction des champs pour nettoyer le payload (on retire _id et articleCount)
       const { _id, articleCount, createdAt, updatedAt, __v, ...cleanPayload } = boutiquePayload;
 
@@ -540,11 +607,14 @@ const ShopsView = () => {
 
       {/* Alerte si aucune boutique centrale n'est configurée */}
       {!centralShop && !loading && (
-        <Alert variant="warning" className="shadow-sm mt-3">
+        <Alert variant="warning" className="shadow-sm mt-3 d-flex justify-content-between align-items-center">
           <div className="d-flex align-items-center">
             <iconify-icon icon="solar:info-circle-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
-          <span><strong>Information :</strong> Les fonctionnalités de réapprovisionnement ne sont disponibles que si un "Dépôt Principal" (type "Centrale") est configuré.</span>
+            <span><strong>Information :</strong> Aucun "Dépôt Principal" (type "Centrale") n'est configuré.</span>
           </div>
+          <Button variant="warning" onClick={handleShowCreateCentralModal} className="rounded-pill px-3 fw-bold">
+            <iconify-icon icon="solar:add-circle-bold" className="me-2"></iconify-icon> Créer un Dépôt Principal
+          </Button>
         </Alert>
       )}
 
@@ -708,6 +778,59 @@ const ShopsView = () => {
               />
               <Form.Text className="text-muted">Définit le taux de pourboire automatique pour les serveurs de cette boutique.</Form.Text>
             </Form.Group>
+
+            <div className="border rounded p-3 mb-3 bg-light">
+                <h6 className="fw-bold text-primary mb-3">Configuration des QR Codes de Paiement</h6>
+                {[
+                    { id: 'orangeMoneyQrCode', accId: 'orangeMoneyAccount', label: 'Orange Money', color: 'info' },
+                    { id: 'mobicashQrCode', accId: 'mobicashAccount', label: 'MobiCash', color: 'success' },
+                    { id: 'paycardQrCode', accId: 'paycardAccount', label: 'PayCard', color: 'primary' }
+                ].map(mode => (
+                    <div key={mode.id} className="mb-3 p-2 border-bottom">
+                        <Form.Label className={`small fw-bold text-${mode.color} text-uppercase`}>{mode.label}</Form.Label>
+                        <Form.Group className="mb-2">
+                            <Form.Control
+                                type="text"
+                                name={mode.accId}
+                                value={currentBoutique[mode.accId] || ''}
+                                onChange={handleChange}
+                                placeholder={`N° de compte / téléphone ${mode.label}`}
+                                size="sm"
+                                className="rounded-pill"
+                            />
+                        </Form.Group>
+                        <Form.Group>
+                            <div className="d-flex align-items-center gap-2">
+                                {currentBoutique[mode.id] ? (
+                                    <img 
+                                        src={currentBoutique[mode.id]} 
+                                        alt={`QR ${mode.label}`} 
+                                        className="border rounded bg-white" 
+                                        style={{ width: '45px', height: '45px', objectFit: 'contain' }} 
+                                    />
+                                ) : (
+                                    <div className="border rounded bg-white d-flex align-items-center justify-content-center text-muted" style={{ width: '45px', height: '45px' }}>
+                                        <iconify-icon icon="solar:qr-code-linear"></iconify-icon>
+                                    </div>
+                                )}
+                                <div className="flex-grow-1">
+                                <Form.Control
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => handleQrCodeChange(e, mode.id)}
+                                    size="sm"
+                                />
+                            </div>
+                                {currentBoutique[mode.id] && (
+                                    <Button variant="outline-danger" size="sm" className="rounded-circle p-1 d-flex" onClick={() => setCurrentBoutique({...currentBoutique, [mode.id]: ''})}>
+                                        <iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon>
+                                    </Button>
+                                )}
+                            </div>
+                        </Form.Group>
+                    </div>
+                ))}
+            </div>
 
             <Form.Group className="mb-3">
               <Form.Label className="fw-bold">Assigner des Gérants</Form.Label>

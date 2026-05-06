@@ -16,19 +16,28 @@ exports.protect = async (req, res, next) => {
             // Ajoute l'utilisateur (sans le mot de passe) à l'objet de requête
             req.user = await User.findById(decoded.id).select('-password');
 
-            // SÉCURITÉ : Vérifier si l'utilisateur existe toujours
+            // 1. SÉCURITÉ : Vérifier si l'utilisateur existe toujours
             if (!req.user) {
                 return res.status(401).json({ message: 'Utilisateur introuvable ou compte supprimé.', redirect: '/login' });
             }
             
-            // SÉCURITÉ CRITIQUE : Un Gérant ou un Serveur doit être rattaché à une boutique
-            if (['Gérant', 'Serveur'].includes(req.user.role) && !req.user.boutique) {
+            // 2. SÉCURITÉ : Vérifier si le compte est actif
+            if (!req.user.active || req.user.deleted) {
+                return res.status(401).json({ message: 'Votre compte a été suspendu. Veuillez contacter l\'administrateur.', redirect: '/login' });
+            }
+            
+            // 3. SÉCURITÉ CRITIQUE : Un Gérant ou un Serveur doit être rattaché à une boutique
+            // Le SuperAdmin et l'Admin principal ne sont pas soumis à cette restriction
+            if (['Gérant', 'Serveur'].includes(req.user.role) && !req.user.boutique && req.user.role !== 'SuperAdmin') {
                 console.warn(`${req.user.role} bloqué (ID: ${req.user.id}) : Pas de boutique assignée.`);
                 return res.status(403).json({ message: `Accès refusé : Votre compte ${req.user.role.toLowerCase()} n'est pas rattaché à une boutique.`, redirect: '/login' });
             }
             next();
         } catch (error) {
-            return res.status(401).json({ message: 'Non autorisé, le token a échoué.', redirect: '/login' });
+            if (error.name === 'TokenExpiredError') {
+                return res.status(401).json({ message: 'Votre session a expiré. Veuillez vous reconnecter.', redirect: '/login' });
+            }
+            return res.status(401).json({ message: 'Session invalide ou corrompue.', redirect: '/login' });
         }
     }
 
@@ -40,6 +49,11 @@ exports.protect = async (req, res, next) => {
 // Middleware pour autoriser certains rôles (ex: 'Admin')
 exports.authorize = (...roles) => {
     return (req, res, next) => {
+        // SÉCURITÉ : Le SuperAdmin a un accès illimité et bypass toutes les restrictions de rôle
+        if (req.user && req.user.role === 'SuperAdmin') {
+            return next();
+        }
+
         if (!req.user || !roles.includes(req.user.role)) {
             return res.status(403).json({ message: `Accès refusé. Rôle requis : ${roles.join(' ou ')}.` });
         }

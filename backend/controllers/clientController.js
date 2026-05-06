@@ -65,7 +65,13 @@ exports.payDette = async (req, res) => {
 exports.getDebtHistory = async (req, res) => {
     try {
         let query = {};
-        if (req.user.role !== 'Admin') query.boutique = req.user.boutique;
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
+            query.boutique = { $in: myBoutiques.map(b => b._id) };
+        } else if (req.user.role !== 'SuperAdmin') {
+            query.boutique = req.user.boutique;
+        }
         
         const history = await DebtPayment.find(query)
             .populate('client', 'nom email')
@@ -102,7 +108,13 @@ exports.sendReceiptEmail = async (req, res) => {
 exports.getDebts = async (req, res) => {
     try {
         let query = { dette: { $gt: 0 } };
-        if (req.user.role !== 'Admin') query.boutique = req.user.boutique;
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            query.createur = req.user.id;
+        } else if (req.user.role !== 'SuperAdmin') {
+            query.boutique = req.user.boutique;
+        }
+
         const debts = await Client.find(query);
         res.status(200).json(debts);
     } catch (error) {
@@ -115,7 +127,16 @@ exports.getDebts = async (req, res) => {
 // @desc    Évolution des dettes (Graphiques)
 exports.getDebtEvolution = async (req, res) => {
     try {
+        const filter = {};
+        if (req.user.role === 'Admin') {
+            const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
+            filter.boutique = { $in: myBoutiques.map(b => b._id) };
+        } else if (req.user.role !== 'SuperAdmin') {
+            filter.boutique = req.user.boutique;
+        }
+
         const stats = await DebtMovement.aggregate([
+            { $match: filter },
             {
                 $group: {
                     _id: { 
@@ -167,7 +188,13 @@ exports.payCommission = async (req, res) => {
 exports.getAllClients = async (req, res) => {
     try {
         let query = {};
-        if (req.user.role !== 'Admin') query.boutique = req.user.boutique;
+        // SÉCURITÉ MULTI-TENANT
+        if (req.user.role === 'Admin') {
+            query.createur = req.user.id;
+        } else if (req.user.role !== 'SuperAdmin') {
+            query.boutique = req.user.boutique;
+        }
+
         const clients = await Client.find(query).sort({ nom: 1 });
         res.status(200).json(clients);
     } catch (error) {
@@ -179,7 +206,8 @@ exports.createClient = async (req, res) => {
     try {
         const client = await Client.create({ 
             ...req.body, 
-            boutique: req.user.boutique || req.body.boutique 
+            createur: req.user.id, // Important pour l'isolation
+            boutique: req.user.boutique || req.body.boutique
         });
         res.status(201).json(client);
     } catch (error) {

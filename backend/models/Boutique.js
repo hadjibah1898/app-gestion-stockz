@@ -18,6 +18,15 @@ const boutiqueSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+
+    // Configuration des paiements numériques
+    orangeMoneyQrCode: { type: String, default: '' },
+    orangeMoneyAccount: { type: String, default: '' },
+    mobicashQrCode: { type: String, default: '' },
+    mobicashAccount: { type: String, default: '' },
+    paycardQrCode: { type: String, default: '' },
+    paycardAccount: { type: String, default: '' },
+
     // Liste des gérants autorisés à travailler dans cette boutique
     vendeurs: {
         type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', index: false }],
@@ -26,6 +35,10 @@ const boutiqueSchema = new mongoose.Schema({
     // Géolocalisation (Par défaut : Conakry)
     latitude: { type: Number, default: 9.6412 },
     longitude: { type: Number, default: -13.5784 },
+    createur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    },
 }, {
     timestamps: true // Ajoute createdAt et updatedAt automatiquement
 });

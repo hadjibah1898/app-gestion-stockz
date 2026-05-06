@@ -7,12 +7,16 @@ const userSchema = new mongoose.Schema({
     password: { type: String, required: true },
     role: { 
         type: String, 
-        enum: ['Admin', 'Gérant', 'Serveur'], 
+        enum: ['Admin', 'Gérant', 'Serveur', 'SuperAdmin'], 
         default: 'Gérant' // Par défaut, un nouvel inscrit est gérant [cite: 22]
     },
     boutique: { 
         type: mongoose.Schema.Types.ObjectId, 
         ref: 'Boutique' // Liaison avec la boutique du gérant [cite: 38]
+    },
+    createur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User' // L'Admin qui a créé ce compte
     },
     active: {
         type: Boolean,

@@ -65,6 +65,11 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
         
         // Récupérer le taux de pourboire spécifique à la boutique
         const boutique = await Boutique.findById(boutiqueId);
+
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut créer des ventes que dans ses propres boutiques
+        if (user.role === 'Admin' && boutique.createur.toString() !== user.id.toString()) {
+            throw new Error("Accès refusé : Vous ne pouvez créer des ventes que dans vos propres boutiques.");
+        }
         
         // Calcul du taux effectif : 0 si désactivé manuellement, sinon taux boutique ou taux global
         const effectiveTipRate = (boutique && !boutique.tipsEnabled) 
@@ -283,7 +288,15 @@ exports.listerVentes = async (filter = {}, user = null) => {
         query.transactionRef = { $regex: filter.transactionRefSearch, $options: 'i' };
     }
 
-    if (user && user.role === 'Serveur') {
+    if (user && user.role === 'Admin') {
+        const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
+        const myIds = myBoutiques.map(b => b._id.toString());
+        if (filter.boutique) {
+            query.boutique = myIds.includes(filter.boutique.toString()) ? filter.boutique : { $in: [] };
+        } else {
+            query.boutique = { $in: myBoutiques.map(b => b._id) };
+        }
+    } else if (user && user.role === 'Serveur') {
         query.gerant = user.id;
         if (user.boutique) query.boutique = user.boutique;
     } else if (user && user.role === 'Gérant') {
@@ -309,8 +322,13 @@ exports.listerVentes = async (filter = {}, user = null) => {
 exports.annulerVente = async (venteId, user, req) => {
     let vente = null;
     try {
-        vente = await Vente.findById(venteId);
+        vente = await Vente.findById(venteId).populate('boutique');
         if (!vente || vente.isCancelled) throw new Error(!vente ? "Vente introuvable." : "Vente déjà annulée.");
+
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut annuler que les ventes de ses propres boutiques
+        if (user.role === 'Admin' && vente.boutique?.createur?.toString() !== user.id.toString()) {
+            throw new Error("Accès refusé : Vous ne pouvez annuler que les ventes de vos propres boutiques.");
+        }
 
         // Délai de 24h pour les gérants
         if (user.role === 'Gérant') {
@@ -369,8 +387,13 @@ exports.annulerVente = async (venteId, user, req) => {
  * Met à jour le statut d'une commande et gère les mouvements de stock associés
  */
 exports.updateStatus = async (venteId, newStatus, user, req) => {
-    const vente = await Vente.findById(venteId).populate('article');
+    const vente = await Vente.findById(venteId).populate('article boutique');
     if (!vente) throw new Error("Vente introuvable.");
+
+    // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier le statut que des ventes de ses propres boutiques
+    if (user.role === 'Admin' && vente.boutique?.createur?.toString() !== user.id.toString()) {
+        throw new Error("Accès refusé : Vous ne pouvez modifier le statut que des ventes de vos propres boutiques.");
+    }
 
     // Mise à jour optionnelle du mode de paiement (ex: changement de Cash vers OM lors de l'encaissement)
     if (req.body.modePaiement) vente.modePaiement = req.body.modePaiement;
@@ -474,7 +497,7 @@ exports.updateStatus = async (venteId, newStatus, user, req) => {
  * Met à jour le statut d'un groupe de commandes (par orderGroupId) et gère les mouvements de stock associés.
  */
 exports.updateGroupStatus = async (orderGroupId, newStatus, user, req) => {
-    let ventes = await Vente.find({ orderGroupId: orderGroupId }).populate('article');
+    let ventes = await Vente.find({ orderGroupId: orderGroupId }).populate('article boutique');
     const { modePaiement, transactionRef } = req.body;
     const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
 
@@ -488,12 +511,12 @@ exports.updateGroupStatus = async (orderGroupId, newStatus, user, req) => {
     // SÉCURITÉ/COMPATIBILITÉ : Si aucun groupe trouvé par ID, on cherche par Table ou ID individuel
     if (!ventes || ventes.length === 0) {
         if (mongoose.isValidObjectId(orderGroupId)) {
-            const single = await Vente.findById(orderGroupId).populate('article');
+            const single = await Vente.findById(orderGroupId).populate('article boutique');
             if (single) ventes = [single];
         } else if (orderGroupId.startsWith('EMPORTER_')) {
             const id = orderGroupId.replace('EMPORTER_', '');
             if (mongoose.isValidObjectId(id)) {
-                const single = await Vente.findById(id).populate('article');
+                const single = await Vente.findById(id).populate('article boutique');
                 if (single) ventes = [single];
             }
         } else {
@@ -503,7 +526,7 @@ exports.updateGroupStatus = async (orderGroupId, newStatus, user, req) => {
                 boutique: userBoutiqueId,
                 statut: { $ne: 'finalisee' },
                 isCancelled: false 
-            }).populate('article');
+            }).populate('article boutique');
         }
     }
 
@@ -517,6 +540,11 @@ exports.updateGroupStatus = async (orderGroupId, newStatus, user, req) => {
         // SÉCURITÉ : On compare les IDs de boutique uniquement si la vente en possède un.
         const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
         const venteBoutiqueId = (vente.boutique?._id || vente.boutique || '').toString();
+
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier le statut que des ventes de ses propres boutiques
+        if (user.role === 'Admin' && vente.boutique?.createur?.toString() !== user.id.toString()) {
+            throw new Error("Accès refusé : Vous ne pouvez modifier le statut que des ventes de vos propres boutiques.");
+        }
 
         if (['Gérant', 'Serveur'].includes(user.role) && venteBoutiqueId && userBoutiqueId !== venteBoutiqueId) {
             throw new Error("Action refusée : Vous ne pouvez pas valider une commande d'une autre boutique.");

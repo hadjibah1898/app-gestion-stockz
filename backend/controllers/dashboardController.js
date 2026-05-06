@@ -11,13 +11,21 @@ exports.getDashboardStats = async (req, res) => {
     try {
         const { range } = req.query; // 'monthly' ou 'yearly' reçu du frontend
         const now = new Date();
+        const adminId = req.user.id;
+        const userRole = req.user.role;
+
+        // 0. Isolation Multi-tenant : Seul l'Admin est limité à ses créations. 
+        // Le SuperAdmin ne reçoit pas de filtre sur le créateur.
+        const myBoutiqueFilter = userRole === 'Admin' ? { createur: adminId } : {};
+        const myBoutiques = await Boutique.find(myBoutiqueFilter).select('_id');
+        const myBoutiqueIds = myBoutiques.map(b => b._id);
 
         // 1. Stats du jour (Pour la bannière)
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
         
         const dailyStats = await Vente.aggregate([
-            { $match: { createdAt: { $gte: todayStart, $lte: todayEnd } } },
+            { $match: { boutique: { $in: myBoutiqueIds }, createdAt: { $gte: todayStart, $lte: todayEnd } } },
             {
                 $group: {
                     _id: null,
@@ -31,6 +39,7 @@ exports.getDashboardStats = async (req, res) => {
         const dailyRecoveriesStats = await DebtPayment.aggregate([
             {
                 $match: {
+                    boutique: { $in: myBoutiqueIds },
                     statut: 'VALIDEE',
                     datePaiement: { $gte: todayStart, $lte: todayEnd }
                 }
@@ -46,6 +55,7 @@ exports.getDashboardStats = async (req, res) => {
         // 2. Agrégation pour calculer CA et Coût d'achat total (Global)
         // Calcul du CA total (plus robuste, n'exclut pas les ventes d'articles supprimés)
         const totalCAData = await Vente.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
                     _id: null,
@@ -56,6 +66,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // Calcul du coût d'achat total (nécessite la jointure avec les articles)
         const totalCoutAchatData = await Vente.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $lookup: {
                     from: Article.collection.name,
@@ -75,6 +86,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // Calcul des dépenses totales (Global)
         const totalDepensesData = await Depense.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
                     _id: null,
@@ -99,6 +111,7 @@ exports.getDashboardStats = async (req, res) => {
             const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
             const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
             matchStage = { createdAt: { $gte: startOfMonth, $lte: endOfMonth } };
+            matchStage.boutique = { $in: myBoutiqueIds };
             // Grouper par jour (1-31)
             groupStage = { _id: { $dayOfMonth: "$createdAt" }, total: { $sum: "$prixTotal" } };
         }
@@ -184,6 +197,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // 4. Graphique Articles les plus vendus (Top 5)
         const topProducts = await Vente.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             { $group: { _id: "$article", totalVendu: { $sum: "$quantite" } } },
             { $sort: { totalVendu: -1 } },
             { $limit: 5 },
@@ -206,7 +220,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // --- NOUVEAU : Calcul des recouvrements par gérant pour le classement ---
         const recoveriesByGerant = await DebtPayment.aggregate([
-            { $match: { statut: 'VALIDEE' } },
+            { $match: { boutique: { $in: myBoutiqueIds }, statut: 'VALIDEE' } },
             {
                 $group: {
                     _id: '$gerant',
@@ -222,6 +236,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // 5. Performance par Gérant
         const performanceGerantsRaw = await Vente.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
                     _id: '$gerant',
@@ -268,6 +283,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // 6. Performance par Boutique
         const performanceBoutiques = await Vente.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
                     _id: '$boutique',
@@ -297,6 +313,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // 8. État du Stock par Boutique (Nouveau)
         const stockBoutiques = await Article.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
                     _id: '$boutique',
@@ -326,6 +343,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // 7. Total des articles en stock
         const totalArticlesInStock = await Article.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds } } },
             { $group: { _id: null, total: { $sum: '$quantite' } } }
         ]);
 
@@ -337,12 +355,12 @@ exports.getDashboardStats = async (req, res) => {
                 (totalCoutAchatData[0]?.totalCoutAchat || 0) - 
                 (totalDepensesData[0]?.total || 0),
             totalArticles: totalArticlesInStock[0]?.total || 0,
-            totalVentes: await Vente.countDocuments(),
+            totalVentes: await Vente.countDocuments({ boutique: { $in: myBoutiqueIds } }),
             performanceGerants: performanceGerants,
             performanceBoutiques: performanceBoutiques, // Ajouté à la réponse
             stockBoutiques: stockBoutiques, // Ajouté à la réponse
-            boutiquesActives: await Boutique.countDocuments({ active: true }),
-            boutiquesInactives: await Boutique.countDocuments({ active: false }),
+            boutiquesActives: await Boutique.countDocuments({ ...myBoutiqueFilter, active: true }),
+            boutiquesInactives: await Boutique.countDocuments({ ...myBoutiqueFilter, active: false }),
             // Nouveaux champs pour les graphiques et la bannière
             dailySales: dailyStats[0]?.dailySales || 0,
             dailyOrders: dailyStats[0]?.dailyOrders || 0,

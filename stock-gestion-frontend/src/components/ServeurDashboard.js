@@ -2,12 +2,14 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Row, Col, Card, Badge, Table, Spinner, Alert, Button, Modal, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { generateReceiptPDF } from '../utils/pdfUtils'; // Import de la fonction de génération de PDF
-import { venteAPI } from '../services/api';
+import { venteAPI, boutiqueAPI } from '../services/api';
 import ReceiptModal from './ReceiptModal'; // Import de la modale de reçu
 
 const ServeurDashboard = () => {
     const [historique, setHistorique] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [boutiqueConfig, setBoutiqueConfig] = useState(null);
     const [error, setError] = useState('');
     const [showPayModal, setShowPayModal] = useState(false);
     const [selectedOrder, setSelectedOrder] = useState(null);
@@ -15,29 +17,63 @@ const ServeurDashboard = () => {
     const [currentReceiptData, setCurrentReceiptData] = useState(null);
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [transactionRef, setTransactionRef] = useState('');
+    const [showQrCodeFullscreenModal, setShowQrCodeFullscreenModal] = useState(false);
+    const [fullscreenQrCode, setFullscreenQrCode] = useState('');
+
+    const prevReadyCount = React.useRef(0);
 
     // Effet de vibration pour les nouvelles commandes prêtes
     useEffect(() => {
         const readyCount = historique.filter(v => v.statut === 'en_preparation').length;
-        if (readyCount > 0 && window.navigator.vibrate) {
+        // Ne vibrer que si le nombre de commandes prêtes a augmenté
+        if (readyCount > prevReadyCount.current && window.navigator.vibrate) {
             window.navigator.vibrate([200, 100, 200]);
         }
+        prevReadyCount.current = readyCount;
     }, [historique]);
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (isSilent = false) => {
         try {
-            setLoading(true);
-            const res = await venteAPI.getHistorique({ limit: 0, gerantId: localStorage.getItem('userId') });
-            setHistorique(res.data.ventes || []);
+            if (!isSilent) setLoading(true);
+            else setRefreshing(true);
+            
+            const userId = localStorage.getItem('userId');
+            const boutiqueId = localStorage.getItem('boutiqueId');
+
+            if (!userId) {
+                throw new Error("ID utilisateur non trouvé. Veuillez vous reconnecter.");
+            }
+            if (!boutiqueId) {
+                throw new Error("ID de boutique non trouvé pour ce serveur. Veuillez contacter l'administrateur.");
+            }
+
+            const [ventesRes, boutiqueRes] = await Promise.allSettled([ // Use allSettled to get results even if one promise fails
+                venteAPI.getHistorique({ limit: 100, gerantId: userId }), // Limite à 100 pour la rapidité
+                boutiqueAPI.getAll({ _id: boutiqueId })
+            ]);
+
+            if (ventesRes.status === 'fulfilled') {
+                setHistorique(ventesRes.value.data.ventes || []);
+            } else { console.error("Failed to fetch sales history:", ventesRes.reason); }
+
+            if (boutiqueRes.status === 'fulfilled' && boutiqueRes.value.data && boutiqueRes.value.data.length > 0) {
+                setBoutiqueConfig(boutiqueRes.value.data[0]);
+            } else { console.error("Failed to fetch boutique config:", boutiqueRes.reason); }
+
         } catch (err) {
-            setError("Erreur lors du chargement des statistiques.");
+            console.error("Error fetching data in ServeurDashboard:", err);
+            setError(err.message || err.response?.data?.message || "Erreur lors du chargement des statistiques.");
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     }, []);
 
     useEffect(() => {
         fetchData();
+        // Rafraîchissement automatique toutes les 30 secondes pour le "temps réel"
+        const interval = setInterval(() => fetchData(true), 30000);
+        return () => clearInterval(interval);
     }, [fetchData]);
 
     const handleFinalizePayment = async () => {
@@ -55,7 +91,7 @@ const ServeurDashboard = () => {
             const payload = { 
                 status: 'finalisee',
                 modePaiement: paymentMode,
-                transactionRef: ['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(paymentMode) ? transactionRef : undefined
+                transactionRef: digitalModes.includes(paymentMode) ? transactionRef : undefined
             };
 
             // Si l'ID contient un tiret, c'est notre clé composite (anciennes données).
@@ -74,13 +110,14 @@ const ServeurDashboard = () => {
             await fetchData();
 
             // Préparer les données du ticket de caisse
-            const subTotal = selectedOrder.items.reduce((acc, item) => acc + ((item.article?.prixVente || (item.prixTotal / item.quantite)) * item.quantite), 0);
+            const subTotal = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : ((item.article?.prixVente || (item.prixTotal / item.quantite)) * item.quantite)), 0);
             const totalNet = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.prixTotal), 0);
+            const totalPourboire = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.pourboire || 0)), 0);
 
             const receiptData = {
-                shopName: selectedOrder.boutique?.nom || "Ma Boutique", // Assurez-vous que boutique est peuplé
-                address: selectedOrder.boutique?.adresse || "",
-                phone: selectedOrder.boutique?.telephone || "",
+                shopName: boutiqueConfig?.nom || selectedOrder.boutique?.nom || "Ma Boutique",
+                address: boutiqueConfig?.adresse || selectedOrder.boutique?.adresse || "",
+                phone: boutiqueConfig?.telephone || selectedOrder.boutique?.telephone || "",
                 transactionId: `SRV-${selectedOrder.id.toString().slice(-6).toUpperCase()}`, // ID spécifique au serveur
                 cashierName: localStorage.getItem('userName') || "Serveur", // Le serveur est le "caissier" ici
                 serverName: localStorage.getItem('userName') || "Serveur", // Le serveur est aussi le serveur
@@ -95,8 +132,9 @@ const ServeurDashboard = () => {
                 modePaiement: paymentMode,
                 subTotal: subTotal,
                 itemLevelDiscount: subTotal - totalNet,
-                totalNet: totalNet,
-                amountPaid: totalNet, // On assume que le montant payé est le total net
+                pourboire: totalPourboire,
+                totalNet: totalNet + totalPourboire, // Le total net sur le ticket inclut le pourboire
+                amountPaid: totalNet + totalPourboire, // Le client paie le total (prix + pourboire)
                 change: 0
             };
             setCurrentReceiptData(receiptData);
@@ -109,6 +147,20 @@ const ServeurDashboard = () => {
             setError("Erreur lors de l'encaissement.");
         }
     };
+
+    // Récupérer le QR Code et le numéro de compte/téléphone correspondant au mode de paiement sélectionné
+    const activePaymentDetails = useMemo(() => {
+        // On utilise boutiqueConfig (données complètes) plutôt que selectedOrder.boutique (données partielles)
+        if (!boutiqueConfig) return null;
+        const b = boutiqueConfig;
+        if (paymentMode === 'Orange Money') return { qr: b.orangeMoneyQrCode, account: b.orangeMoneyAccount };
+        if (paymentMode === 'MobiCash') return { qr: b.mobicashQrCode, account: b.mobicashAccount };
+        if (paymentMode === 'PayCard') return { qr: b.paycardQrCode, account: b.paycardAccount };
+        return null;
+    }, [paymentMode, boutiqueConfig]);
+
+    const activeQrCode = activePaymentDetails?.qr;
+    const activeAccount = activePaymentDetails?.account;
 
     const handlePrintReceipt = () => {
         if (currentReceiptData) {
@@ -127,10 +179,24 @@ const ServeurDashboard = () => {
         historique.forEach(vente => {
             const key = vente.orderGroupId || `${Math.floor(new Date(vente.createdAt).getTime() / 1000)}-${vente.numeroTable || 'N/A'}`;
             if (!groups[key]) {
-                groups[key] = { id: key, date: vente.createdAt, table: vente.numeroTable, items: [], total: 0, statut: vente.statut, isCancelled: vente.isCancelled };
+                groups[key] = { 
+                    id: key, 
+                    date: vente.createdAt, 
+                    table: vente.numeroTable, 
+                    items: [], 
+                    total: 0, 
+                    statut: vente.statut, 
+                    isCancelled: vente.isCancelled,
+                    boutique: vente.boutique,
+                    client: vente.client
+                };
             }
             groups[key].items.push(vente);
-            if (!vente.isCancelled) groups[key].total += vente.prixTotal;
+            if (!vente.isCancelled) {
+                // Le total d'une vente pour un serveur doit inclure son pourboire
+                // car c'est la somme finale que le client doit débourser.
+                groups[key].total += (vente.prixTotal + (vente.pourboire || 0));
+            }
         });
 
         return {
@@ -147,13 +213,22 @@ const ServeurDashboard = () => {
     if (loading) return <div className="text-center p-5"><Spinner animation="border" /></div>;
 
     return (
+        <>
         <div className="p-4">
             <div className="d-flex justify-content-between align-items-center mb-4">
-                <h3 className="fw-bold mb-0">Mon Tableau de Bord</h3>
-                <Button as={Link} to="/serveur/ventes" variant="primary" className="rounded-pill px-4 shadow-sm">
-                    <iconify-icon icon="solar:cart-plus-bold" className="me-2 align-middle"></iconify-icon>
-                    Nouvelle Commande
-                </Button>
+                <div className="d-flex align-items-center gap-3">
+                    <h3 className="fw-bold mb-0">Mon Tableau de Bord</h3>
+                    {refreshing && <Spinner animation="border" size="sm" className="text-primary" />}
+                </div>
+                <div className="d-flex gap-2">
+                    <Button variant="outline-secondary" size="sm" className="rounded-pill px-3" onClick={() => fetchData(true)} disabled={refreshing}>
+                        <iconify-icon icon="solar:refresh-bold" className={`align-middle ${refreshing ? 'rotate-animation' : ''}`}></iconify-icon>
+                    </Button>
+                    <Button as={Link} to="/serveur/ventes" variant="primary" className="rounded-pill px-4 shadow-sm">
+                        <iconify-icon icon="solar:cart-plus-bold" className="me-2 align-middle"></iconify-icon>
+                        Nouvelle Commande
+                    </Button>
+                </div>
             </div>
 
             {error && <Alert variant="danger">{error}</Alert>}
@@ -254,6 +329,26 @@ const ServeurDashboard = () => {
                             </div>
                         </Form.Group>
 
+                        {activeQrCode && (
+                            <div className="text-center my-3 p-3 bg-light rounded-4 animate__animated animate__zoomIn">
+                                <h6 className="fw-bold text-dark mb-2">Scanner pour payer via {paymentMode}</h6>
+                                {activeAccount && <p className="small text-muted mb-2">Compte: <span className="fw-bold text-primary">{activeAccount}</span></p>}
+                                <img 
+                                    src={activeQrCode} 
+                                    alt={`QR Code ${paymentMode}`} 
+                                    className="img-fluid rounded shadow-sm border bg-white" 
+                                    style={{ maxHeight: '200px' }} 
+                                    onClick={() => {
+                                        setFullscreenQrCode(activeQrCode);
+                                        setShowQrCodeFullscreenModal(true);
+                                    }}
+                                    role="button"
+                                    aria-label={`Agrandir le QR Code ${paymentMode}`}
+                                />
+                            </div>
+                        )}
+
+
                         {['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(paymentMode) && (
                             <Form.Group className="mb-3 animate__animated animate__fadeIn">
                                 <Form.Label className="small fw-bold text-muted">RÉFÉRENCE DE TRANSACTION</Form.Label>
@@ -290,6 +385,14 @@ const ServeurDashboard = () => {
                 onPrint={handlePrintReceipt}
             />
         </div>
+        {/* Modale d'aperçu d'image pour le QR Code */}
+        <Modal show={showQrCodeFullscreenModal} onHide={() => setShowQrCodeFullscreenModal(false)} centered size="lg">
+            <Modal.Header closeButton>
+                <Modal.Title>QR Code {paymentMode}</Modal.Title>
+            </Modal.Header>
+            <Modal.Body className="text-center bg-light p-4"><img src={fullscreenQrCode} alt="QR Code en plein écran" className="img-fluid rounded shadow" style={{ maxHeight: '80vh' }} /></Modal.Body>
+        </Modal>
+        </>
     );
 };
 
