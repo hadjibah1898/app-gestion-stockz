@@ -1,79 +1,95 @@
+const mongoose = require('mongoose');
 const OuvertureCaisse = require('../models/OuvertureCaisse');
 const RapportCaisse = require('../models/RapportCaisse');
+const asyncHandler = require('./asyncHandler'); // Importation de ton wrapper global
 
 /**
- * Vérifie si le gérant a une caisse ouverte.
+ * @desc    Middleware de sécurité : Bloque l'action si aucune caisse n'est ouverte pour la boutique.
+ * Gérant : Doit avoir ouvert sa propre caisse (responsabilité financière).
+ * Serveur : Aligné dynamiquement sur la caisse ouverte de sa boutique.
+ * @route   Usage sur les routes de Ventes, Dépenses, Recouvrements.
  */
-exports.checkCaisseOuverte = async (req, res, next) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ message: "Utilisateur non authentifié." });
-        }
-
-        const userId = req.user.id || req.user._id;
-
-        // Vérification de l'existence d'une boutique rattachée
-        if (!req.user.boutique) {
-            return res.status(403).json({ 
-                message: "Accès refusé : Votre compte n'est rattaché à aucune boutique." 
-            });
-        }
-
-        const query = {
-            boutique: req.user.boutique,
-            statut: 'OUVERTE' 
-        };
-
-        // SÉCURITÉ : Pour le gérant, on vérifie sa propre caisse (responsabilité financière).
-        // Pour le serveur, on vérifie simplement qu'une caisse est ouverte dans la boutique.
-        if (req.user.role === 'Gérant') {
-            query.gerant = userId;
-        }
-
-        const ouverture = await OuvertureCaisse.findOne(query);
-
-        if (!ouverture) {
-            const errorMsg = req.user.role === 'Serveur' 
-                ? "Opération impossible : La caisse de la boutique n'est pas encore ouverte. Demandez au gérant de l'ouvrir."
-                : "Opération impossible : Vous devez d'abord ouvrir votre caisse pour la journée.";
-            return res.status(403).json({ 
-                message: errorMsg
-            });
-        }
-
-        req.ouvertureCaisse = ouverture;
-        next();
-    } catch (error) {
-        res.status(500).json({ 
-            message: "Erreur technique lors de la vérification de la caisse.", 
-            error: error.message 
+const checkCaisseOuverte = asyncHandler(async (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ 
+            success: false, 
+            message: "Utilisateur non authentifié." 
         });
     }
-};
+
+    const userId = req.user.id || req.user._id;
+    const boutiqueId = req.user.boutique;
+
+    // Vérification de l'existence d'une boutique rattachée
+    if (!boutiqueId) {
+        return res.status(403).json({ 
+            success: false,
+            message: "Accès refusé : Votre compte n'est rattaché à aucune boutique." 
+        });
+    }
+
+    // Pipeline de base pour la recherche de session ouverte
+    const query = {
+        boutique: boutiqueId,
+        statut: 'OUVERTE' 
+    };
+
+    // SÉCURITÉ SÉPARÉE : Si c'est un gérant, il doit être le créateur de cette ouverture active
+    if (req.user.role === 'Gérant') {
+        query.gerant = userId;
+    }
+
+    // Récupération de la session avec .lean() pour de meilleures performances (lecture seule)
+    const ouverture = await OuvertureCaisse.findOne(query).lean();
+
+    if (!ouverture) {
+        const errorMsg = req.user.role === 'Serveur' 
+            ? "Opération impossible : La caisse de la boutique n'est pas encore ouverte. Demandez au gérant de l'ouvrir."
+            : "Opération impossible : Vous devez d'abord ouvrir votre caisse pour la journée.";
+            
+        return res.status(403).json({ 
+            success: false,
+            message: errorMsg
+        });
+    }
+
+    // Injection de la session de caisse active dans l'objet request
+    req.ouvertureCaisse = ouverture;
+    next();
+});
 
 /**
- * Empêche l'ouverture d'une nouvelle caisse si l'ancien rapport n'est pas validé.
+ * @desc    Middleware de contrôle de flux : Empêche l'ouverture d'une nouvelle session 
+ * si le rapport financier de la session précédente est encore en attente de validation.
+ * @route   Usage strict sur la route POST d'ouverture de caisse.
  */
-exports.checkAucunRapportEnAttente = async (req, res, next) => {
-    try {
-        const userId = req.user.id || req.user._id;
-
-        const rapportEnAttente = await RapportCaisse.findOne({
-            gerant: userId,
-            statut: 'EN_ATTENTE'
-        });
-
-        if (rapportEnAttente) {
-            return res.status(403).json({ 
-                message: "Action bloquée : Votre rapport de caisse précédent doit être validé par l'administration avant d'ouvrir une nouvelle session." 
-            });
-        }
-
-        next();
-    } catch (error) {
-        res.status(500).json({ 
-            message: "Erreur technique lors du contrôle des rapports.", 
-            error: error.message 
+const checkAucunRapportEnAttente = asyncHandler(async (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ 
+            success: false, 
+            message: "Utilisateur non authentifié." 
         });
     }
+
+    const userId = req.user.id || req.user._id;
+
+    // Recherche d'un rapport bloqué à l'état 'EN_ATTENTE' pour ce gérant
+    const rapportEnAttente = await RapportCaisse.findOne({
+        gerant: userId,
+        statut: 'EN_ATTENTE'
+    }).lean();
+
+    if (rapportEnAttente) {
+        return res.status(403).json({ 
+            success: false,
+            message: "Action bloquée : Votre rapport de caisse précédent doit être validé par l'administration avant d'ouvrir une nouvelle session." 
+        });
+    }
+
+    next();
+});
+
+module.exports = {
+    checkCaisseOuverte,
+    checkAucunRapportEnAttente
 };

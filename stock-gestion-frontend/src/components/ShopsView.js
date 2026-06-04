@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
+import { toast } from 'react-toastify';
 import ErrorBoundary from './common/ErrorBoundary';
 import { boutiqueAPI, articleAPI, userAPI } from '../services/api'; 
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Circle } from 'react-leaflet';
@@ -59,6 +60,7 @@ const ShopsView = () => {
     active: true,
     type: 'Secondaire',
     vendeurs: [],
+    secteur: 'Général',
     tipPercentage: 5,
     tipsEnabled: true,
     orangeMoneyQrCode: '',
@@ -133,6 +135,18 @@ const ShopsView = () => {
     }
   };
 
+  const handleSyncCodes = async () => {
+    if (window.confirm("Voulez-vous vraiment forcer l'héritage du code d'organisation sur toutes vos boutiques et employés ?")) {
+      try {
+        const res = await boutiqueAPI.syncCodes();
+        toast.success(res.data.message || "Synchronisation effectuée avec succès !");
+        fetchBoutiques(); // Rafraîchir les données
+      } catch (err) {
+        // L'erreur est gérée par l'intercepteur Axios
+      }
+    }
+  };
+
   // Effet pour ouvrir le popup automatiquement quand une boutique est sélectionnée sur la carte
   useEffect(() => {
     if (viewMode === 'map' && selectedBoutiqueId && markerRefs.current[selectedBoutiqueId]) {
@@ -178,6 +192,7 @@ const ShopsView = () => {
       setCurrentBoutique({ 
         ...boutique, 
         vendeurs: vendeursIds, 
+        secteur: boutique.secteur || 'Général',
         orangeMoneyQrCode: boutique.orangeMoneyQrCode || '',
         orangeMoneyAccount: boutique.orangeMoneyAccount || '',
         mobicashQrCode: boutique.mobicashQrCode || '',
@@ -192,6 +207,7 @@ const ShopsView = () => {
         adresse: '', 
         active: true, 
         type: 'Secondaire', 
+        secteur: 'Général',
         vendeurs: [],
         tipPercentage: 5,
         tipsEnabled: true,
@@ -216,6 +232,7 @@ const ShopsView = () => {
       adresse: 'Adresse du Dépôt Principal', // Adresse par défaut
       active: true, 
       type: 'Centrale', // Forcer le type à Centrale
+      secteur: 'Général',
       vendeurs: [],
       tipPercentage: 5,
       tipsEnabled: true,
@@ -427,6 +444,15 @@ const ShopsView = () => {
         </Badge>
       )
     },
+    {
+      key: 'secteur',
+      label: 'Secteur',
+      render: (val) => (
+        <Badge bg="info-subtle" text="info" pill className="px-3">
+          {val || 'Général'}
+        </Badge>
+      )
+    },
     { 
       key: 'active', 
       label: 'Statut',
@@ -582,6 +608,10 @@ const ShopsView = () => {
                     <iconify-icon icon="solar:map-point-bold" className="me-1 align-middle"></iconify-icon> Carte
                 </Button>
             </div>
+            <Button variant="outline-primary" onClick={handleSyncCodes} className="rounded-pill px-4 shadow-sm">
+                <iconify-icon icon="solar:magic-stick-3-bold-duotone" className="me-2 align-middle"></iconify-icon>
+                Génération Automatique (Héritage)
+            </Button>
             <Button variant="outline-primary" onClick={() => setShowTransferModal(true)} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:box-minimalistic-bold" className="me-2 align-middle"></iconify-icon>
                 Transférer Stock
@@ -777,6 +807,22 @@ const ShopsView = () => {
                 required
               />
               <Form.Text className="text-muted">Définit le taux de pourboire automatique pour les serveurs de cette boutique.</Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label className="fw-bold">Secteur d'activité</Form.Label>
+              <Form.Select
+                name="secteur"
+                value={currentBoutique.secteur || 'Général'}
+                onChange={handleChange}
+                className="rounded-pill shadow-sm"
+              >
+                <option value="Général">🛒 Général (Standard)</option>
+                <option value="Boite de nuit">💃 Boite de nuit / Bar</option>
+                <option value="Restaurant">🍽️ Restaurant / Cafétéria</option>
+                <option value="Boutique de mode">👕 Boutique de mode</option>
+              </Form.Select>
+              <Form.Text className="text-muted">Définit le comportement de l'interface (thème, actions rapides, etc.).</Form.Text>
             </Form.Group>
 
             <div className="border rounded p-3 mb-3 bg-light">

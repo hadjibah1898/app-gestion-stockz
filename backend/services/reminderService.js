@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const Client = require('../models/Client');
-const nodemailer = require('nodemailer');
 const articleService = require('./articleService');
+const { transporter } = require('./notificationService');
 
 const sendDebtReminders = async () => {
     console.log('⏰ [CRON] Vérification quotidienne des échéances de dettes...');
@@ -14,14 +14,6 @@ const sendDebtReminders = async () => {
         });
 
         if (clients.length === 0) return;
-
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            }
-        });
 
         const today = new Date();
         // On normalise 'today' à minuit pour comparer des dates entières sans l'heure

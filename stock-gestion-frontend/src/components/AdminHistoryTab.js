@@ -6,7 +6,7 @@
  * Il inclut également la pagination pour naviguer à travers l'historique.
  */
 import React, { useState } from 'react';
-import { Card, Table, Badge, Button, Pagination, OverlayTrigger, Tooltip, Form } from 'react-bootstrap';
+import { Card, Table, Badge, Button, Pagination, Form } from 'react-bootstrap';
 import { generateReceiptPDF, generateMovementsSummary } from '../utils/pdfUtils';
 
 const AdminHistoryTab = ({
@@ -17,8 +17,7 @@ const AdminHistoryTab = ({
     isCancellationAllowed,
     handleImageClick,
     setSaleToCancel,
-    setShowCancelModal,
-    setError
+    setShowCancelModal
 }) => {
 
     const handleReprint = (group) => {
@@ -101,140 +100,63 @@ const AdminHistoryTab = ({
                 )}
             </Card.Header>
             <Card.Body className="p-0">
-                <Table hover responsive className="align-middle mb-0">
-                    <thead className="bg-light">
+                <Table responsive hover className="align-middle mb-0">
+                    <thead className="bg-light small text-uppercase">
                         <tr>
-                            <th className="ps-4 border-0" style={{ width: '40px' }}>
-                                <Form.Check 
-                                    type="checkbox" 
-                                    onChange={handleSelectAll} 
-                                    checked={historique && historique.length > 0 && selectedIds.length === historique.length}
-                                />
-                            </th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase">Date</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase">Articles</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase text-center">Boutique</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase text-end">Total</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase text-center">Table</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase">Mode / Réf</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase">Vendeur</th>
-                            <th className="py-3 border-0 text-secondary small text-uppercase">Client</th>
-                            <th className="pe-4 py-3 border-0 text-secondary small text-uppercase text-end">Statut / Actions</th>
+                            <th className="ps-4" style={{ width: '40px' }}><Form.Check type="checkbox" onChange={handleSelectAll} checked={historique?.length > 0 && selectedIds.length === historique.length} /></th>
+                            <th>Date & Origine</th>
+                            <th>Articles Vendus</th>
+                            <th className="text-end">Total Net</th>
+                            <th>Règlement</th>
+                            <th className="pe-4 text-end">Statut / Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {historique && historique.map(group => (
-                            <tr key={group.orderGroupId} className={
-                                group.isCancelled ? "bg-light text-muted" :
-                                group.statut === 'commande' ? "bg-warning-subtle" :
-                                ""
-                            }>
+                        {historique?.map(group => (
+                            <tr key={group.orderGroupId} className={group.isCancelled ? "bg-light opacity-50" : group.statut === 'finalisee' ? "bg-warning-subtle" : group.statut === 'commande' ? "bg-info-subtle" : ""}>
                                 <td className="ps-4">
-                                    <Form.Check 
-                                        type="checkbox" 
-                                        checked={selectedIds.includes(group.orderGroupId)} 
-                                        onChange={() => handleSelectOne(group.orderGroupId)} 
-                                    />
+                                    <Form.Check type="checkbox" checked={selectedIds.includes(group.orderGroupId)} onChange={() => handleSelectOne(group.orderGroupId)} />
                                 </td>
                                 <td>
-                                    <div className="fw-bold">{group.createdAt ? new Date(group.createdAt).toLocaleDateString() : 'N/A'}</div>
-                                    <div className="small text-muted">{group.createdAt ? new Date(group.createdAt).toLocaleTimeString() : ''}</div>
+                                    <div className="fw-bold">{new Date(group.createdAt).toLocaleDateString()}</div>
+                                    <Badge bg="info" className="fw-normal">{group.boutique?.nom || 'N/A'}</Badge>
+                                    <div className="x-small text-muted mt-1">Par: {group.gerant?.nom || 'Admin'}</div>
                                 </td>
                                 <td>
                                     <ul className="list-unstyled mb-0 small">
                                         {group.items?.map(item => (
-                                            <li key={item._id} className={item.isCancelled ? "text-decoration-line-through" : ""}>
-                                                {item.article?.nom || 'Article supprimé'} <Badge bg="light" text="dark">x{item.quantite}</Badge>
-                                                {(item.remiseAppliquee || 0) > 0 && (
-                                                    <Badge bg="warning" text="dark" pill className="ms-1">
-                                                        -{(item.remiseAppliquee || 0).toLocaleString()}{item.remiseType === 'pourcentage' ? '%' : 'GNF'}
-                                                    </Badge>
-                                                )}
+                                            <li key={item._id} className={item.isCancelled ? "text-decoration-line-through text-muted" : ""}>
+                                                • {item.article?.nom || 'Article supprimé'} <Badge bg="light" text="dark">x{item.quantite}</Badge>
                                             </li>
                                         ))}
                                     </ul>
                                 </td>
-                                <td className="text-center">
-                                    <Badge bg="info" pill>{group.boutique?.nom || 'N/A'}</Badge>
-                                </td>
-                                <td className="text-end fw-bold text-primary">
-                                    {group.isCancelled ? <span className="text-decoration-line-through text-muted">{(group.totalGroupPrice || 0).toLocaleString()} GNF</span> : `${(group.totalGroupPrice || 0).toLocaleString()} GNF`}
-                                </td>
-                                <td className="text-center">
-                                    {group.numeroTable ? (<Badge bg="dark" className="px-2 py-1">{group.numeroTable}</Badge>) : '-'}
+                                <td className="text-end fw-bold text-success">
+                                    {group.totalGroupPrice.toLocaleString()} GNF
                                 </td>
                                 <td>
                                     <div className="d-flex flex-column align-items-start">
-                                        {group.items[0]?.modePaiement === 'Orange Money' ? <Badge style={{backgroundColor: '#FF6600'}} className="border-0 fw-normal">OM</Badge> :
-                                         group.items[0]?.modePaiement === 'MobiCash' ? <Badge style={{backgroundColor: '#FFCC00', color: '#000'}} className="border-0 fw-normal">Mobi</Badge> :
-                                         group.items[0]?.modePaiement === 'PayCard' ? <Badge bg="info" className="border-0 fw-normal">Card</Badge> :
-                                         group.items[0]?.modePaiement === 'Virement' ? <Badge bg="secondary" className="border-0 fw-normal">Bank</Badge> :
-                                         group.items[0]?.modePaiement === 'Dette' ? <Badge bg="warning-subtle" text="warning-emphasis" className="border-0 fw-normal">Dette</Badge> :
-                                         <Badge bg="success-subtle" text="success" className="border-0 fw-normal">Cash</Badge>}
+                                        <Badge bg={group.items[0]?.modePaiement === 'Cash' ? "success-subtle" : "primary-subtle"} text="dark" className="border-0 fw-normal">
+                                            {group.items[0]?.modePaiement || 'Cash'}
+                                        </Badge>
                                         {group.items[0]?.transactionRef && <small className="text-muted x-small mt-1 font-monospace" style={{fontSize: '0.65rem'}}>{group.items[0].transactionRef}</small>}
                                     </div>
                                 </td>
-                                <td>{group.gerant?.nom || 'Inconnu'}</td>
-                                <td>{group.client?.nom || 'Passage'}</td>
                                 <td className="pe-4 text-end">
-                                    {(() => {
-                                        if (group.statut === 'refusee') {
-                                            return (
-                                                <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                                    <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                    REMISE REFUSÉE
-                                                </Badge>
-                                            );
-                                        }
-                                        if (group.isCancelled) {
-                                            return (
-                                                <Badge bg="danger-subtle" text="danger" className="px-3 py-2 rounded-pill">
-                                                    <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                    VENTE ANNULÉE
-                                                </Badge>
-                                            );
-                                        }
-                                        if (group.statut === 'en_attente_remise') {
-                                            return (
-                                                <Badge bg="warning-subtle" text="warning" className="px-3 py-2 rounded-pill">
-                                                    <iconify-icon icon="solar:clock-circle-bold" className="me-1 align-middle"></iconify-icon>
-                                                    EN ATTENTE
-                                                </Badge>
-                                            );
-                                        }
-                                        if (group.statut === 'commande') {
-                                            return <Badge bg="warning" text="dark" className="px-3 py-2 rounded-pill">EN ATTENTE</Badge>;
-                                        }
-                                        return (
-                                            <div className="d-flex gap-2 justify-content-end">
-                                                <OverlayTrigger overlay={<Tooltip>Réimprimer le ticket</Tooltip>}>
-                                                    <Button variant="outline-secondary" size="sm" className="rounded-pill px-3" onClick={() => handleReprint(group)}>
-                                                        <iconify-icon icon="solar:printer-bold" className="align-middle"></iconify-icon>
-                                                    </Button>
-                                                </OverlayTrigger>
-                                                {group.items.map(item => (
-                                                    !item.isCancelled && isCancellationAllowed(item) && (
-                                                        <Button
-                                                            key={item._id}
-                                                            variant="outline-danger"
-                                                            size="sm"
-                                                            className="rounded-pill px-3"
-                                                            onClick={() => { setSaleToCancel(item); setShowCancelModal(true); }}
-                                                            disabled={!isCancellationAllowed(item)}
-                                                            title={!isCancellationAllowed(item) ? "Délai d'annulation dépassé (24h)" : "Annuler cet article"}
-                                                        >
-                                                            <iconify-icon icon="solar:trash-bin-trash-bold" className="me-1 align-middle"></iconify-icon>
-                                                            Annuler
-                                                        </Button>
-                                                    )
-                                                ))}
-                                            </div>
-                                        );
-                                    })()}
+                                    <div className="d-flex gap-2 justify-content-end align-items-center">
+                                        {group.isCancelled ? <Badge bg="danger">ANNULÉE</Badge> :
+                                         group.statut === 'finalisee' ? <Badge bg="warning" text="dark">ENCAISSÉE</Badge> :
+                                         <Badge bg="info">EN ATTENTE</Badge>}
+                                        
+                                        {group.statut === 'finalisee' && (
+                                            <Button variant="outline-secondary" size="sm" className="rounded-circle p-1" onClick={() => handleReprint(group)}>
+                                                <iconify-icon icon="solar:printer-bold"></iconify-icon>
+                                            </Button>
+                                        )}
+                                    </div>
                                 </td>
                             </tr>
                         ))}
-                        {historique.length === 0 && <tr><td colSpan="9" className="text-center py-5 text-muted"><iconify-icon icon="solar:bill-list-linear" style={{ fontSize: '48px' }} className="mb-2 opacity-50"></iconify-icon><p className="mb-0">Aucune transaction trouvée</p></td></tr>}
                     </tbody>
                 </Table>
             </Card.Body>

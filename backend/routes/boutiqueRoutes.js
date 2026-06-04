@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createBoutique, getAllBoutiques, updateBoutique, deleteBoutique } = require('../controllers/boutiqueController');
+const { createBoutique, getAllBoutiques, updateBoutique, deleteBoutique, getBoutiqueDetailsForServeur } = require('../controllers/boutiqueController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { validateBoutique } = require('../middleware/validators');
 const validateObjectId = require('../middleware/validateObjectId');
@@ -9,11 +9,12 @@ const validateObjectId = require('../middleware/validateObjectId');
 router.use(protect); // Protéger toutes les routes
 
 router.route('/')
-    .post(authorize('Admin'), validateBoutique, createBoutique) // Création : Admin uniquement
-    .get(authorize('Admin', 'Gérant', 'Serveur'), getAllBoutiques); // Lecture : Tous les rôles
+    .post(authorize('Admin'), validateBoutique, createBoutique)
+    .get(authorize('Admin', 'Gérant', 'Serveur'), getAllBoutiques);
 
 router.route('/:id')
     .all(validateObjectId('id'))
+    .get(authorize('Admin', 'Gérant', 'Serveur'), getBoutiqueDetailsForServeur) // Nouvelle route optimisée pour le serveur
     .put(authorize('Admin'), validateBoutique, updateBoutique) // Modif : Admin uniquement
     .delete(authorize('Admin'), deleteBoutique); // Suppr : Admin uniquement
 

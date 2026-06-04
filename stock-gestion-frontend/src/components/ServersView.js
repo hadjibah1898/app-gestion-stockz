@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, Table } from 'react-bootstrap';
-import { authAPI } from '../services/api';
+import { authAPI, serveurAPI } from '../services/api';
 
 const ServersView = () => {
   const [servers, setServers] = useState([]);
@@ -14,13 +14,13 @@ const ServersView = () => {
   const fetchServers = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await authAPI.getUsers(); 
-      const users = Array.isArray(res.data) ? res.data : (res.data.data || []);
-      setServers(users.filter(u => u.role === 'Serveur' && (u.boutique?._id || u.boutique) === boutiqueId));
+      // Utilisation de l'API dédiée : le filtrage est fait par le serveur
+      const res = await serveurAPI.getEquipe(); 
+      setServers(res.data || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur lors du chargement des serveurs.');
     } finally { setLoading(false); }
-  }, [boutiqueId]);
+  }, []);
 
   useEffect(() => { fetchServers(); }, [fetchServers]);
 

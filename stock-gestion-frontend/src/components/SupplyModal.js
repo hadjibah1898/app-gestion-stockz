@@ -58,8 +58,8 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                 img.src = event.target.result;
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
-                    const MAX_WIDTH = 800;
-                    const MAX_HEIGHT = 800;
+                    const MAX_WIDTH = 500;
+                    const MAX_HEIGHT = 500;
                     let width = img.width;
                     let height = img.height;
 
@@ -79,8 +79,8 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0, width, height);
                     
-                    // Compression en JPEG à 70% de qualité
-                    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                    // Compression en JPEG à 60% de qualité pour la rapidité
+                    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
                     setNewItem(prev => ({ ...prev, image: compressedBase64 }));
                 };
             };

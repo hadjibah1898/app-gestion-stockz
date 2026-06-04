@@ -152,7 +152,8 @@ const Dashboard = () => {
         const lowStockItems = fetchedArticles.filter(a => safeNum(a.quantite) <= (a.seuilAlerte || 10));
         setLowStockArticles(lowStockItems);
         
-        const count = await getOfflineVentesCount();
+        const userId = localStorage.getItem('userId');
+        const count = await getOfflineVentesCount(userId);
         setOfflineCount(count);
         
       } catch (err) {
@@ -175,13 +176,16 @@ const Dashboard = () => {
   }, [timeRange, refreshTrigger]); // Redéclencher si le filtre change OU si une action est effectuée
 
   const handleSyncManual = async () => {
+    if (userRole === 'Admin' || userRole === 'SuperAdmin') return;
+
     const result = await syncVentes();
     if (result.success > 0) {
       setToast({ show: true, message: `${result.success} ventes synchronisées !`, variant: 'success' });
       playSuccessSound();
       setRefreshTrigger(prev => prev + 1);
     }
-    const count = await getOfflineVentesCount();
+    const userId = localStorage.getItem('userId');
+    const count = await getOfflineVentesCount(userId);
     setOfflineCount(count);
   };
 
@@ -593,7 +597,7 @@ const Dashboard = () => {
     if (article.boutique && article.boutique.type !== 'Centrale' && centralShopId) {
         // Trouver l'article correspondant dans la centrale pour connaître son stock
         const centralArticle = allArticles.find(a => 
-            (a.boutique?._id === centralShopId) && 
+            (a.boutique?._id?.toString() === centralShopId?.toString() || a.boutique?.toString() === centralShopId?.toString()) && 
             a.nom === article.nom
         );
         const availableStock = centralArticle ? centralArticle.quantite : 0;
@@ -683,7 +687,7 @@ const Dashboard = () => {
       </ToastContainer>
 
       {/* Alerte de synchronisation offline */}
-      {offlineCount > 0 && (
+      {offlineCount > 0 && userRole !== 'Admin' && userRole !== 'SuperAdmin' && (
         <Alert variant="warning" className="d-flex justify-content-between align-items-center shadow-sm rounded-4 border-0 mb-4">
           <div>
             <iconify-icon icon="solar:cloud-upload-bold-duotone" className="me-2 align-middle fs-4"></iconify-icon>

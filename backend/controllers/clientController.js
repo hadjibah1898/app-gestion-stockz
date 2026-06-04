@@ -4,10 +4,11 @@ const DebtPayment = require('../models/DebtPayment');
 const OuvertureCaisse = require('../models/OuvertureCaisse');
 const Boutique = require('../models/Boutique');
 const notificationService = require('../services/notificationService');
+const commissionService = require('../services/commissionService');
+const asyncHandler = require('../middleware/asyncHandler');
 
 // @desc    Enregistrer un remboursement de dette
-exports.payDette = async (req, res) => {
-    try {
+exports.payDette = asyncHandler(async (req, res) => {
         const { montant, modePaiement, transactionRef, commentaire } = req.body;
         const client = await Client.findById(req.params.id);
 
@@ -56,20 +57,16 @@ exports.payDette = async (req, res) => {
         });
 
         res.status(200).json({ success: true, nouveauSolde: client.dette, paiement: newPayment });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
 // @desc    Historique global des paiements
-exports.getDebtHistory = async (req, res) => {
-    try {
+exports.getDebtHistory = asyncHandler(async (req, res) => {
         let query = {};
         // SÉCURITÉ MULTI-TENANT
         if (req.user.role === 'Admin') {
             const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
             query.boutique = { $in: myBoutiques.map(b => b._id) };
-        } else if (req.user.role !== 'SuperAdmin') {
+        } else if (req.user.role !== 'SuperAdmin' && req.user.boutique) {
             query.boutique = req.user.boutique;
         }
         
@@ -79,14 +76,10 @@ exports.getDebtHistory = async (req, res) => {
             .populate('boutique', 'nom')
             .sort({ createdAt: -1 });
         res.status(200).json(history);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
 // @desc    Envoyer le reçu de paiement par email
-exports.sendReceiptEmail = async (req, res) => {
-    try {
+exports.sendReceiptEmail = asyncHandler(async (req, res) => {
         const payment = await DebtPayment.findById(req.params.paymentId).populate('client boutique');
         
         if (!payment) return res.status(404).json({ message: "Paiement introuvable" });
@@ -99,40 +92,34 @@ exports.sendReceiptEmail = async (req, res) => {
 
         await notificationService.sendDebtPaymentReceiptEmail(payment, payment.client);
         res.status(200).json({ message: "Reçu envoyé avec succès par email." });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
 // @desc    Lister les clients ayant des dettes
-exports.getDebts = async (req, res) => {
-    try {
+exports.getDebts = asyncHandler(async (req, res) => {
         let query = { dette: { $gt: 0 } };
         // SÉCURITÉ MULTI-TENANT
         if (req.user.role === 'Admin') {
             query.createur = req.user.id;
-        } else if (req.user.role !== 'SuperAdmin') {
+        } else if (req.user.role !== 'SuperAdmin' && req.user.boutique) {
             query.boutique = req.user.boutique;
         }
 
         const debts = await Client.find(query);
         res.status(200).json(debts);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
 // --- NOUVELLES FONCTIONS (Pour éviter le TypeError dans les routes) ---
 
 // @desc    Évolution des dettes (Graphiques)
-exports.getDebtEvolution = async (req, res) => {
-    try {
+exports.getDebtEvolution = asyncHandler(async (req, res) => {
         const filter = {};
         if (req.user.role === 'Admin') {
             const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
             filter.boutique = { $in: myBoutiques.map(b => b._id) };
-        } else if (req.user.role !== 'SuperAdmin') {
-            filter.boutique = req.user.boutique;
+        } else if (req.user.role !== 'SuperAdmin' && req.user.boutique) {
+            // CRITIQUE : Dans une agrégation, il faut convertir le string en ObjectId
+            const boutiqueId = req.user.boutique?._id || req.user.boutique;
+            filter.boutique = new mongoose.Types.ObjectId(boutiqueId);
         }
 
         const stats = await DebtMovement.aggregate([
@@ -169,80 +156,60 @@ exports.getDebtEvolution = async (req, res) => {
         }));
 
         res.status(200).json(result);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
 // @desc    Paiement de commission (Gérant)
-exports.payCommission = async (req, res) => {
-    try {
-        res.status(200).json({ message: "Commission enregistrée avec succès" });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+exports.payCommission = asyncHandler(async (req, res) => {
+    const { workerId, montant } = req.body;
+    const result = await commissionService.payManualCommission({
+        workerId,
+        montant,
+        gerantId: req.user.id,
+        boutiqueId: req.user.boutique
+    });
+    res.status(200).json(result);
+});
 
 // --- CRUD STANDARD ---
 
-exports.getAllClients = async (req, res) => {
-    try {
+exports.getAllClients = asyncHandler(async (req, res) => {
         let query = {};
         // SÉCURITÉ MULTI-TENANT
         if (req.user.role === 'Admin') {
             query.createur = req.user.id;
-        } else if (req.user.role !== 'SuperAdmin') {
+        } else if (req.user.role !== 'SuperAdmin' && req.user.boutique) {
             query.boutique = req.user.boutique;
         }
 
         const clients = await Client.find(query).sort({ nom: 1 });
         res.status(200).json(clients);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
-exports.createClient = async (req, res) => {
-    try {
+exports.createClient = asyncHandler(async (req, res) => {
         const client = await Client.create({ 
             ...req.body, 
             createur: req.user.id, // Important pour l'isolation
             boutique: req.user.boutique || req.body.boutique
         });
         res.status(201).json(client);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
-exports.getClient = async (req, res) => {
-    try {
+exports.getClient = asyncHandler(async (req, res) => {
         const client = await Client.findById(req.params.id);
         if (!client) return res.status(404).json({ message: "Client non trouvé" });
         res.status(200).json(client);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
-exports.updateClient = async (req, res) => {
-    try {
+exports.updateClient = asyncHandler(async (req, res) => {
         const client = await Client.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.status(200).json(client);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});
 
-exports.deleteClient = async (req, res) => {
-    try {
+exports.deleteClient = asyncHandler(async (req, res) => {
         const client = await Client.findById(req.params.id);
         if (!client) return res.status(404).json({ message: "Client introuvable" });
         if (client.dette > 0) return res.status(400).json({ message: "Suppression impossible : dette en cours" });
         
         await Client.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: "Client supprimé" });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+});

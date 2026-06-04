@@ -16,6 +16,19 @@ const transporter = nodemailer.createTransport({
     }
 });
 
+// Define CLIENT_URL once to avoid repetition
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
+exports.transporter = transporter; // Exporter le transporteur
+
+// Helper pour émettre un événement Socket.io générique de nouvelle notification
+const emitNewNotificationSocketEvent = (recipientId) => {
+    if (global.io) {
+        global.io.to(`user_${recipientId}`).emit('new_notification');
+        console.log(`[Socket.io] Émis 'new_notification' vers user_${recipientId}`);
+    }
+};
+
 /**
  * Envoie une notification aux admins lorsqu'un gérant demande une remise
  * @param {Object} article - L'article concerné
@@ -47,7 +60,7 @@ exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) =
                     <p>${message}</p>
                     <p>Merci de valider ou refuser cette demande depuis l'interface d'administration en cliquant sur le lien ci-dessous.</p>
                     <div style="text-align: center; margin: 20px 0;">
-                        <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}${link}" style="background-color: #0d6efd; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Voir la demande</a>
+                        <a href="${CLIENT_URL}${link}" style="background-color: #0d6efd; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Voir la demande</a>
                     </div>
                 </div>
             `
@@ -57,14 +70,17 @@ exports.sendRemiseRequestToAdmins = async (article, remise, gerant, clientNom) =
         }
 
         // 2. Création de la notification in-app
-        const notificationPromises = admins.map(admin =>
-            Notification.create({
+        const notificationPromises = admins.map(admin => {
+            return Notification.create({
                 recipient: admin._id,
                 message: message,
                 type: 'info',
                 link: link
-            })
-        );
+            }).then(notif => {
+                emitNewNotificationSocketEvent(admin._id); // Émettre l'événement Socket.io
+                return notif;
+            });
+        });
         await Promise.all(notificationPromises);
         console.log(`📲 Notification in-app de demande de remise envoyée à ${admins.length} admin(s).`);
 
@@ -113,14 +129,17 @@ exports.sendLowStockAlert = async (article) => {
         const link = `/admin/dashboard?openTransfer=${article._id}`;
 
         // Création des notifications in-app pour chaque admin
-        const notificationPromises = admins.map(admin => 
-            Notification.create({
+        const notificationPromises = admins.map(admin => {
+            return Notification.create({
                 recipient: admin._id,
                 message: message,
                 type: 'warning',
                 link: link
-            })
-        );
+            }).then(notif => {
+                emitNewNotificationSocketEvent(admin._id); // Émettre l'événement Socket.io
+                return notif;
+            });
+        });
         await Promise.all(notificationPromises);
         console.log(`📲 Notification in-app de stock faible envoyée à ${admins.length} admin(s).`);
 
@@ -168,14 +187,14 @@ exports.sendDebtGrantedAlert = async (gerant, client, montantDette, totalVente) 
         console.log(`📧 Alerte dette envoyée aux admins pour le client : ${client.nom}`);
 
         // 2. In-app notification
-        const notificationPromises = admins.map(admin => 
-            Notification.create({
+        const notificationPromises = admins.map(admin => {
+            return Notification.create({
                 recipient: admin._id,
                 message: message,
                 type: 'warning',
                 link: '/admin/clients' // Lien vers la vue des clients
-            })
-        );
+            });
+        });
         await Promise.all(notificationPromises);
         console.log(`📲 Notification in-app de dette envoyée à ${admins.length} admin(s).`);
 
@@ -214,14 +233,14 @@ exports.sendDiscountGrantedAlert = async (gerant, remises, totalVente, clientNom
         console.log(`📧 Alerte remise envoyée aux admins.`);
 
         // 2. In-app notification
-        const notificationPromises = admins.map(admin => 
-            Notification.create({
+        const notificationPromises = admins.map(admin => {
+            return Notification.create({
                 recipient: admin._id,
                 message: message,
                 type: 'info',
                 link: '/admin/ventes' // Lien vers l'historique des ventes
-            })
-        );
+            });
+        });
         await Promise.all(notificationPromises);
         console.log(`📲 Notification in-app de remise envoyée à ${admins.length} admin(s).`);
 
@@ -261,7 +280,7 @@ exports.sendNewReportAlert = async (rapport) => {
                     <h2 style="color: #0d6efd; margin-top: 0;">Nouveau Rapport de Caisse</h2>
                     <p>Le gérant <strong>${rapportFull.gerant.nom}</strong> a clôturé sa caisse.</p>
                     <ul style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; list-style: none;">
-                        <li style="margin-bottom: 10px;"><strong>🏪 Boutique :</strong> ${rapportFull.boutique.nom}</li>
+                        <li style="margin-bottom: 10px;"><strong>🏪 Boutique :</strong> ${rapportFull.boutique.nom} (${rapportFull.boutique.codeBoutique})</li>
                         <li style="margin-bottom: 10px;"><strong>💰 Montant Clôture :</strong> ${rapportFull.montantCloture.toLocaleString('fr-FR')} GNF</li>
                         <li style="margin-bottom: 10px;"><strong>📉 Solde Théorique :</strong> ${rapportFull.soldeTheorique.toLocaleString('fr-FR')} GNF</li>
                         <li style="color: ${hasEcart ? '#dc3545' : '#198754'};"><strong>⚠️ Écart :</strong> ${rapportFull.ecart.toLocaleString('fr-FR')} GNF</li>
@@ -279,14 +298,14 @@ exports.sendNewReportAlert = async (rapport) => {
         console.log(`📧 Alerte rapport envoyée aux admins.`);
 
         // 2. In-app notification
-        const notificationPromises = admins.map(admin => 
-            Notification.create({
+        const notificationPromises = admins.map(admin => {
+            return Notification.create({
                 recipient: admin._id,
                 message: message,
                 type: 'info',
                 link: '/admin/caisse?tab=rapports' // Lien vers l'onglet des rapports
-            })
-        );
+            });
+        });
         await Promise.all(notificationPromises);
         console.log(`📲 Notification in-app de rapport envoyée à ${admins.length} admin(s).`);
 
@@ -320,7 +339,7 @@ exports.sendReportRejectedAlert = async (rapport, admin, commentaire) => {
                         <p>Bonjour <strong>${gerant.nom}</strong>,</p>
                         <p>Votre rapport de caisse pour la boutique <strong>${rapport.boutique.nom}</strong> a été rejeté par l'administrateur <strong>${admin.nom}</strong>.</p>
                         <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                            <p style="margin: 0 0 10px; color: #721c24;"><strong>Motif du rejet :</strong></p>
+                                <p style="margin: 0 0 10px; color: #721c24;"><strong>Motif du rejet :</strong></p> 
                             <p style="margin: 0; color: #721c24;">${commentaire}</p>
                         </div>
                         <p>Veuillez prendre les mesures nécessaires et contacter l'administration si besoin. Vous pouvez maintenant ouvrir une nouvelle caisse.</p>
@@ -337,6 +356,7 @@ exports.sendReportRejectedAlert = async (rapport, admin, commentaire) => {
                 type: 'warning', // Changé en warning car ce n'est pas une erreur système, mais une action requise
                 link: '/gerant/caisse?action=correction' // Lien incitant à l'action
         });
+
         console.log(`📲 Notification in-app de rejet de rapport envoyée à ${gerant.nom}.`);
 
     } catch (error) {
@@ -388,6 +408,7 @@ exports.sendReportValidatedAlert = async (rapport, admin, commentaire) => {
             type: 'success',
             link: '/gerant/caisse?tab=rapports' // Lien vers l'onglet des rapports du gérant
         });
+
         console.log(`📲 Notification in-app de validation de rapport envoyée à ${gerant.nom}.`);
 
     } catch (error) {
@@ -403,22 +424,22 @@ exports.sendReportValidatedAlert = async (rapport, admin, commentaire) => {
  */
 exports.sendDebtPaymentPendingAlert = async (gerant, client, montant) => {
     try {
-        const admins = await User.find({ role: 'Admin' });
-        if (admins.length === 0) return;
+        // SÉCURITÉ MULTI-TENANT : Notifier l'Admin qui a créé le gérant
+        const admin = await User.findById(gerant.createur);
+        if (!admin) return; // Pas d'Admin à notifier
 
         const message = `Le gérant ${gerant.nom} a enregistré un paiement de ${montant.toLocaleString('fr-FR')} GNF de la part de ${client.nom}. Ce paiement est en attente de votre validation.`;
+        
+        // 2. Création de la notification in-app
+        const notif = await Notification.create({
+            recipient: admin._id, // Cible l'Admin spécifique
+            message: message,
+            type: 'info',
+            link: '/admin/creances?tab=validation' // Lien vers l'onglet de validation
+        });
 
-        // In-app notification
-        const notificationPromises = admins.map(admin =>
-            Notification.create({
-                recipient: admin._id,
-                message: message,
-                type: 'info',
-                link: '/admin/creances?tab=validation' // Lien vers l'onglet de validation
-            })
-        );
-        await Promise.all(notificationPromises);
-        console.log(`📲 Notification de paiement en attente envoyée à ${admins.length} admin(s).`);
+        emitNewNotificationSocketEvent(admin._id); // Émettre l'événement Socket.io à cet Admin
+        console.log(`📲 Notification de paiement en attente envoyée à l'admin ${admin.nom}.`);
 
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi de l'alerte de paiement en attente:", error);
@@ -448,7 +469,7 @@ exports.sendDebtPaymentValidatedAlert = async (gerantId, client, montant) => {
                     <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
                         <h2 style="color: #198754; margin-top: 0;">Paiement Validé</h2>
                         <p>Bonjour <strong>${gerant.nom}</strong>,</p>
-                        <p>L'administrateur a validé le paiement suivant que vous aviez enregistré :</p>
+                        <p>L'administrateur a validé le paiement suivant que vous aviez enregistré :</p> 
                         <ul style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; list-style: none;">
                             <li style="margin-bottom: 10px;"><strong>👤 Client :</strong> ${client.nom}</li>
                             <li style="margin-bottom: 10px;"><strong>💰 Montant :</strong> <span style="font-weight: bold;">${montant.toLocaleString('fr-FR')} GNF</span></li>
@@ -459,12 +480,13 @@ exports.sendDebtPaymentValidatedAlert = async (gerantId, client, montant) => {
         }
 
         // In-app notification
-        await Notification.create({
+        const notif = await Notification.create({
             recipient: gerant._id,
             message: message,
             type: 'success',
             link: '/gerant/creances'
         });
+
         console.log(`📲 Notification de validation de paiement envoyée à ${gerant.nom}.`);
 
     } catch (error) {
@@ -488,7 +510,7 @@ exports.sendDebtPaymentReceiptEmail = async (payment, client) => {
                     <div style="text-align: center; margin-bottom: 20px;">
                         <h2 style="color: #0d6efd; margin-top: 0;">Reçu de Paiement</h2>
                     </div>
-                    <p>Bonjour <strong>${client.nom}</strong>,</p>
+                    <p>Bonjour <strong>${client.nom}</strong>,</p> 
                     <p>Nous vous confirmons la réception de votre versement pour le règlement de votre dette.</p>
                     
                     <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background-color: #fcfcfc;">
@@ -560,9 +582,9 @@ exports.sendTransferReceivedAlert = async (mouvement, gerant) => {
                     <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 600px;">
                         <h2 style="color: #198754; margin-top: 0;">Réception de Transfert Confirmée</h2>
                         <p>${message}</p>
-                        <p>Vous pouvez consulter le mouvement détaillé en cliquant ci-dessous :</p>
-                        <div style="text-align: center; margin: 20px 0;">
-                            <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}${link}" style="background-color: #0d6efd; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Voir le Mouvement</a>
+                        <p>Vous pouvez consulter le mouvement détaillé en cliquant ci-dessous :</p> 
+                        <div style="text-align: center; margin: 20px 0;"> 
+                            <a href="${CLIENT_URL}${link}" style="background-color: #0d6efd; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Voir le Mouvement</a> 
                         </div>
                     </div>
                 `
@@ -571,9 +593,9 @@ exports.sendTransferReceivedAlert = async (mouvement, gerant) => {
         }
 
         // 2. Création de la notification in-app
-        const notificationPromises = admins.map(admin =>
-            Notification.create({ recipient: admin._id, message, type: 'success', link })
-        );
+        const notificationPromises = admins.map(admin => {
+            return Notification.create({ recipient: admin._id, message, type: 'success', link });
+        });
         await Promise.all(notificationPromises);
         console.log(`📲 Notification in-app de réception transfert envoyée à ${admins.length} admin(s).`);
 
@@ -595,12 +617,13 @@ exports.sendAjustementRequestAlert = async (ajst, article, gerant) => {
         const link = '/admin/articles?tab=adjustments';
 
         // Notification in-app
-        await Notification.create({
+        const notif = await Notification.create({
             recipient: admin._id,
             message: message,
             type: 'warning',
             link: link
         });
+
 
         // Email
         if (admin.email) {
@@ -625,12 +648,13 @@ exports.sendAjustementStatusAlert = async (ajst) => {
             ? `✅ Votre demande d'ajustement pour "${ajst.article.nom}" a été VALIDÉE.` 
             : `❌ Votre demande d'ajustement pour "${ajst.article.nom}" a été REJETÉE.`;
         
-        await Notification.create({
+        const notif = await Notification.create({
             recipient: ajst.gerant,
             message: message + (ajst.commentaireAdmin ? ` Motif : ${ajst.commentaireAdmin}` : ""),
             type: ajst.statut === 'VALIDE' ? 'success' : 'error',
             link: '/gerant/articles?tab=adjustments'
         });
+
     } catch (error) {
         console.error("Erreur notification statut ajustement:", error);
     }
@@ -645,12 +669,14 @@ exports.sendOrderReadyAlert = async (vente, gerant) => {
     try {
         const message = `✅ Commande Prête : Table ${vente.numeroTable || 'N/A'} est disponible au bar (Préparée par ${gerant.nom}).`;
         
-        await Notification.create({
+        const notif = await Notification.create({
             recipient: vente.gerant, // Le serveur propriétaire de la commande
             message: message,
             type: 'success',
             link: '/serveur/dashboard'
         });
+
+        emitNewNotificationSocketEvent(vente.gerant);
         console.log(`📲 Notification "Prête" envoyée au serveur : ${vente.gerant}`);
     } catch (error) {
         console.error("❌ Erreur notification Commande Prête :", error);
@@ -666,14 +692,38 @@ exports.sendOrderCancelledAlert = async (vente, canceller) => {
     try {
         const message = `🚨 Commande Annulée : Votre commande (Table ${vente.numeroTable || 'N/A'}) a été annulée par ${canceller.nom}.`;
         
-        await Notification.create({
+        const notif = await Notification.create({
             recipient: vente.gerant,
             message: message,
             type: 'error',
             link: '/serveur/dashboard'
         });
+
+        emitNewNotificationSocketEvent(vente.gerant);
         console.log(`📲 Notification d'annulation envoyée au serveur : ${vente.gerant}`);
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi de la notification d'annulation :", error);
+    }
+};
+
+/**
+ * Notifie un serveur qu'un article spécifique de sa commande a été annulé par le gérant.
+ */
+exports.sendItemCancelledAlert = async (vente, canceller) => {
+    try {
+        const articleNom = vente.article?.nom || 'un article';
+        const tableInfo = vente.numeroTable ? `Table ${vente.numeroTable}` : 'à emporter';
+        const message = `🚨 Article Retiré : "${articleNom}" de votre commande (${tableInfo}) a été annulé par ${canceller.nom}.`;
+        
+        const notif = await Notification.create({
+            recipient: vente.gerant, // Le serveur qui a pris la commande
+            message,
+            type: 'error',
+            link: '/serveur/dashboard'
+        });
+
+        emitNewNotificationSocketEvent(vente.gerant);
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de la notification d'annulation d'article :", error);
     }
 };

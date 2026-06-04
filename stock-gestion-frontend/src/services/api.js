@@ -1,7 +1,8 @@
 // src/services/api.js
 import axios from 'axios';
+import { toast } from 'react-toastify';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+const API_URL = process.env.REACT_APP_API_URL;
 
 /**
  * Configuration de l'instance Axios
@@ -35,15 +36,41 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
+// À ajouter dans stock-gestion-frontend/src/services/api.js
+
+export const serveurAPI = {
+    /**
+     * Récupère les statistiques personnelles du serveur connecté
+     */
+    getStatsMe: () => api.get('serveurs/stats/me'),
+    
+    /**
+     * Récupère la liste de l'équipe pour un gérant
+     */
+    getEquipe: () => api.get('serveurs/equipe'),
+};
 
 /**
  * Interceptor : Gestion des erreurs globales (401)
  */
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Si le backend renvoie l'enveloppe standard { success: true, data: ... }
+    if (response.data && response.data.success === true) {
+      return {
+        ...response,
+        data: response.data.data
+      };
+    }
+    return response;
+  },
   (error) => {
     if (error.response && error.response.status === 401) {
       clearAuthSession();
+    } else {
+      // Capture et affichage automatique des messages d'erreur du serveur (ex: Caisse fermée)
+      const message = error.response?.data?.message || error.message || "Une erreur est survenue";
+      toast.error(message);
     }
     return Promise.reject(error);
   }
@@ -77,7 +104,9 @@ export const boutiqueAPI = {
   getAll: () => api.get('boutiques'),
   create: (data) => api.post('boutiques', data),
   update: (id, data) => api.put(`boutiques/${id}`, data),
+  getDetailsForServeur: (id) => api.get(`boutiques/${id}`), // Nouvelle méthode
   delete: (id) => api.delete(`boutiques/${id}`),
+  syncCodes: () => api.post('boutiques/sync-codes'), // Nouvelle méthode pour l'Admin
 };
 
 export const articleAPI = {
@@ -153,6 +182,7 @@ export const mouvementAPI = {
 
 export const dashboardAPI = {
   getStats: (params) => api.get('dashboard/stats', { params }),
+  getGerantSummary: () => api.get('dashboard/gerant-summary'), // Endpoint agrégé recommandé
 };
 
 export const auditAPI = {
@@ -161,6 +191,10 @@ export const auditAPI = {
 
 export const userAPI = {
   getAll: () => api.get('auth/users'),
+};
+
+export const cacheAPI = {
+  flushBoutiqueCache: () => api.delete('cache/boutiques'),
 };
 
 export default api;

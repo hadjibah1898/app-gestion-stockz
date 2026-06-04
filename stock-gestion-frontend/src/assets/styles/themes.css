@@ -1,0 +1,38 @@
+/* Styles spécifiques aux secteurs d'activité */
+
+/* --- MODE BOITE DE NUIT (NIGHTCLUB) --- */
+[data-secteur="Boite de nuit"] {
+    --bs-body-bg: #0f1114;
+    --bs-body-color: #cdd9e5;
+}
+
+[data-secteur="Boite de nuit"] .card {
+    background-color: #1c2128 !important;
+    border: 1px solid #444c56 !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+[data-secteur="Boite de nuit"] .table {
+    --bs-table-color: #adbac7;
+    --bs-table-bg: transparent;
+    --bs-table-border-color: #444c56;
+}
+
+[data-secteur="Boite de nuit"] .btn-primary {
+    background-color: #8957e5 !important; /* Violet Néon */
+    border-color: #8957e5 !important;
+    box-shadow: 0 0 15px rgba(137, 87, 229, 0.4);
+}
+
+[data-secteur="Boite de nuit"] .btn-quick-entry {
+    background-color: #00f2ff !important; /* Bleu Cyan Néon */
+    border-color: #00f2ff !important;
+    color: #000 !important;
+    font-weight: 800 !important;
+    text-transform: uppercase;
+    box-shadow: 0 0 10px rgba(0, 242, 255, 0.5);
+}
+
+[data-secteur="Boite de nuit"] .stat-card {
+    border-left: 4px solid #8957e5 !important;
+}

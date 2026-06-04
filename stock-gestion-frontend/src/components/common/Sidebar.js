@@ -28,7 +28,8 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
             const fetchPendingOrders = async () => {
                 try {
                     const res = await venteAPI.getHistorique({ limit: 0, statut: 'commande' });
-                    setPendingOrdersCount(res.data.ventes?.length || 0);
+                    const data = res.data?.data || res.data;
+                    setPendingOrdersCount(data?.ventes?.length || 0);
                 } catch (e) { /* ignore */ }
             };
 
@@ -272,7 +273,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/gerant/historique?tab=history&filter=finalized" onClick={handleNavLinkClick}>
+                            <NavLink className="sidebar-link" to="/gerant/historique?tab=history" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Historique Ventes</span>
                             </NavLink>

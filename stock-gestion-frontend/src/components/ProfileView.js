@@ -12,6 +12,7 @@ import { authAPI } from '../services/api';
 
 const ProfileView = () => {
     const [formData, setFormData] = useState({ nom: '', email: '' });
+    const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
@@ -34,6 +35,7 @@ const ProfileView = () => {
     const fetchUserData = async () => {
         try {
             const response = await authAPI.getCurrentUser();
+            setUser(response.data);
             setFormData({ nom: response.data.nom, email: response.data.email });
         } catch (err) {
             setMessage({ type: 'danger', text: 'Erreur lors du chargement du profil.' });
@@ -157,7 +159,16 @@ const ProfileView = () => {
                             </div>
                             <h4 className="fw-bold mb-1">{formData.nom}</h4>
                             <p className="text-muted mb-3">{formData.email}</p>
-                            <Badge bg="primary" className="px-3 py-2 rounded-pill">Utilisateur</Badge>
+                            <Badge bg="primary" className="px-3 py-2 rounded-pill">
+                                {user?.role || 'Utilisateur'}
+                            </Badge>
+
+                            {user?.role === 'Gérant' && user?.createur && (
+                                <div className="mt-3 text-muted small border-top pt-3 w-100">
+                                    <iconify-icon icon="solar:shield-user-bold" className="me-1"></iconify-icon>
+                                    Compte créé par : <strong>{user.createur.nom}</strong>
+                                </div>
+                            )}
                         </Card.Body>
                     </Card>
                 </Col>

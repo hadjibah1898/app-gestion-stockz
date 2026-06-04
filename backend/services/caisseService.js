@@ -8,6 +8,7 @@ const Vente = require('../models/Vente');
 const DebtPayment = require('../models/DebtPayment');
 const DebtMovement = require('../models/DebtMovement');
 const commissionService = require('./commissionService');
+const venteService = require('./venteService');
 
 // --- FONCTIONS UTILITAIRES INTERNES ---
 
@@ -15,31 +16,47 @@ const commissionService = require('./commissionService');
  * Convertit de manière sécurisée une valeur de la DB (Decimal128 ou autre) en nombre.
  */
 const safeNum = (val) => {
-    if (!val) return 0;
-    // Gestion du format lean de MongoDB Decimal128
-    const s = val.$numberDecimal ? val.$numberDecimal : val.toString();
-    return parseFloat(s) || 0;
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') return parseFloat(val) || 0;
+  if (typeof val === 'object' && val.$numberDecimal) {
+    return parseFloat(val.$numberDecimal) || 0;
+  }
+  return 0;
 };
 
 const calculerBilansSession = async (ouvertureCaisseId) => {
-    // On s'assure d'avoir un ObjectId valide pour la requête
-    const sessionOid = mongoose.isValidObjectId(ouvertureCaisseId) 
-        ? new mongoose.Types.ObjectId(ouvertureCaisseId.toString())
+    // Extraire l'ID si c'est un objet (Document Mongoose)
+    const id = (ouvertureCaisseId && typeof ouvertureCaisseId === 'object' && ouvertureCaisseId._id) 
+        ? ouvertureCaisseId._id 
+        : ouvertureCaisseId;
+
+    const sessionOid = mongoose.isValidObjectId(id) 
+        ? new mongoose.Types.ObjectId(id.toString())
         : null;
 
     if (!sessionOid) return { cashEnCaisse: 0, totalVentes: 0, totalDettesAccordees: 0, totalDepenses: 0, totalRecouvrement: 0, listeRecouvrements: [] };
 
-    // 1. Ventes (Uniquement ce qui est payé cash au moment de la vente)
+    // 1. Ventes : On récupère tout pour le CA global (Règle n°2)
     const ventes = await Vente.find({ ouvertureCaisse: sessionOid, isCancelled: { $ne: true } }).lean();
-    const totalVentes = Math.round(ventes.reduce((acc, v) => acc + safeNum(v.prixTotal), 0));
-    const venteIds = ventes.map(v => v._id);
-    const dettesAccordees = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' }).lean();
-    const totalDettesAccordees = Math.round(dettesAccordees.reduce((acc, d) => acc + safeNum(d.montant), 0));
+    const totalVentes = Math.round(ventes.reduce((acc, v) => acc + safeNum(v.prixTotal), 0) || 0);
+    
+    // Filtrage des ventes réellement encaissées pour le calcul du cash physique (Règle n°1 & 2)
+    const ventesFinalisees = ventes.filter(v => v.statut === 'finalisee');
+    const totalVentesFinalisees = Math.round(ventesFinalisees.reduce((acc, v) => acc + safeNum(v.prixTotal), 0) || 0);
+
+    // Règle n°2 : On ne déduit que les dettes liées à des ventes encaissées (finalisées)
+    const finalizedVenteIds = ventesFinalisees.map(v => v._id);
+    const dettesAccordees = await DebtMovement.find({ 
+        venteAssociee: { $in: finalizedVenteIds }, 
+        type: 'CREATION' 
+    }).lean();
+    const totalDettesAccordees = Math.round(dettesAccordees.reduce((acc, d) => acc + safeNum(d.montant), 0) || 0);
 
     // 3. Recouvrements (Dettes payées durant cette session)
-    // On ajoute populate('client', 'nom') pour récupérer le nom réel du client au lieu de son ID
+    // Règle n°2 : Seuls les paiements VALIDEE comptent dans le cash
     const remboursements = await DebtPayment.find({ ouvertureCaisse: sessionOid, statut: 'VALIDEE' }).populate('client', 'nom').lean();
-    const totalRecouvrement = Math.round(remboursements.reduce((sum, p) => sum + safeNum(p.montant), 0));
+    const totalRecouvrement = Math.round(remboursements.reduce((sum, p) => sum + safeNum(p.montant), 0) || 0);
 
     // Regroupement par client (Fusionner les montants si un client a payé plusieurs fois dans la session)
     const listeRecouvrementsGroupée = Object.values(remboursements.reduce((acc, curr) => {
@@ -59,12 +76,14 @@ const calculerBilansSession = async (ouvertureCaisseId) => {
     
     // Fintech sur les ventes (CA Net encaissé en Fintech)
     let totalMobileMoneySales = 0;
-    ventes.forEach(v => {
+    // Règle n°2 : Isolation Fintech
+    for (const v of ventesFinalisees) {
         if (mobileModes.includes(v.modePaiement)) {
-            const detteLiee = dettesAccordees.find(d => d.venteAssociee?.toString() === v._id.toString());
-            totalMobileMoneySales += (safeNum(v.prixTotal) - (detteLiee ? safeNum(detteLiee.montant) : 0));
+            const detteLiee = dettesAccordees.find(d => d.venteAssociee && d.venteAssociee.toString() === v._id.toString());
+            const montantDette = detteLiee ? safeNum(detteLiee.montant) : 0;
+            totalMobileMoneySales += (safeNum(v.prixTotal) - montantDette);
         }
-    });
+    }
 
     // Fintech sur les recouvrements
     const totalMobileMoneyRecoveries = Math.round(remboursements
@@ -75,12 +94,12 @@ const calculerBilansSession = async (ouvertureCaisseId) => {
 
     // 2. Dépenses de la session
     const depenses = await Depense.find({ ouvertureCaisse: sessionOid }).lean();
-    const totalDepenses = Math.round(depenses.reduce((acc, d) => acc + safeNum(d.montant), 0));
+    const totalDepenses = Math.round(depenses.reduce((acc, d) => acc + safeNum(d.montant), 0) || 0);
 
-    // Logique : Le Cash en Caisse (Physique) exclut le Mobile Money et les dettes
-    const cashVentesSeul = totalVentes - totalDettesAccordees - totalMobileMoneySales;
+    // Formule Règle n°2 : Cash Physique = (Ventes Finalisées - Dettes - FintechSales) + (Recouv. - FintechRecouv.) - Dépenses
+    const cashVentesSeul = totalVentesFinalisees - totalDettesAccordees - totalMobileMoneySales;
     const cashRecouvrementSeul = totalRecouvrement - totalMobileMoneyRecoveries;
-    const cashEnCaisse = cashVentesSeul + cashRecouvrementSeul - totalDepenses;
+    const cashEnCaisse = Math.round(cashVentesSeul + cashRecouvrementSeul - totalDepenses);
 
     console.log(`[DEBUG SESSION ${ouvertureCaisseId}] Brut: ${totalVentes} | Crédits: ${totalDettesAccordees} | Recouv: ${totalRecouvrement} | Dép: ${totalDepenses} | NET: ${cashEnCaisse}`);
 
@@ -114,53 +133,105 @@ exports.ouvrirCaisse = async ({ fondInitial, gerantId, boutiqueId }) => {
     });
 };
 
-exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture, commentairesGérant, gerantId, paiementsCommissions }) => {
-    const ouverture = await OuvertureCaisse.findById(ouvertureCaisseId);
+exports.fermerCaisseEtCreerRapport = async ({ 
+    ouvertureCaisseId, 
+    ouvertureCaisse, // Fallback pour les données provenant de preparerRapportCloture
+    montantCloture, 
+    soldeReel, // Fallback si le contrôleur passe soldeReel
+    commentairesGérant,
+    commentairesGerant, 
+    gerantId,
+    gérantId,
+    gerant, // Fallback pour les données provenant de preparerRapportCloture
+    paiementsCommissions 
+}) => {
+    // 0. Standardisation des entrées
+    const finalGerantId = gerantId || gérantId || gerant;
+    const finalCommentaires = commentairesGérant || commentairesGerant;
+    const finalMontantCloture = parseFloat(montantCloture?.toString() || soldeReel?.toString()) || 0;
+    const targetCaisseId = ouvertureCaisseId || ouvertureCaisse;
+
+    // 1. Vérifier l'ouverture de caisse
+    let ouverture;
+    
+    // Si targetCaisseId est déjà un document Mongoose (cas du middleware)
+    if (targetCaisseId && typeof targetCaisseId === 'object' && targetCaisseId.statut) {
+        ouverture = targetCaisseId;
+    } 
+    // Sinon recherche par identifiant
+    else if (targetCaisseId && mongoose.isValidObjectId(targetCaisseId)) {
+        ouverture = await OuvertureCaisse.findById(targetCaisseId);
+    }
+    // Fallback : Chercher la session ouverte actuelle pour ce gérant si l'ID est manquant
+    else if (!ouverture && finalGerantId) {
+        ouverture = await OuvertureCaisse.findOne({ gerant: finalGerantId, statut: 'OUVERTE' });
+    }
+
     if (!ouverture) throw new Error("Caisse introuvable.");
 
-    // Traitement des commissions si présentes
+    // SÉCURITÉ : Vérifier si un rapport existe déjà pour cette session (Évite l'erreur E11000)
+    const rapportExistant = await RapportCaisse.findOne({ ouvertureCaisse: ouverture._id });
+    if (rapportExistant) {
+        console.warn(`[Caisse] Tentative de clôture d'une session (${ouverture._id}) ayant déjà un rapport.`);
+        if (ouverture.statut === 'OUVERTE') {
+            ouverture.statut = 'FERMEE';
+            ouverture.dateFermeture = new Date();
+            await ouverture.save();
+        }
+        return rapportExistant;
+    }
+
+    // 2. Forcer l’annulation des commandes non encaissées (Utiliser l'ID réel)
+    await venteService.annulerCommandesNonEncaissees(ouverture._id);
+
+    // 3. Traiter les commissions éventuelles
     if (paiementsCommissions && Array.isArray(paiementsCommissions)) {
         for (const p of paiementsCommissions) {
             await commissionService.processPayment({ 
                 workerId: p.clientId, 
                 montant: p.montant, 
-                gerantId, 
-                boutiqueId: ouverture.boutique, 
-                ouvertureCaisseId 
+                gerantId: finalGerantId, 
+                boutiqueId: ouverture.boutique?._id || ouverture.boutique, 
+                ouvertureCaisseId: ouverture._id 
             });
         }
     }
 
-    const bilan = await calculerBilansSession(ouvertureCaisseId);
-    const fondInit = safeNum(ouverture.fondInitial);
-    
+    // 4. Calculer le bilan de la session
+    const bilan = await calculerBilansSession(ouverture._id);
+    const fondInit = safeNum(ouverture.fondInitial || 0);
     const soldeTheorique = fondInit + bilan.cashEnCaisse;
-    const ecart = (parseFloat(montantCloture?.toString()) || 0) - soldeTheorique;
+    const ecart = finalMontantCloture - soldeTheorique;
 
+    // 5. Créer le rapport de caisse
     const rapport = await RapportCaisse.create({
-        ouvertureCaisse: ouvertureCaisseId,
-        gerant: gerantId,
-        boutique: ouverture.boutique,
+        ouvertureCaisse: ouverture._id,
+        gerant: finalGerantId,
+        boutique: ouverture.boutique?._id || ouverture.boutique,
         fondInitial: ouverture.fondInitial,
         totalVentes: bilan.totalVentes,
         totalDettes: bilan.totalDettesAccordees,
         totalMobileMoney: bilan.totalMobileMoney,
         totalMobileMoneyRecoveries: bilan.totalMobileMoneyRecoveries,
-        totalRecouvrement: bilan.totalRecouvrement, // Correspond maintenant au schéma
-        totalDepensesApprouvees: bilan.totalDepenses, // Correspond maintenant au schéma
+        totalRecouvrement: bilan.totalRecouvrement,
+        totalDepensesApprouvees: bilan.totalDepenses,
         soldeTheorique,
-        montantCloture,
+        montantCloture: finalMontantCloture,
         ecart,
-        commentairesGérant,
-        statut: 'EN_ATTENTE' // Assurer le statut initial pour la validation
+        commentairesGérant: finalCommentaires,
+        statut: 'EN_ATTENTE'
     });
 
+    // 6. Clôturer l’ouverture de caisse
     ouverture.statut = 'FERMEE';
     ouverture.dateFermeture = new Date();
     await ouverture.save();
 
     return rapport;
 };
+
+
+
 
 exports.validerRapport = async ({ rapportId, adminId, commentairesAdmin }) => {
     try {
@@ -274,23 +345,52 @@ exports.getReportDetails = async ({ rapportId }) => {
 /**
  * Statistiques en temps réel pour la modale de clôture
  */
-exports.getStatistiquesSession = async (gerantId) => {
-    const ouverture = await OuvertureCaisse.findOne({ gerant: gerantId, statut: 'OUVERTE' }).lean();
+exports.getStatistiquesSession = async (user) => {
+    const userId = user.id || user._id;
+    const boutiqueId = user.boutique?._id || user.boutique;
+
+    // Un serveur consulte les stats de la boutique, un gérant les siennes
+    const query = (user.role === 'Serveur') 
+        ? { boutique: boutiqueId, statut: 'OUVERTE' }
+        : { gerant: userId, statut: 'OUVERTE' };
+
+    const ouverture = await OuvertureCaisse.findOne(query).lean();
     if (!ouverture) return { soldeTheorique: 0, totalVentes: 0, totalRecouvrement: 0 };
 
     const bilan = await calculerBilansSession(ouverture._id);
     const fondInitial = Math.round(parseFloat(ouverture.fondInitial?.toString()) || 0);
     const soldeTheorique = Math.round(fondInitial + bilan.cashEnCaisse);
     
+    // SÉCURITÉ : Le compte de synchronisation ne doit pas être visible pour l'ADMIN
+    let syncInfo = {};
+    if (user.role !== 'Admin') {
+        const unsyncedCount = await Vente.countDocuments({ ouvertureCaisse: ouverture._id, isSynced: { $ne: true } });
+        syncInfo = { 
+            ventesAttenteSynchro: unsyncedCount,
+            showSyncButton: unsyncedCount > 0 
+        };
+    } else {
+        syncInfo = { showSyncButton: false };
+    }
+
     return {
         fondInitial: fondInitial,
         ...bilan,
-        soldeTheorique: soldeTheorique
+        soldeTheorique: soldeTheorique,
+        ...syncInfo
     };
 };
 
-exports.getStatutCaisse = async (gerantId) => {
-    const ouverture = await OuvertureCaisse.findOne({ gerant: gerantId, statut: 'OUVERTE' }).populate('boutique').lean();
+exports.getStatutCaisse = async (user) => {
+    const userId = user.id || user._id;
+    const boutiqueId = user.boutique?._id || user.boutique;
+
+    // Recherche par boutique pour les serveurs pour qu'ils voient la caisse ouverte par le gérant
+    const query = (user.role === 'Serveur')
+        ? { boutique: boutiqueId, statut: 'OUVERTE' }
+        : { gerant: userId, statut: 'OUVERTE' };
+
+    const ouverture = await OuvertureCaisse.findOne(query).populate('boutique').lean();
     if (!ouverture) return null;
     const bilan = await calculerBilansSession(ouverture._id);
 
@@ -298,8 +398,21 @@ exports.getStatutCaisse = async (gerantId) => {
     const fondInitialNum = parseFloat(ouverture.fondInitial?.toString()) || 
                            (typeof ouverture.fondInitial === 'number' ? ouverture.fondInitial : 0);
 
+    // SÉCURITÉ : Le compte de synchronisation ne doit pas être visible pour l'ADMIN
+    let syncInfo = {};
+    if (user.role !== 'Admin') {
+        const unsyncedCount = await Vente.countDocuments({ ouvertureCaisse: ouverture._id, isSynced: { $ne: true } });
+        syncInfo = { 
+            ventesAttenteSynchro: unsyncedCount,
+            showSyncButton: unsyncedCount > 0 
+        };
+    } else {
+        syncInfo = { showSyncButton: false };
+    }
+
     return { 
         ...ouverture, 
+        ...syncInfo,
         session: { 
             ...bilan, 
             cashReelActuel: Math.max(0, fondInitialNum + bilan.cashEnCaisse)

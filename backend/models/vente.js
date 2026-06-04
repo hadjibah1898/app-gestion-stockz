@@ -19,7 +19,9 @@ const venteSchema = new mongoose.Schema({
     modePaiement: { type: String, default: 'Cash' },
     transactionRef: { type: String },
     pourboire: { type: Number, default: 0 },
-    numeroTable: { type: String }
+    numeroTable: { type: String },
+    isSynced: { type: Boolean, default: false },
+    syncedAt: { type: Date }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Vente', venteSchema);

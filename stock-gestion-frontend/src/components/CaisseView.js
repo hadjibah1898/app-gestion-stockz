@@ -10,6 +10,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Form, Spinner, Alert, Row, Col, InputGroup, Modal, Tabs, Tab, Table, Badge } from 'react-bootstrap';
+import { toast } from 'react-toastify';
 import { useLocation } from 'react-router-dom';
 import { caisseAPI, clientAPI, venteAPI } from '../services/api';
 import jsPDF from 'jspdf';
@@ -40,7 +41,6 @@ const CaisseView = () => {
     const location = useLocation(); // Pour détecter si on vient du dashboard avec une action
     const [caisseStatut, setCaisseStatut] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
     // State for forms
@@ -74,22 +74,19 @@ const CaisseView = () => {
         try {
             setLoading(true);
             const res = await caisseAPI.getStatut();
-            setCaisseStatut(res.data);
+            setCaisseStatut(res.data); // Interceptor handles .data.data
         } catch (err) {
             // Si la caisse n'est pas ouverte, l'API renvoie 403, ce qui est normal.
             // On vérifie si un rapport est en attente.
             if (err.response && err.response.status === 403) {
-                setError(err.response.data.message);
+                // L'intercepteur gère déjà le toast, on peut juste logguer ou ignorer
             } else {
                 // Afficher le message d'erreur spécifique du backend s'il existe pour faciliter le débogage
                 // Gestion du cas où un rapport a été rejeté et nécessite une action
                 if (err.response?.data?.statut === 'REJETE') {
                     setIsCorrection(true);
-                    setError(
-                        <div>
-                            <strong>Rapport Rejeté :</strong> {err.response.data.message}
-                            <br/>
-                            <Button variant="outline-danger" size="sm" className="mt-2" onClick={() => setShowCloseModal(true)}>
+                    toast.error(
+                        <div><strong>Rapport Rejeté :</strong> {err.response.data.message} <Button variant="outline-danger" size="sm" className="mt-2" onClick={() => setShowCloseModal(true)}>
                                 Corriger et Relancer la clôture
                             </Button>
                         </div>
@@ -97,9 +94,7 @@ const CaisseView = () => {
                 } else {
                     setIsCorrection(false);
                 }
-                const msg = err.response?.data?.message || "Erreur lors de la récupération du statut de la caisse.";
-                const detail = err.response?.data?.error ? ` (${err.response.data.error})` : '';
-                setError(msg + detail);
+                // L'intercepteur gère déjà le toast pour les autres erreurs
             }
             setCaisseStatut(null); // Assure que l'état est bien null en cas d'erreur
         } finally {
@@ -126,7 +121,7 @@ const CaisseView = () => {
             const loadStatistiquesSession = async () => {
                 try {
                     const res = await caisseAPI.getStatistiquesSession();
-                    setStatistiquesSession(res.data);
+                    setStatistiquesSession(res.data); // Interceptor handles .data.data
                 } catch (err) {
                     console.error("Erreur lors du chargement des statistiques de la session:", err);
                     // En cas d'erreur, on utilise les données du statut existant
@@ -182,16 +177,16 @@ const CaisseView = () => {
 
     const handleOpenCaisse = async (e) => {
         e.preventDefault();
-        setError('');
+        // setError(''); // Géré par l'intercepteur
         setSuccess('');
         setOpeningCaisse(true);
         try {
             await caisseAPI.ouvrir({ fondInitial: parseFloat(fondInitial) });
-            setSuccess("Caisse ouverte avec succès !");
+            toast.success("Caisse ouverte avec succès !");
             setFondInitial('');
             fetchStatut(); // Recharger le statut
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'ouverture de la caisse.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setOpeningCaisse(false);
         }
@@ -231,13 +226,13 @@ const CaisseView = () => {
 
     const handleCloseCaisse = async (e) => {
         e.preventDefault();
-        setError('');
+        // setError(''); // Géré par l'intercepteur
         setSuccess('');
         setClosingCaisse(true);
 
         const montantClotureNum = parseFloat(montantCloture);
         if (isNaN(montantClotureNum)) {
-             setError("Veuillez saisir un montant valide.");
+             toast.error("Veuillez saisir un montant valide.");
              setClosingCaisse(false);
              return;
         }
@@ -267,7 +262,7 @@ const CaisseView = () => {
         if (ecartCalcule !== 0 && !commentaires.trim()) {
             setEcart(ecartCalcule);
             setAfficherJustification(true);
-            setError("Veuillez justifier l'écart détecté avant de valider la clôture.");
+            toast.error("Veuillez justifier l'écart détecté avant de valider la clôture.");
             setClosingCaisse(false);
             return;
         }
@@ -279,7 +274,7 @@ const CaisseView = () => {
                     montantCloture: Math.round(montantClotureNum),
                     commentairesGérant: commentaires
                 });
-                setSuccess("Rapport corrigé et renvoyé pour validation.");
+                toast.success("Rapport corrigé et renvoyé pour validation.");
             } else {
                 // Mode fermeture standard
                 await caisseAPI.fermer({ 
@@ -287,7 +282,7 @@ const CaisseView = () => {
                     commentairesGérant: commentaires.trim(),
                     commentaires: commentaires.trim()
                 });
-                setSuccess("Caisse fermée et rapport généré avec succès.");
+                toast.success("Caisse fermée et rapport généré avec succès.");
             }
             setMontantCloture('');
             setCommentaires('');
@@ -296,9 +291,9 @@ const CaisseView = () => {
             setShowCloseModal(false);
             setCurrentRapportForCorrection(null);
             setCaisseStatut(null); // Réinitialiser le statut pour afficher le formulaire d'ouverture
-            fetchStatut(); // Recharger le statut
+            fetchStatut(); // Recharger le statut (l'intercepteur gère l'erreur)
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'opération.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setClosingCaisse(false);
         }
@@ -353,11 +348,6 @@ const CaisseView = () => {
                 <div className="text-center mb-4">
                     <iconify-icon icon="solar:lock-keyhole-minimalistic-bold-duotone" style={{ fontSize: '64px' }} className="text-danger"></iconify-icon>
                     <h4 className="fw-bold mt-3">Caisse Fermée</h4>
-                    {error && typeof error !== 'string' && ( // Si l'erreur est un objet (notre bouton de relance)
-                        <Alert variant="danger" className="mt-3">
-                            {error}
-                        </Alert>
-                    )}
                     <p className="text-muted">Veuillez ouvrir la caisse pour commencer à enregistrer des ventes.</p>
                 </div>
                 <Form onSubmit={handleOpenCaisse}>
@@ -416,8 +406,8 @@ const CaisseView = () => {
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Ventes de la session</h6>
-                                <h4 className="fw-bold text-primary">{(caisseStatut.session.totalVentes || 0).toLocaleString()} GNF</h4>
-                                <small className="text-muted">{caisseStatut.session.nombreVentes} transaction(s)</small>
+                                <h4 className="fw-bold text-primary">{(caisseStatut.session?.totalVentes || 0).toLocaleString()} GNF</h4>
+                                <small className="text-muted">{caisseStatut.session?.nombreVentes || 0} transaction(s)</small>
                             </Card.Body>
                         </Card>
                     </Col>
@@ -434,8 +424,8 @@ const CaisseView = () => {
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Dépenses de la session</h6>
-                                <h4 className="fw-bold text-danger">{(caisseStatut.session.totalDepenses || 0).toLocaleString()} GNF</h4>
-                                <small className="text-muted">{caisseStatut.session.nombreDepenses} dépense(s)</small>
+                                <h4 className="fw-bold text-danger">{(caisseStatut.session?.totalDepenses || 0).toLocaleString()} GNF</h4>
+                                <small className="text-muted">{caisseStatut.session?.nombreDepenses || 0} dépense(s)</small>
                             </Card.Body>
                         </Card>
                     </Col>
@@ -455,8 +445,7 @@ const CaisseView = () => {
     return (
         <div className="p-4">
             <h3 className="fw-bold mb-4">Gestion de la Caisse</h3>
-            {success && <Alert variant="success">{success}</Alert>}
-            {error && <Alert variant="danger">{error}</Alert>}
+            {success && <Alert variant="success">{success}</Alert>} {/* Garder le succès local si besoin */}
 
             <Tabs defaultActiveKey="caisse" id="caisse-tabs" className="mb-3">
                 <Tab eventKey="caisse" title="Caisse">
@@ -719,8 +708,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [showModal, setShowModal] = useState(false); // Pour la création de dépense simple
     const [showCommissionModal, setShowCommissionModal] = useState(false); // Pour le paiement de commission
     const [newExpense, setNewExpense] = useState({ montant: '', motif: '' });
-    const [submitLoading, setSubmitLoading] = useState(false);
-    const [error, setError] = useState('');
+    const [submitLoading, setSubmitLoading] = useState(false); // Garder pour le spinner
     
     // États pour le paiement de commission
     const [workers, setWorkers] = useState([]);
@@ -728,8 +716,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [selectedWorkerId, setSelectedWorkerId] = useState('');
     const [paymentAmount, setPaymentAmount] = useState('');
 
-    const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false);
-    const [commissionError, setCommissionError] = useState('');
+    const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false); // Garder pour le spinner
     
     // Utilisation directe du solde calculé par le backend pour éviter les erreurs de clés
     const availableCash = caisseStatut 
@@ -748,7 +735,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
         caisseAPI.getMesDepenses()
             .then(res => {
                 // On filtre les dépenses pour ne garder que celles de la session de caisse actuelle.
-                const sessionDepenses = res.data.filter(d => d.ouvertureCaisse === caisseStatut._id);
+                const sessionDepenses = (res.data.data || []).filter(d => d.ouvertureCaisse === caisseStatut._id);
                 setDepenses(sessionDepenses);
             })
             .catch(err => {
@@ -771,31 +758,27 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                     const workersWithCommission = res.data.filter(c => c.type === 'Ouvrier' && c.commission > 0);
                     setWorkers(workersWithCommission);
                 })
-                .catch(err => setCommissionError("Erreur chargement des ouvriers."))
+                .catch(err => { /* Erreur gérée par l'intercepteur Axios */ })
                 .finally(() => setLoadingWorkers(false));
         }
     }, [showCommissionModal]);
 
     const handleOpenCreateModal = () => {
         setNewExpense({ montant: '', motif: '' });
-        setError('');
         setShowModal(true);
     };
 
     const handleOpenCommissionModal = () => {
         setSelectedWorkerId('');
         setPaymentAmount('');
-        setCommissionError('');
         setShowCommissionModal(true);
     };
 
     const handleCreateExpense = async (e) => {
         e.preventDefault();
         setSubmitLoading(true);
-        setError('');
-
         if (parseFloat(newExpense.montant) > availableCash) {
-            setError(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
+            toast.error(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
             setSubmitLoading(false);
             return;
         }
@@ -807,7 +790,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
             setShowModal(false);
             if (onExpenseCreated) onExpenseCreated(); // Rafraîchir les stats globales
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'opération.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setSubmitLoading(false);
         }
@@ -816,30 +799,29 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const handlePayCommission = async (e) => {
         e.preventDefault();
         setCommissionSubmitLoading(true);
-        setCommissionError('');
         const selectedWorker = workers.find(w => w._id === selectedWorkerId);
 
         if (parseFloat(paymentAmount) > availableCash) {
-            setCommissionError(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
+            toast.error(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
             setCommissionSubmitLoading(false);
             return;
         }
 
         if (!selectedWorker) {
-            setCommissionError("Veuillez sélectionner un ouvrier.");
+            toast.error("Veuillez sélectionner un ouvrier.");
             setCommissionSubmitLoading(false);
             return;
         }
 
         const amountToPay = parseFloat(paymentAmount);
         if (isNaN(amountToPay) || amountToPay <= 0) {
-            setCommissionError("Le montant à payer est invalide.");
+            toast.error("Le montant à payer est invalide.");
             setCommissionSubmitLoading(false);
             return;
         }
 
         if (amountToPay > selectedWorker.commission) {
-            setCommissionError("Le montant à payer ne peut pas dépasser la commission due.");
+            toast.error("Le montant à payer ne peut pas dépasser la commission due.");
             setCommissionSubmitLoading(false);
             return;
         }
@@ -857,7 +839,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
             if (onExpenseCreated) onExpenseCreated();
 
         } catch (err) {
-            setCommissionError(err.response?.data?.message || "Erreur lors du paiement de la commission.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setCommissionSubmitLoading(false);
         }
@@ -914,7 +896,6 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                 </Modal.Header>
                 <Form onSubmit={handleCreateExpense}>
                     <Modal.Body>
-                        {error && <Alert variant="danger">{error}</Alert>}
                         <Form.Group className="mb-3">
                             <Form.Label>Motif</Form.Label>
                             <Form.Control 
@@ -968,7 +949,6 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                 </Modal.Header>
                 <Form onSubmit={handlePayCommission}>
                     <Modal.Body>
-                        {commissionError && <Alert variant="danger">{commissionError}</Alert>}
                         {loadingWorkers ? <div className="text-center"><Spinner /></div> : (
                             <>
                                 <Form.Group className="mb-3">
@@ -1045,11 +1025,8 @@ const RapportsTab = ({ onCorrect }) => {
     useEffect(() => {
         caisseAPI.getMesRapports()
             .then(res => {
-                if (res.data && res.data.data) {
-                    setRapports(res.data.data);
-                } else {
-                    setRapports(res.data || []);
-                }
+                // res.data contient directement { data, totalPages, ... }
+                setRapports(res.data.data || []);
             })
             .catch(err => console.error(err))
             .finally(() => setLoading(false));

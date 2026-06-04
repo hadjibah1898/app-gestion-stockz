@@ -35,6 +35,7 @@ export const generateReceiptPDF = (ticketData) => {
         itemLevelDiscount = 0,
         totalNet = 0,
         amountPaid = 0,
+        pourboire = 0,
         echeanceDette = null,
     } = ticketData;
 
@@ -99,10 +100,23 @@ export const generateReceiptPDF = (ticketData) => {
     }
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text('TOTAL NET:', 5, finalY);
+    doc.setFontSize(9);
+    doc.text('TOTAL ARTICLES:', 5, finalY);
     doc.text(`${formatPrice(totalNet)} GNF`, 75, finalY, { align: 'right' });
-    finalY += 5;
+    finalY += 6;
+
+    if (pourboire > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.text('Service (Pourboire):', 5, finalY);
+        doc.text(`+ ${formatPrice(pourboire)} GNF`, 75, finalY, { align: 'right' });
+        finalY += 6;
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text('TOTAL À PAYER:', 5, finalY);
+        doc.text(`${formatPrice(totalNet + pourboire)} GNF`, 75, finalY, { align: 'right' });
+        finalY += 7;
+    }
     
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
@@ -110,7 +124,7 @@ export const generateReceiptPDF = (ticketData) => {
     doc.text(`${formatPrice(amountPaid)} GNF`, 75, finalY, { align: 'right' });
     finalY += 5;
 
-    const balance = amountPaid - totalNet;
+    const balance = amountPaid - (totalNet + pourboire);
 
     if (balance >= 0) {
         // Cas normal : Monnaie à rendre

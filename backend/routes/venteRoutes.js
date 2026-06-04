@@ -2,20 +2,24 @@ const express = require('express');
 const router = express.Router();
 const venteController = require('../controllers/venteController');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { checkCaisseOuverte } = require('../middleware/caisseMiddleware');
-const { validateVente } = require('../middleware/validators');
+const injectCodeBoutique = require('../middleware/injectCodeBoutique'); // Import du nouveau middleware
 const validateObjectId = require('../middleware/validateObjectId');
 
-// Routes
-router.post('/', protect, authorize('Gérant', 'Serveur'), checkCaisseOuverte, validateVente, venteController.effectuerVente); 
-router.get('/historique', protect, venteController.getHistorique);
-router.get('/logs', protect, authorize('Admin', 'SuperAdmin'), venteController.getLogs);
+/**
+ * ROUTES DES VENTES
+ */
 
-router.post('/:id/cancel', protect, validateObjectId('id'), venteController.annulerVente);
-router.patch('/group/:orderGroupId/status', protect, authorize('Gérant', 'Serveur'), venteController.updateGroupStatus); 
-router.patch('/:id/status', protect, authorize('Gérant', 'Serveur'), validateObjectId('id'), venteController.updateStatus);
+// Route pour lister les ventes (utilisée par le Dashboard et l'Historique)
+router.get('/historique', protect, authorize('Admin', 'Gérant', 'Serveur'), injectCodeBoutique, venteController.getHistorique);
 
-// Route de configuration (Admin seulement)
-router.patch('/settings/tips', protect, authorize('Admin', 'SuperAdmin'), venteController.updateTipPercentage);
+// Route pour effectuer une vente ou prendre une commande
+router.post('/', protect, authorize('Gérant', 'Serveur'), injectCodeBoutique, venteController.createVente);
+
+// Route for updating group status
+// This route is called by VentesView.js when a Gérant updates the status of a group of sales (e.g., finalizes a table)
+router.patch('/group/:orderGroupId/status', protect, authorize('Admin', 'Gérant', 'Serveur'), injectCodeBoutique, venteController.updateGroupStatus);
+
+// Route pour annuler une ligne de vente spécifique (utilisée par le bouton trash dans HistoryTab)
+router.post('/:id/cancel', protect, authorize('Admin', 'Gérant'), injectCodeBoutique, validateObjectId('id'), venteController.cancelVente);
 
 module.exports = router;

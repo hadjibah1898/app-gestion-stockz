@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useContext, useCallback, useRef } from 'react';
 import { authAPI } from './services/api';
-
+import socket, { initSocket } from './services/socket';
 const NotificationContext = createContext();
 
 export const useNotifications = () => useContext(NotificationContext);
@@ -60,17 +60,31 @@ export const NotificationProvider = ({ children }) => {
     }, []); // Dépendances vides : la fonction est stable et ne change jamais
 
     useEffect(() => {
+        // Gérer la connexion et les écouteurs Socket.io
         const token = localStorage.getItem('token');
         if (token) {
-            fetchNotifications(true);
-            const interval = setInterval(() => fetchNotifications(false), 20000); // Poll every 20 seconds
-            return () => clearInterval(interval);
+            fetchNotifications(true); // Premier chargement au montage
+
+            // Initialisation de secours au cas où l'App n'aurait pas encore fini
+            const userRole = localStorage.getItem('userRole');
+            if (userRole) initSocket({ role: userRole });
+
+            const handleNewNotification = () => {
+                console.log('Socket.io: Nouvelle notification reçue, rafraîchissement...');
+                fetchNotifications(true); // Rafraîchir toutes les notifications
+            };
+
+            if (socket) socket.on('new_notification', handleNewNotification);
+
+            return () => {
+                if (socket) socket.off('new_notification', handleNewNotification); // Nettoyage de l'écouteur
+            };
         } else {
             setNotifications([]);
             setUnreadCount(0);
             setLoading(false);
         }
-    }, [fetchNotifications]); // Se déclenche uniquement au montage ou si fetchNotifications change (ce qui n'arrive plus)
+    }, [fetchNotifications]); // Dépend de fetchNotifications (qui est useCallback)
 
     const markAsRead = useCallback(async (id) => {
         const notification = notifications.find(n => n._id === id);

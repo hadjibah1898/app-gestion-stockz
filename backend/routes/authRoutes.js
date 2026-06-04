@@ -5,13 +5,13 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 const { validateAuth } = require('../middleware/validators');
 const validateObjectId = require('../middleware/validateObjectId');
 
-// Routes publiques (pas besoin d'être authentifié)
+// Routes publiques
 router.post('/register', validateAuth, authController.register);
 router.post('/login', validateAuth, authController.login);
 router.post('/forgot-password', authController.forgotPassword);
 
+// Routes protégées
 router.post('/change-password', protect, authController.changePassword);
-// Routes protégées (nécessitent un token JWT)
 router.get('/me', protect, authController.getCurrentUser);
 router.put('/profile', protect, authController.updateProfile);
 router.get('/notifications', protect, authController.getNotifications);
@@ -19,21 +19,14 @@ router.put('/notifications/:id/read', protect, validateObjectId('id'), authContr
 router.put('/notifications/mark-all-read', protect, authController.markAllNotificationsRead);
 
 // --- Routes Admin ---
-// Créer un gérant
 router.post('/create-manager', protect, authorize('Admin'), validateAuth, authController.createManager);
 router.get('/users/trash', protect, authorize('Admin'), authController.getDeletedUsers);
-
-// Routes de modification et suppression des gérants
 router.put('/managers/:id', protect, authorize('Admin'), validateObjectId('id'), authController.updateManager);
 router.put('/managers/:id/restore', protect, authorize('Admin'), validateObjectId('id'), authController.restoreManager);
+router.delete('/managers/:id', protect, authorize('SuperAdmin', 'Admin'), validateObjectId('id'), authController.deleteManager);
 
-// Route pour l'historique complet des notifications (Admin)
 router.get('/admin/notifications', protect, authorize('Admin'), authController.getAllNotifications);
-
-// Autorise l'Admin à tout voir, et le Gérant à accéder à la liste (le contrôleur filtrera ensuite)
 router.get('/users', protect, authorize('Admin', 'Gérant'), authController.getUsers);
-
-// Autorise le Gérant à créer un compte (Serveur)
 router.post('/users', protect, authorize('Admin', 'Gérant'), authController.register);
 
 module.exports = router;

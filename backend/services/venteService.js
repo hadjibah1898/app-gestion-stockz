@@ -7,6 +7,7 @@ const Mouvement = require('../models/Mouvement');
 const Client = require('../models/Client');
 const DebtMovement = require('../models/DebtMovement');
 const notificationService = require('./notificationService');
+const OuvertureCaisse = require('../models/OuvertureCaisse');
 const mongoose = require('mongoose');
 const auditHelper = require('../utils/auditHelper');
 
@@ -14,6 +15,17 @@ const auditHelper = require('../utils/auditHelper');
 // Utilisée comme cache pour la performance lors des ventes
 let currentTipPercentage = 0.05;
 
+// Helper to safely convert value to number (handles Decimal128 from MongoDB)
+// This is crucial for arithmetic operations on potentially mixed number types from the DB.
+const safeNum = (value) => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return parseFloat(value) || 0;
+  if (typeof value === 'object' && value.$numberDecimal) {
+    return parseFloat(value.$numberDecimal) || 0;
+  }
+  return 0;
+};
 /**
  * Initialise ou synchronise le taux de pourboire depuis la base de données.
  */
@@ -51,20 +63,25 @@ exports.updateTipConfig = async (newPercentage) => {
 /**
  * Traite un panier complet (plusieurs articles) avec gestion de stock, remise et dette client.
  */
-exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null, req = null, modePaiementSaisi = 'Cash', transactionRefSaisi = null, numeroTable = null) => { 
+exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null, req = null, modePaiementSaisi = 'Cash', transactionRefSaisi = null, numeroTable = null) => {
     try {
         // 1. SÉCURITÉ : Vérifier la session de caisse
-        const sessionActive = await mongoose.model('OuvertureCaisse').findOne({ 
-            _id: ouvertureCaisseId, 
-            // La caisse doit être celle du gérant de la boutique, même si c'est un serveur qui commande
-            statut: 'OUVERTE' 
-        });
-        if (!sessionActive) throw new Error("Session de caisse invalide ou fermée.");
+        // Si l'ID n'est pas fourni (cas fréquent chez les serveurs), on cherche la session ouverte de la boutique
+        const sessionQuery = { boutique: boutiqueId, statut: 'OUVERTE' };
+        if (ouvertureCaisseId && mongoose.Types.ObjectId.isValid(ouvertureCaisseId)) {
+            sessionQuery._id = ouvertureCaisseId;
+        }
+
+        const sessionActive = await OuvertureCaisse.findOne(sessionQuery);
+        if (!sessionActive) throw new Error("La session de caisse de la boutique est fermée. Le gérant doit ouvrir la caisse avant de prendre des commandes.");
+
+        // Utiliser l'ID de la session active trouvée (évite les erreurs si le frontend envoie null)
+        const finalCaisseId = sessionActive._id;
 
         const isOrderOnly = user.role === 'Serveur';
         
         // Récupérer le taux de pourboire spécifique à la boutique
-        const boutique = await Boutique.findById(boutiqueId);
+        const boutique = await Boutique.findById(boutiqueId).lean();
 
         // SÉCURITÉ MULTI-TENANT : Un Admin ne peut créer des ventes que dans ses propres boutiques
         if (user.role === 'Admin' && boutique.createur.toString() !== user.id.toString()) {
@@ -72,7 +89,7 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
         }
         
         // Calcul du taux effectif : 0 si désactivé manuellement, sinon taux boutique ou taux global
-        const effectiveTipRate = (boutique && !boutique.tipsEnabled) 
+        const effectiveTipRate = (boutique && boutique.tipsEnabled === false) 
             ? 0 
             : ((boutique && boutique.tipPercentage !== undefined) ? (boutique.tipPercentage / 100) : currentTipPercentage);
 
@@ -83,58 +100,72 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
 
         // 2. BOUCLE SUR LES ARTICLES DU PANIER
         for (const item of items) {
-            const { article: articleId, quantite, remiseTemp, remiseType } = item;
+            let { article: articleId, quantite, remiseTemp, remiseType, venteUnitType } = item;
 
-            const article = await Article.findById(articleId).populate('boutique');
-            if (!article) throw new Error("Article introuvable.");
+            // SÉCURITÉ SYNC : Extraire l'ID si c'est un objet
+            const cleanArticleId = (articleId && typeof articleId === 'object' && articleId._id) ? articleId._id : articleId;
+
+            const article = await Article.findById(cleanArticleId).lean();
+            if (!article) throw new Error(`L'article ${item.article?.nom || 'ID: ' + cleanArticleId} est introuvable.`);
+
+            // Calcul du décrément de stock fractionnaire
+            const stockDecrement = (venteUnitType === 'dose' && article.isDoseEnabled) 
+                ? (quantite / (article.dosesPerBottle || 10)) 
+                : quantite;
 
             if (!isOrderOnly) {
                 const articleUpdated = await Article.findOneAndUpdate(
-                    { _id: articleId, quantite: { $gte: quantite } },
-                    { $inc: { quantite: -quantite } },
+                    { _id: cleanArticleId, quantite: { $gte: stockDecrement } },
+                    { $inc: { quantite: -stockDecrement } },
                     { new: true } 
                 );
                 if (!articleUpdated) throw new Error(`Stock insuffisant pour "${article.nom}".`);
             }
 
             // Calcul du prix unitaire (Logique de hiérarchie des prix)
-            let prixUnitaire = article.prixVente;
+            const isDoseVente = venteUnitType === 'dose' && article.isDoseEnabled;
+            const remiseVal = remiseTemp ? parseFloat(remiseTemp) : 0;
+            let prixUnitaire = isDoseVente ? safeNum(article.prixDose) : safeNum(article.prixVente);
 
-            if (article.promoActive && article.promo > 0) {
+            // On n'applique pas les remises bouteille sur les doses
+            if (!isDoseVente && article.promoActive && article.promo > 0) {
                 prixUnitaire = prixUnitaire * (1 - article.promo / 100);
-            } else if (remiseTemp && remiseTemp > 0) {
+            } else if (!isDoseVente && remiseVal > 0) {
                 prixUnitaire = remiseType === 'pourcentage' 
-                    ? prixUnitaire * (1 - remiseTemp / 100) 
-                    : prixUnitaire - remiseTemp;
+                    ? prixUnitaire * (1 - remiseVal / 100) 
+                    : prixUnitaire - remiseVal;
             } else if (article.remise > 0) {
                 prixUnitaire = prixUnitaire * (1 - article.remise / 100);
             }
 
             // Sécurité anti-vente à perte
-            if (prixUnitaire < article.prixAchat) {
-                throw new Error(`Prix remisé (${prixUnitaire} GNF) inférieur au prix d'achat pour "${article.nom}".`);
+            if (prixUnitaire < safeNum(article.prixAchat)) {
+                throw new Error(`Prix remisé (${prixUnitaire} GNF) inférieur au prix d'achat pour "${article.nom}". (Achat: ${safeNum(article.prixAchat)})`);
             }
 
-            const prixTotal = prixUnitaire * quantite;
+            const qty = parseInt(quantite);
+            const prixTotal = prixUnitaire * qty;
             totalGeneralVente += prixTotal;
 
             // Création de l'entrée de vente
             const vente = await Vente.create({
                 article: articleId,
-                quantite,
+                quantite: qty,
                 prixTotal,
                 gerant: user.id,
                 boutique: boutiqueId,
                 statut: isOrderOnly ? 'commande' : 'finalisee',
                 remiseAppliquee: remiseTemp || 0,
                 remiseType: remiseType || 'montant',
-                ouvertureCaisse: ouvertureCaisseId,
+                ouvertureCaisse: finalCaisseId,
                 client: clientId,
+                venteUnitType: venteUnitType || 'bottle',
                 numeroTable,
                 pourboire: isOrderOnly ? Math.round(prixTotal * effectiveTipRate) : 0,
                 transactionRef: transactionRefSaisi,
                 orderGroupId: orderGroupId, // Assigner l'ID de groupe
-                modePaiement: modePaiementSaisi // Capture du mode de paiement
+                modePaiement: modePaiementSaisi, // Capture du mode de paiement
+                codeBoutique: boutique.codeBoutique // Tag de l'organisation
             });
 
             itemsVendus.push(vente);
@@ -143,7 +174,7 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
                 articlesPourMvt.push({ 
                     articleId: article._id, 
                     nomArticle: article.nom, 
-                    quantite, 
+                    quantite: stockDecrement, 
                     prixAchatUnitaire: article.prixAchat 
                 });
             }
@@ -193,6 +224,18 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
             }
         }
 
+        // Notification temps réel pour le gérant de la boutique
+        if (isOrderOnly && global.io) {
+            global.io.to(`boutique_${boutiqueId}`).emit('nouvelle_commande', { table: numeroTable, orderGroupId });
+            console.log(`[Socket.io] Émis 'nouvelle_commande' vers boutique_${boutiqueId} pour table ${numeroTable}, orderGroupId ${orderGroupId}`);
+        }
+
+        // Notification pour les ventes standards (Gérant) : permet aux autres gérants de voir le stock/CA à jour
+        if (!isOrderOnly && global.io) {
+            global.io.to(`boutique_${boutiqueId}`).emit('vente_effectuee', { orderGroupId });
+            console.log(`[Socket.io] Émis 'vente_effectuee' vers boutique_${boutiqueId}`);
+        }
+
         // Définir refVente ici pour qu'elle soit toujours disponible pour l'audit
         const refVente = itemsVendus[0]?._id.toString().slice(-6).toUpperCase();
 
@@ -232,6 +275,16 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
             montantPaye: montantPaye // Inclure le montant payé brut pour plus de détails
         });
 
+        // --- MISE À JOUR DE LA CAISSE (Nécessaire pour le Dashboard) ---
+        if (!isOrderOnly && finalCaisseId) {
+            await OuvertureCaisse.findByIdAndUpdate(finalCaisseId, {
+                $inc: { 
+                    totalVentes: totalGeneralVente,
+                    nombreVentes: 1
+                }
+            });
+        }
+
         return itemsVendus;
 
     } catch (error) {
@@ -250,12 +303,223 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
 };
 
 /**
+ * Annule une vente individuelle et restaure le stock si nécessaire
+ */
+exports.annulerVente = async (id, user, req = null) => {
+    const vente = await Vente.findById(id).populate('article');
+    if (!vente) throw new Error("Vente introuvable.");
+
+    // Sécurité Multi-tenant
+    const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
+    if (user.role !== 'Admin' && vente.boutique.toString() !== userBoutiqueId) {
+        throw new Error("Accès refusé : vous ne pouvez annuler que les ventes de votre boutique.");
+    }
+
+    // Sécurité : Délai de 2h pour les gérants
+    if (user.role === 'Gérant') {
+        const diffHours = (new Date() - vente.createdAt) / (1000 * 60 * 60);
+        if (diffHours > 2) throw new Error("Délai d'annulation (2h) dépassé. Contactez l'administrateur.");
+    }
+
+    if (vente.isCancelled) throw new Error("Cette vente est déjà annulée.");
+
+    // RESTAURATION DU STOCK : Uniquement si la vente a déjà déduit le stock (statut finalisée ou prêt)
+    if (vente.statut === 'finalisee' || vente.statut === 'en_preparation') {
+        await Article.findByIdAndUpdate(vente.article._id, { $inc: { quantite: vente.quantite } });
+
+        // Restauration de la caisse (Session active ou passée)
+        if (vente.ouvertureCaisse) {
+            await mongoose.model('OuvertureCaisse').findByIdAndUpdate(vente.ouvertureCaisse, {
+                $inc: { totalVentes: -vente.prixTotal }
+            });
+        }
+
+        // Trace dans les mouvements de stock
+        await Mouvement.create({
+            type: 'Annulation Vente',
+            boutiqueSource: vente.boutique,
+            articles: [{
+                articleId: vente.article._id,
+                nomArticle: vente.article.nom,
+                quantite: vente.quantite,
+                prixAchatUnitaire: vente.article.prixAchat
+            }],
+            operateur: user.id,
+            details: `Annulation article sur table/groupe #${vente.orderGroupId?.slice(-6).toUpperCase() || 'N/A'}`
+        });
+    }
+
+    vente.isCancelled = true;
+    vente.statut = 'annulee';
+    await vente.save();
+
+    // Notification au serveur si l'annulateur est différent de celui qui a pris la commande
+    if (vente.gerant && vente.gerant.toString() !== user.id.toString()) {
+        notificationService.sendItemCancelledAlert(vente, user)
+            .catch(e => console.error("Erreur notification annulation article:", e.message));
+    }
+
+    await auditHelper.logSuccess(req, user, 'CANCEL_SALE', 'Vente', id, { total: vente.prixTotal, article: vente.article?.nom });
+
+    return { success: true, message: "Article annulé avec succès." };
+};
+
+/**
+ * Met à jour le statut d'un groupe de commande (ex: Table entière)
+ * Gère la décrémentation du stock si passage à 'finalisee'
+ * Supporte la mise à jour partielle via itemIds
+ */
+exports.updateGroupStatus = async (orderGroupId, status, user, req = null, modePaiement = 'Cash', transactionRef = null, itemIds = []) => {
+    console.log(`[venteService] updateGroupStatus called for ${orderGroupId}, status: ${status}, items: ${itemIds?.length || 'all'}`);
+    
+    // 1. Construction intelligente de la requête
+    let query = {};
+    if (itemIds && itemIds.length > 0) {
+        // Si des IDs d'articles sont fournis (sélection partielle), on les utilise directement
+        query._id = { $in: itemIds.filter(id => mongoose.isValidObjectId(id)) };
+    } else if (mongoose.isValidObjectId(orderGroupId)) {
+        // Si l'identifiant est un ObjectId technique (orderGroupId)
+        query.orderGroupId = orderGroupId;
+    } else if (orderGroupId) {
+        // Cas du regroupement par table : orderGroupId contient le numéro de table (ex: "55")
+        query.numeroTable = orderGroupId;
+        query.boutique = user.boutique?._id || user.boutique; // Sécurité : rester dans la boutique
+        query.statut = { $ne: 'finalisee' }; // On ne cible que les commandes en cours
+    } else {
+        throw new Error("Identifiant de commande ou numéro de table manquant.");
+    }
+
+    const ventes = await Vente.find(query);
+    if (ventes.length === 0) {
+        throw new Error("Groupe de commande introuvable.");
+    }
+
+    const boutiqueId = ventes[0].boutique;
+
+    // Si on finalise (Encaissement), on doit décrémenter le stock car le serveur ne l'a pas fait
+    if (status === 'finalisee') {
+        const articlesPourMvt = [];
+        let totalGeneralVente = 0;
+        let itemsToUpdateCount = 0;
+
+        for (const vente of ventes) {
+            // Sécurité : Ne pas traiter des articles déjà annulés ou déjà payés
+            if (vente.isCancelled || vente.statut === 'finalisee') continue;
+
+            const article = await Article.findById(vente.article).lean();
+            const stockDecrement = (vente.venteUnitType === 'dose' && article?.isDoseEnabled) 
+                ? (vente.quantite / (article.dosesPerBottle || 10)) 
+                : vente.quantite;
+
+            // Décrémenter le stock
+            const articleUpdated = await Article.findOneAndUpdate(
+                { _id: vente.article, quantite: { $gte: stockDecrement } },
+                { $inc: { quantite: -stockDecrement } },
+                { new: true }
+            );
+
+            if (!articleUpdated) {
+                throw new Error(`Stock insuffisant pour "${article ? article.nom : 'Article'}" lors de la finalisation.`);
+            }
+
+            totalGeneralVente += safeNum(vente.prixTotal);
+            itemsToUpdateCount++;
+            articlesPourMvt.push({
+                articleId: articleUpdated._id,
+                nomArticle: articleUpdated.nom,
+                quantite: stockDecrement,
+                prixAchatUnitaire: articleUpdated.prixAchat
+            });
+
+            // Alerte stock faible
+            const seuil = articleUpdated.seuilAlerte || 10;
+            if (articleUpdated.quantite <= seuil) {
+                notificationService.sendLowStockAlert(articleUpdated).catch(e => console.error(e));
+            }
+
+            // Mettre à jour le statut de la vente individuelle
+            vente.statut = 'finalisee';
+            vente.modePaiement = modePaiement || 'Cash';
+            vente.transactionRef = transactionRef;
+            await vente.save();
+        }
+
+        // Traçabilité : Créer le mouvement de stock global pour le groupe
+        if (articlesPourMvt.length > 0) {
+            await Mouvement.create({
+                type: 'Vente',
+                boutiqueSource: boutiqueId,
+                articles: articlesPourMvt,
+                operateur: user.id,
+                details: `Encaissement Table/Groupe #${orderGroupId.toString().slice(-6).toUpperCase()}`
+            });
+        }
+
+        // Mise à jour de la caisse session
+        if (itemsToUpdateCount > 0 && ventes[0].ouvertureCaisse) {
+            await OuvertureCaisse.findByIdAndUpdate(ventes[0].ouvertureCaisse, {
+                $inc: { 
+                    totalVentes: Math.round(totalGeneralVente),
+                    nombreVentes: itemsToUpdateCount
+                }
+            });
+        }
+
+        // Audit
+        await auditHelper.logSuccess(req, user, 'FINALIZE_GROUP', 'Vente', orderGroupId, { total: totalGeneralVente });
+
+    } else if (status === 'en_preparation') {
+        const updateQuery = itemIds && itemIds.length > 0 ? { _id: { $in: itemIds } } : { orderGroupId };
+        await Vente.updateMany(updateQuery, { $set: { statut: 'en_preparation' } });
+
+        // Notifier le serveur que la commande est prête
+        // Ensure ventes[0] and ventes[0].gerant are valid before attempting to send notification
+        if (ventes[0] && ventes[0].gerant) {
+            notificationService.sendOrderReadyAlert(ventes[0], user).catch(e => console.error(`[venteService] Error sending order ready alert for orderGroupId ${orderGroupId}: ${e.message}`));
+        } else {
+            console.warn(`[venteService] Skipping order ready alert for orderGroupId ${orderGroupId}: ventes[0] or ventes[0].gerant is missing.`);
+        }
+        
+    } else if (status === 'annulee') {
+        // Annulation du groupe (ne restaure pas le stock car 'commande' ne l'a pas déduit)
+        await Vente.updateMany({ orderGroupId }, { $set: { isCancelled: true, statut: 'annulee' } });
+        notificationService.sendOrderCancelledAlert(ventes[0], user).catch(e => console.error(e));
+        
+        // Audit
+        await auditHelper.logSuccess(req, user, 'CANCEL_GROUP', 'Vente', orderGroupId, { status: 'annulee' });
+    } else {
+        // Autres changements de statut simples
+        await Vente.updateMany({ orderGroupId }, { $set: { statut: status } });
+    }
+
+    // Notification Socket.io pour mettre à jour les interfaces en temps réel
+    if (global.io) {
+        global.io.to(`boutique_${boutiqueId}`).emit('group_finalized', { 
+            orderGroupId, 
+            status,
+            numeroTable: ventes[0].numeroTable 
+        });
+    }
+
+    return { success: true };
+};
+
+/**
  * Liste les ventes avec filtres et pagination
  */
-exports.listerVentes = async (filter = {}, user = null) => {
+exports.listerVentes = async (filter = {}, user = null, req = null) => {
     const page = parseInt(filter.page) || 1;
     const limit = filter.limit !== undefined ? parseInt(filter.limit) : 15;
     const query = {};
+    let codeBoutique = req?.codeBoutique || user?.codeBoutique; // Récupérer le codeBoutique
+
+    // SÉCURITÉ : Si le code est manquant pour un Admin, on le récupère via sa boutique centrale
+    if (!codeBoutique && user?.role === 'Admin') {
+        const primaryBoutique = await Boutique.findOne({ createur: user.id, type: 'Centrale' });
+        if (primaryBoutique) {
+            codeBoutique = primaryBoutique.codeBoutique;
+        }
+    }
 
     if (filter.startDate || filter.endDate) {
         query.createdAt = {};
@@ -278,357 +542,337 @@ exports.listerVentes = async (filter = {}, user = null) => {
     if (filter.gerantId) query.gerant = filter.gerantId;
 
     // Filtrage par statut (ex: pour isoler les commandes serveurs)
-    if (filter.statut) query.statut = filter.statut;
+    if (filter.statut) {
+        query.statut = Array.isArray(filter.statut) ? { $in: filter.statut } : filter.statut;
+    }
     
     // Support pour exclure un statut spécifique (ex: exclure les commandes de l'historique)
-    if (filter.excludeStatut) query.statut = { $ne: filter.excludeStatut };
+    if (filter.excludeStatut) query.statut = { ...query.statut, $ne: filter.excludeStatut };
 
     // Filtrer par référence de transaction
     if (filter.transactionRefSearch) {
         query.transactionRef = { $regex: filter.transactionRefSearch, $options: 'i' };
     }
 
+    // Appliquer le filtre codeBoutique à toutes les requêtes
+    if (codeBoutique) {
+        query.codeBoutique = codeBoutique;
+    } else if (user?.role !== 'SuperAdmin') {
+        // SÉCURITÉ CRITIQUE : Si aucun codeBoutique n'est trouvé pour un non-SuperAdmin,
+        // on force un filtre qui ne retournera rien plutôt que de tout retourner.
+        // Cela évite qu'un Admin sans boutique ne voie les ventes globales.
+        query.codeBoutique = "___FORCE_EMPTY_RESULT___";
+    }
+
     if (user && user.role === 'Admin') {
-        const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
-        const myIds = myBoutiques.map(b => b._id.toString());
+        // Pour l'Admin, on filtre par son codeBoutique (qui est le même pour toutes ses boutiques)
+        // Si un filtre boutique spécifique est demandé, on le respecte s'il appartient à l'Admin
         if (filter.boutique) {
-            query.boutique = myIds.includes(filter.boutique.toString()) ? filter.boutique : { $in: [] };
+            const targetBoutique = await Boutique.findById(filter.boutique);
+            if (targetBoutique && targetBoutique.codeBoutique === codeBoutique) {
+                query.boutique = filter.boutique;
+            } else {
+                query.boutique = { $in: [] }; // Empêcher l'accès à une boutique qui ne lui appartient pas
+            }
         } else {
-            query.boutique = { $in: myBoutiques.map(b => b._id) };
+            // Si pas de filtre boutique, on voit toutes les ventes de son organisation
+            // Le filtre codeBoutique est déjà appliqué
         }
-    } else if (user && user.role === 'Serveur') {
-        query.gerant = user.id;
-        if (user.boutique) query.boutique = user.boutique;
-    } else if (user && user.role === 'Gérant') {
-        if (user.boutique) query.boutique = user.boutique;
-    }
-
-    const totalVentes = await Vente.countDocuments(query);
-    const ventes = await Vente.find(query)
-        .sort({ createdAt: -1 })
-        .skip(limit > 0 ? (page - 1) * limit : 0)
-        .limit(limit > 0 ? limit : 0)
-        .populate('article', 'nom image code')
-        .populate('gerant', 'nom') // Peupler le gérant pour avoir son nom
-        .populate('boutique', 'nom adresse telephone') // Peupler la boutique pour les infos du ticket
-        .populate('client', 'nom'); // Peupler le client pour avoir son nom
-
-    return { ventes, totalPages: limit > 0 ? Math.ceil(totalVentes / limit) : 1, currentPage: page };
-};
-
-/**
- * Annule une vente et restaure le stock
- */
-exports.annulerVente = async (venteId, user, req) => {
-    let vente = null;
-    try {
-        vente = await Vente.findById(venteId).populate('boutique');
-        if (!vente || vente.isCancelled) throw new Error(!vente ? "Vente introuvable." : "Vente déjà annulée.");
-
-        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut annuler que les ventes de ses propres boutiques
-        if (user.role === 'Admin' && vente.boutique?.createur?.toString() !== user.id.toString()) {
-            throw new Error("Accès refusé : Vous ne pouvez annuler que les ventes de vos propres boutiques.");
+    } else if (user && (user.role === 'Serveur' || user.role === 'Gérant')) {
+        // Le serveur est limité à ses propres ventes, le gérant voit toute l'équipe
+        if (user.role === 'Serveur') {
+            query.gerant = user.id;
         }
 
-        // Délai de 24h pour les gérants
-        if (user.role === 'Gérant') {
-            const diffInHours = (Date.now() - new Date(vente.createdAt)) / (1000 * 60 * 60);
-            if (diffInHours > 24) throw new Error("Délai d'annulation (24h) dépassé.");
-        }
-
-        // Récupérer l'article pour avoir son nom dans les logs, même si on ne restaure pas le stock
-        const article = await Article.findById(vente.article);
-        const articleNom = article ? article.nom : 'Article supprimé';
-
-        // SÉCURITÉ : On ne restaure le stock que si la vente n'était pas une simple commande
-        if (vente.statut !== 'commande' && article) {
-            article.quantite += vente.quantite;
-            await article.save();
-
-            // Enregistrement du mouvement de stock
-            await Mouvement.create({
-                type: 'Annulation Vente',
-                boutiqueSource: vente.boutique,
-                articles: [{ articleId: article._id, nomArticle: articleNom, quantite: vente.quantite }],
-                operateur: user.id,
-                details: `Restauration suite annulation vente #${vente._id}`
+        // LOGIQUE DE RÉINITIALISATION (Gérant & Serveur) : 
+        // Si aucune date n'est spécifiée, on ne montre par défaut que les ventes de la session ACTUELLE.
+        // Cela permet de vider les tableaux (Prêts, Commandes) et de remettre les compteurs à zéro 
+        // dès que la caisse est clôturée par le gérant.
+        if (!filter.startDate && !filter.endDate) {
+            const activeSession = await OuvertureCaisse.findOne({ 
+                boutique: user.boutique?._id || user.boutique, 
+                statut: 'OUVERTE' 
             });
+            if (activeSession) {
+                query.ouvertureCaisse = activeSession._id;
+            } else {
+                // Si la caisse est fermée, on force un résultat vide pour le "reset" visuel
+                query._id = { $in: [] }; 
+            }
         }
-
-        vente.isCancelled = true;
-        vente.statut = 'annulee'; // Changement de statut pour sortir du flux "Commande"
-        await vente.save();
-
-        // SÉCURITÉ & ALERTE : Si le gérant annule la commande d'un serveur, on notifie le serveur
-        if (user.id.toString() !== vente.gerant.toString()) {
-            await notificationService.sendOrderCancelledAlert(vente, user);
-        }
-
-        // Enregistrement dans le Journal d'Audit (AuditLog) pour l'admin (Succès)
-        await auditHelper.logSuccess(req, user, 'CANCEL_SALE', 'Vente', vente._id, { 
-            article: articleNom, 
-            quantite: vente.quantite, 
-            montant: vente.prixTotal 
-        });
-
-        return { success: true };
-    } catch (error) {
-        // Enregistrement de l'échec via l'utilitaire centralisé
-        await auditHelper.logFailure(req, user, 'CANCEL_SALE', 'Vente', venteId, error, {
-            venteFound: !!vente,
-            isCancelled: vente?.isCancelled
-        });
-
-        throw error;
-    }
-};
-
-/**
- * Met à jour le statut d'une commande et gère les mouvements de stock associés
- */
-exports.updateStatus = async (venteId, newStatus, user, req) => {
-    const vente = await Vente.findById(venteId).populate('article boutique');
-    if (!vente) throw new Error("Vente introuvable.");
-
-    // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier le statut que des ventes de ses propres boutiques
-    if (user.role === 'Admin' && vente.boutique?.createur?.toString() !== user.id.toString()) {
-        throw new Error("Accès refusé : Vous ne pouvez modifier le statut que des ventes de vos propres boutiques.");
     }
 
-    // Mise à jour optionnelle du mode de paiement (ex: changement de Cash vers OM lors de l'encaissement)
-    if (req.body.modePaiement) vente.modePaiement = req.body.modePaiement;
-    
-    const digitalModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
-    
-    // Enregistrement de la référence de transaction si fournie
-    if (req.body.transactionRef) {
-        vente.transactionRef = req.body.transactionRef;
-    } else if (newStatus === 'finalisee' && digitalModes.includes(vente.modePaiement)) {
-        // SÉCURITÉ : Bloquer la finalisation si la référence est manquante pour un paiement digital
-        throw new Error(`Une référence de transaction est obligatoire pour le paiement par ${vente.modePaiement}.`);
-    }
+    // Optimisation des champs Article selon le rôle (économie de bande passante pour le Serveur)
+    // On inclut l'image pour l'expérience utilisateur (UX) dans les listings
+    const articleFields = 'nom code prixVente prixAchat image';
 
-    // SÉCURITÉ : On compare les IDs de boutique uniquement si la vente en possède un.
-    // Cela permet de valider les anciennes commandes créées avant la correction du bug boutique.
-    const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
-    const venteBoutiqueId = (vente.boutique?._id || vente.boutique || '').toString();
+    const pipeline = [];
 
-    if (['Gérant', 'Serveur'].includes(user.role) && venteBoutiqueId && userBoutiqueId !== venteBoutiqueId) {
-        throw new Error("Action refusée : Vous ne pouvez pas valider une commande d'une autre boutique.");
-    }
-
-    // Validation des transitions autorisées
-    const allowedTransitions = {
-        'commande': ['en_preparation', 'finalisee', 'annulee'],
-        'en_preparation': ['finalisee', 'annulee'] // Gardé pour compatibilité avec anciennes données
+    // Correction Critique : Pour l'agrégation ($match), les IDs doivent être au format ObjectId
+    const ensureObjectId = (id) => {
+        if (!id) return id;
+        if (Array.isArray(id)) return id.map(i => ensureObjectId(i));
+        if (typeof id === 'string' && mongoose.isValidObjectId(id)) return new mongoose.Types.ObjectId(id);
+        return id;
     };
 
-    if (!allowedTransitions[vente.statut]?.includes(newStatus)) {
-        throw new Error(`Transition de statut invalide : ${vente.statut} -> ${newStatus}`);
+    if (query.gerant) query.gerant = ensureObjectId(query.gerant);
+    if (query.boutique) query.boutique = ensureObjectId(query.boutique);
+    if (query.client) query.client = ensureObjectId(query.client);
+
+    // Initial match for security and basic filters
+    pipeline.push({ $match: query });
+
+    // New parameter for grouping
+    const groupBy = filter.groupBy; // 'table' or 'order'
+
+    // Grouping stage
+    let groupById;
+    if (groupBy === 'table') {
+        // If grouping by table, use numeroTable. If no table, use orderGroupId.
+        groupById = {
+            $cond: [
+                { $ne: ['$numeroTable', null] },
+                '$numeroTable',
+                '$orderGroupId' // Fallback to orderGroupId for 'à emporter' or no table
+            ]
+        };
+    } else { // Default or 'order'
+        groupById = '$orderGroupId';
     }
 
-    // Déduction du stock lors de la validation finale par le gérant
-    if (vente.statut === 'commande' && (newStatus === 'en_preparation' || newStatus === 'finalisee')) {
-        // Vérification de l'existence de l'article (cas où l'article a été supprimé)
-        const articleId = vente.article?._id || vente.article;
-        if (!articleId) throw new Error("Impossible de valider : l'article n'existe plus en base.");
-
-        const article = await Article.findById(articleId);
-        if (!article) throw new Error("Article introuvable dans le stock.");
-
-        if (article.quantite < (vente.quantite || 0)) {
-            throw new Error(`Stock insuffisant pour "${article?.nom || 'l\'article'}".`);
+    pipeline.push({
+        $group: {
+            _id: groupById,
+            items: { $push: '$$ROOT' },
+            totalGroupPrice: {
+                $sum: {
+                    $cond: [{ $eq: ['$isCancelled', true] }, 0, '$prixTotal']
+                }
+            },
+            totalGroupPourboire: {
+                $sum: {
+                    $cond: [{ $eq: ['$isCancelled', true] }, 0, '$pourboire']
+                }
+            },
+            hasPending: {
+                $max: {
+                    $cond: [{ $eq: ['$statut', 'commande'] }, 1, 0]
+                }
+            },
+            hasReady: {
+                $max: {
+                    $cond: [{ $eq: ['$statut', 'en_preparation'] }, 1, 0]
+                }
+            },
+            allCancelled: {
+                $min: {
+                    $cond: [{ $eq: ['$isCancelled', true] }, true, false]
+                }
+            },
+            numeroTable: { $first: '$numeroTable' },
+            orderGroupId: { $first: '$orderGroupId' },
+            client: { $first: '$client' },
+            gerant: { $first: '$gerant' },
+            boutique: { $first: '$boutique' },
+            createdAt: { $first: '$createdAt' },
+            modePaiement: { $first: '$modePaiement' }, // Assuming modePaiement is consistent within a group
+            transactionRef: { $first: '$transactionRef' } // Assuming transactionRef is consistent within a group
         }
+    });
 
-        article.quantite -= vente.quantite;
-        await article.save();
+    // Add fields for final group status
+    pipeline.push({
+        $addFields: {
+            isCancelled: '$allCancelled',
+            statut: {
+                $cond: [
+                    '$allCancelled',
+                    'annulee',
+                    {
+                        $cond: [
+                            { $eq: ['$hasPending', 1] },
+                            'commande',
+                            {
+                                $cond: [
+                                    { $eq: ['$hasReady', 1] },
+                                    'en_preparation',
+                                    'finalisee'
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    });
 
-        // Enregistrement du mouvement de stock (DÉDUCTION)
-        await Mouvement.create({
-            type: 'Vente',
-            boutiqueSource: vente.boutique || user.boutique, // Utilise la boutique du gérant si la vente n'en a pas
-            articles: [{ 
-                nomArticle: article.nom, 
-                quantite: vente.quantite, 
-                prixAchatUnitaire: article.prixAchat 
-            }],
-            operateur: user.id,
-            details: `Validation commande Table ${vente.numeroTable || 'N/A'}`
+    // Sort grouped results
+    pipeline.push({ $sort: { createdAt: -1 } }); // Sort groups by creation date (latest first)
+
+    // Apply pagination to grouped results
+    const limitNum = parseInt(limit) || 15;
+    const pageNum = parseInt(page) || 1;
+    const skip = (pageNum - 1) * limitNum;
+    let totalGroupedCount = 0;
+
+    if (limitNum > 0) {
+        // On compte les groupes AVANT de limiter pour la pagination
+        const countPipeline = [...pipeline, { $count: "total" }];
+        const countResult = await Vente.aggregate(countPipeline);
+        totalGroupedCount = countResult.length > 0 ? countResult[0].total : 0;
+
+        pipeline.push({ $skip: skip });
+        pipeline.push({ $limit: limitNum });
+    }
+
+    // C'EST ICI QUE LA MAGIE OPÈRE : On va chercher les détails uniquement pour les 15 groupes affichés
+    pipeline.push({
+        $lookup: {
+            from: 'articles',
+            localField: 'items.article',
+            foreignField: '_id',
+            as: 'populatedArticles'
+        }
+    });
+    pipeline.push({
+        $lookup: {
+            from: 'users', // Utilisation de la collection users
+            localField: 'items.gerant',
+            foreignField: '_id',
+            as: 'populatedGerants'
+        }
+    });
+    pipeline.push({
+        $lookup: {
+            from: 'clients',
+            localField: 'items.client',
+            foreignField: '_id',
+            as: 'populatedClients'
+        }
+    });
+
+    const groupedVentes = await Vente.aggregate(pipeline);
+
+    // Format the output to match frontend expectations
+    const formattedGroups = groupedVentes.map(group => {
+        // Reconstruction des objets complets pour le frontend
+        const mappedItems = group.items.map(item => {
+            const articleObj = group.populatedArticles.find(a => a._id.toString() === item.article.toString());
+            const gerantObj = group.populatedGerants.find(u => u._id.toString() === item.gerant.toString());
+            const clientObj = group.populatedClients.find(c => c._id.toString() === (item.client || '').toString());
+            
+            const newItem = {
+                ...item,
+                article: articleObj,
+                gerant: gerantObj,
+                client: clientObj
+            };
+
+            // SÉCURITÉ : Cacher l'état de synchronisation pour l'Admin pour éviter les alertes inutiles
+            if (user && user.role === 'Admin') {
+                delete newItem.isSynced;
+                delete newItem.syncedAt;
+            }
+            return newItem;
         });
-    } else if (newStatus === 'annulee' && vente.statut !== 'commande' && !vente.isCancelled) {
-        // SÉCURITÉ : Si on annule une commande déjà en préparation/finalisée, on RESTAURE le stock
-        const article = await Article.findById(vente.article);
-        article.quantite += vente.quantite;
-        await article.save();
 
-        // Log du retour de stock
-        await Mouvement.create({
-            type: 'Annulation Vente',
-            boutiqueSource: vente.boutique,
-            articles: [{ 
-                nomArticle: article.nom, 
-                quantite: vente.quantite, 
-                prixAchatUnitaire: article.prixAchat 
-            }],
-            operateur: user.id,
-            details: `Validation commande Table ${vente.numeroTable || 'N/A'}`
-        });
-    }
+        return {
+            orderGroupId: group.orderGroupId || group._id,
+            numeroTable: group.numeroTable,
+            createdAt: group.createdAt,
+            items: mappedItems,
+            // Récupérer le gérant et le client du premier item pour les infos de l'en-tête du groupe
+            gerant: mappedItems[0]?.gerant,
+            client: mappedItems[0]?.client,
+            boutique: group.boutique,
+            totalGroupPrice: group.totalGroupPrice,
+            totalGroupPourboire: group.totalGroupPourboire,
+            statut: group.statut,
+            isCancelled: group.isCancelled,
+            modePaiement: group.modePaiement,
+            transactionRef: group.transactionRef
+        };
+    });
 
-    vente.statut = newStatus;
-    if (newStatus === 'annulee') {
-        vente.isCancelled = true;
-    }
-
-    // Déclencher les alertes selon le nouveau statut, seulement si l'action est faite par un autre utilisateur
-    // et si le statut change réellement pour éviter les notifications redondantes.
-    // Pas de notification pour 'finalisee' car le serveur verra la commande disparaître de sa liste.
-    // Déclencher les alertes selon le nouveau statut
-    if (user.id.toString() !== vente.gerant.toString()) {
-        if (newStatus === 'annulee') await notificationService.sendOrderCancelledAlert(vente, user);
-        if (newStatus === 'en_preparation') await notificationService.sendOrderReadyAlert(vente, user);
-    }
-    
-    await vente.save();
-    return vente;
+    return {
+        ventes: formattedGroups,
+        totalCount: totalGroupedCount, // Total count of grouped documents
+        totalPages: limitNum > 0 ? Math.ceil(totalGroupedCount / limitNum) : 1,
+        currentPage: pageNum
+    };
 };
 
 /**
- * Met à jour le statut d'un groupe de commandes (par orderGroupId) et gère les mouvements de stock associés.
+ * Annule automatiquement toutes les commandes non encaissées d'une session.
+ * Appelé lors de la clôture de la caisse.
+ * @param {string} ouvertureCaisseId - ID de la session de caisse à nettoyer
+ * @param {Object} session - Session MongoDB (pour les transactions)
  */
-exports.updateGroupStatus = async (orderGroupId, newStatus, user, req) => {
-    let ventes = await Vente.find({ orderGroupId: orderGroupId }).populate('article boutique');
-    const { modePaiement, transactionRef } = req.body;
-    const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
+exports.annulerCommandesNonEncaissees = async (ouvertureCaisseId, session = null) => {
+    const query = { 
+        ouvertureCaisse: ouvertureCaisseId, 
+        statut: { $in: ['commande', 'en_preparation'] },
+        isCancelled: false 
+    };
 
-    const digitalModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
-
-    // SÉCURITÉ : Validation Backend des paiements digitaux
-    if (newStatus === 'finalisee' && modePaiement && digitalModes.includes(modePaiement) && !transactionRef) {
-        throw new Error(`Référence de transaction manquante pour le paiement groupé en ${modePaiement}.`);
-    }
-
-    // SÉCURITÉ/COMPATIBILITÉ : Si aucun groupe trouvé par ID, on cherche par Table ou ID individuel
-    if (!ventes || ventes.length === 0) {
-        if (mongoose.isValidObjectId(orderGroupId)) {
-            const single = await Vente.findById(orderGroupId).populate('article boutique');
-            if (single) ventes = [single];
-        } else if (orderGroupId.startsWith('EMPORTER_')) {
-            const id = orderGroupId.replace('EMPORTER_', '');
-            if (mongoose.isValidObjectId(id)) {
-                const single = await Vente.findById(id).populate('article boutique');
-                if (single) ventes = [single];
-            }
-        } else {
-            // Cas de la vue Préparation : l'ID est le numéro de table (ex: "5")
-            ventes = await Vente.find({ 
-                numeroTable: orderGroupId, 
-                boutique: userBoutiqueId,
-                statut: { $ne: 'finalisee' },
-                isCancelled: false 
-            }).populate('article boutique');
-        }
-    }
-
-    if (!ventes || ventes.length === 0) throw new Error("Groupe de ventes introuvable.");
-
-    const updatedVentes = [];
-    const articlesPourMvt = [];
-    const notifiedServers = new Set(); // Pour s'assurer qu'un serveur ne reçoit qu'une seule notification par groupe
-
-    for (const vente of ventes) {
-        // SÉCURITÉ : On compare les IDs de boutique uniquement si la vente en possède un.
-        const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
-        const venteBoutiqueId = (vente.boutique?._id || vente.boutique || '').toString();
-
-        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier le statut que des ventes de ses propres boutiques
-        if (user.role === 'Admin' && vente.boutique?.createur?.toString() !== user.id.toString()) {
-            throw new Error("Accès refusé : Vous ne pouvez modifier le statut que des ventes de vos propres boutiques.");
-        }
-
-        if (['Gérant', 'Serveur'].includes(user.role) && venteBoutiqueId && userBoutiqueId !== venteBoutiqueId) {
-            throw new Error("Action refusée : Vous ne pouvez pas valider une commande d'une autre boutique.");
-        }
-
-        // SÉCURITÉ : Si l'article est déjà annulé ou déjà dans l'état cible, on l'ignore dans le traitement de groupe
-        if (vente.isCancelled || vente.statut === newStatus) continue;
-
-        // Si on essaie de finaliser un article qui est déjà finalisé ou en préparation, on continue (pour le groupe)
-        // Cela permet de valider un groupe où certains articles sont déjà passés à l'état final.
-        // On ne devrait pas bloquer la validation du groupe entier pour un article déjà traité.
-        if (newStatus === 'finalisee' && (vente.statut === 'finalisee' || vente.statut === 'en_preparation')) continue;
-
-        // Validation des transitions autorisées
-        const allowedTransitions = {
-            'commande': ['en_preparation', 'finalisee', 'annulee'],
-            'en_preparation': ['finalisee', 'annulee'] // Gardé pour compatibilité avec anciennes données
-        };
-
-        if (!allowedTransitions[vente.statut]?.includes(newStatus)) {
-            // Si une seule vente dans le groupe ne peut pas transiter, on bloque tout le groupe
-            throw new Error(`Transition de statut invalide pour l'article "${vente.article?.nom}" : ${vente.statut} -> ${newStatus}`);
-        }
-
-        // Mise à jour du mode de paiement pour chaque article du groupe
-        if (modePaiement) vente.modePaiement = modePaiement;
-        if (transactionRef) vente.transactionRef = transactionRef;
-
-        // Déduction du stock lors de la validation finale par le gérant
-        if (vente.statut === 'commande' && (newStatus === 'en_preparation' || newStatus === 'finalisee')) {
-            const articleId = vente.article?._id || vente.article;
-            if (!articleId) throw new Error(`Impossible de valider : l'article n'existe plus en base pour la vente ${vente._id}.`);
-
-            const article = await Article.findById(articleId);
-            if (!article) throw new Error(`Article introuvable dans le stock pour la vente ${vente._id}.`);
-
-            if (article.quantite < (vente.quantite || 0)) {
-                throw new Error(`Stock insuffisant pour "${article?.nom || 'l\'article'}".`);
-            }
-
-            article.quantite -= vente.quantite;
-            await article.save();
-
-            articlesPourMvt.push({ 
-                nomArticle: article.nom, 
-                quantite: vente.quantite, 
-                prixAchatUnitaire: article.prixAchat 
-            });
-        }
-
-        vente.statut = newStatus;
-        if (newStatus === 'annulee') {
-            vente.isCancelled = true;
-            if (user.id.toString() !== vente.gerant.toString()) {
-                await notificationService.sendOrderCancelledAlert(vente, user);
-            }
-        }
-        await vente.save();
-        updatedVentes.push(vente);
-    }
-
-    // Créer un mouvement de stock unique pour tout le groupe si des déductions ont eu lieu
-    if (articlesPourMvt.length > 0) {
-        await Mouvement.create({
-            type: 'Vente',
-            boutiqueSource: ventes[0].boutique || user.boutique,
-            articles: articlesPourMvt,
-            operateur: user.id,
-            details: `Validation groupe commande #${orderGroupId.slice(-6).toUpperCase()} Table ${ventes[0].numeroTable || 'N/A'}`
-        });
-    }
-
-    return updatedVentes;
+    // On marque tout comme annulé. 
+    // Note : On ne restaure pas le stock ici car dans votre logique actuelle, 
+    // les statuts 'commande' et 'en_preparation' n'ont pas encore déduit le stock.
+    return await Vente.updateMany(
+        query, 
+        { $set: { statut: 'annulee', isCancelled: true } },
+        { session }
+    );
 };
 
-/** * Récupère les détails d'une vente spécifique */
-exports.getDetailsVente = async (venteId) => {
-    const vente = await Vente.findById(venteId)
-        .populate('article', 'nom image code')
-        .populate('gerant', 'nom')        
-        .populate('boutique', 'nom')
-        .populate('client', 'nom');
+/**
+ * Prépare et calcule les données financières pour le rapport de clôture.
+ * @param {string} ouvertureCaisseId - ID de la session d'ouverture
+ * @param {number} soldeReel - Le montant physiquement présent dans la caisse
+ * @param {object} user - L'utilisateur (gérant) qui clôture
+ * @returns {object} Les données formatées pour le modèle RapportCaisse
+ */
+exports.preparerRapportCloture = async (ouvertureCaisseId, soldeReel, user) => {
+    
+    let session;
+    // 1. Vérifier si l'identifiant passé est déjà l'objet session complet (possède une propriété statut)
+    if (ouvertureCaisseId && typeof ouvertureCaisseId === 'object' && ouvertureCaisseId.statut) {
+        session = ouvertureCaisseId;
+    }
+    // 2. Si c'est un ID (string ou ObjectId), on charge la session depuis la DB
+    else if (ouvertureCaisseId && mongoose.isValidObjectId(ouvertureCaisseId)) {
+        session = await OuvertureCaisse.findById(ouvertureCaisseId);
+    }
 
-    if (!vente) throw new Error("Vente introuvable.");
+    // 3. Fallback ultime : Chercher la session ouverte actuelle pour la boutique de l'utilisateur
+    if (!session && user) {
+        const boutiqueId = user.boutique?._id || user.boutique;
+        if (boutiqueId) {
+            session = await OuvertureCaisse.findOne({ boutique: boutiqueId, statut: 'OUVERTE' });
+        }
+    }
+    
+    if (!session) {
+        throw new Error("Caisse introuvable : aucune session ouverte n'a pu être identifiée pour cette clôture.");
+    }
 
-    return vente;
+    if (session.statut !== 'OUVERTE') throw new Error("Cette session de caisse est déjà clôturée.");
+
+    const sReel = safeNum(soldeReel);
+    // Calcul du solde théorique : Fond initial + Ventes - Dépenses
+    const soldeTheorique = safeNum(session.fondInitial) + safeNum(session.totalVentes) - safeNum(session.totalDepenses);
+    const ecart = sReel - soldeTheorique;
+
+    return {
+        gerantId: user.id || user._id,
+        boutique: session.boutique,
+        ouvertureCaisseId: session._id,
+        soldeTheorique: Math.round(soldeTheorique),
+        montantCloture: sReel, // Aligné sur ce qu'attend caisseService
+        ecart,
+        totalVentes: safeNum(session.totalVentes),
+        totalDepenses: safeNum(session.totalDepenses),
+        nombreVentes: safeNum(session.nombreVentes)
+    };
 };

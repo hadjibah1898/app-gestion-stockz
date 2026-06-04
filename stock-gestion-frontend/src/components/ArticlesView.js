@@ -33,6 +33,7 @@ import {
   fournisseurAPI,
   mouvementAPI,
 } from "../services/api";
+import { toast } from 'react-toastify';
 import InventoryTab from "./InventoryTab";
 import AdjustmentsTab from "./AdjustmentsTab";
 import ArticleFormModal from "./ArticleFormModal";
@@ -131,7 +132,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [successMessage, setSuccessMessage] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -227,10 +227,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         );
         fetchData();
         setTimeout(() => setSuccessMessage(""), 3000);
-      } catch (err) {
-        setError(
-          err.response?.data?.message || "Erreur lors du renommage global.",
-        );
+      } catch (err) { /* Erreur gérée par l'intercepteur Axios */
       } finally {
         setLoading(false);
       }
@@ -250,15 +247,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   // États pour la promo automatique péremption
   const [showAutoPromoModal, setShowAutoPromoModal] = useState(false);
   const [autoPromoConfig, setAutoPromoConfig] = useState({
-    jours: 7,
     pourcentage: 20,
   });
   const [autoPromoLoading, setAutoPromoLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    setError("");
-
     // Préparer les paramètres de tri pour l'API
     let sortParam = sortConfig.key;
     let orderParam = sortConfig.direction;
@@ -309,7 +303,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         articleAPI.getAll(params), // Le backend filtrera déjà par Admin grâce au service modifié
         userRole === "Admin"
           ? boutiqueAPI.getAll()
-          : Promise.resolve({ data: [] }),
+          : boutiqueAPI.getDetailsForServeur(localStorage.getItem('boutiqueId')).then(res => ({ data: res.data ? [res.data] : [] })),
         userRole === "Admin"
           ? fournisseurAPI.getAll()
           : Promise.resolve({ data: [] }),
@@ -371,7 +365,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       setFournisseurs(fournisseursRes.data);
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "Erreur de chargement");
+      // Erreur gérée par l'intercepteur Axios
     } finally {
       setLoading(false);
     }
@@ -384,7 +378,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     filterStatus,
     sortConfig,
     filterReceptionBoutique,
-    centralShopId,
+    centralShopId
   ]);
 
   useEffect(() => {
@@ -394,11 +388,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   // eslint-disable-next-line no-unused-vars
   const handleRemindManager = async (mvtId) => {
     try {
-      await mouvementAPI.relancerGerant(mvtId);
-      setSuccessMessage("Notification de rappel envoyée au gérant.");
-      setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la relance.");
+      await mouvementAPI.relancerGerant(mvtId); // L'intercepteur gère l'erreur
+      toast.success("Notification de rappel envoyée au gérant.");
+      setTimeout(() => setSuccessMessage(""), 3000); // Garder le message de succès local
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     }
   };
 
@@ -412,11 +405,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       return;
     try {
       await articleAPI.annulerTransfert(mvtId);
-      setSuccessMessage("Transfert annulé et stock restauré.");
+      toast.success("Transfert annulé et stock restauré.");
       fetchData();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de l'annulation.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     }
   };
 
@@ -542,15 +534,15 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         receptionItems,
         finalComment,
       );
-      setSuccessMessage(
+      toast.success(
         res.data.message || "Réception validée et reçu généré !",
       );
       setShowReceptionModal(false);
       fetchData();
-      setShowReceptionHistory(true); // Basculer automatiquement vers l'historique (les archives) après validation
+      // Le colis disparaît naturellement de la liste des attentes car son statut a changé en base
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la réception");
+      // Erreur gérée par l'intercepteur Axios
     } finally {
       setValLoading(false);
     }
@@ -567,19 +559,18 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     e.preventDefault();
     setValLoading(true);
     try {
-      await articleAPI.validateAdjustment(selectedAdj._id, {
+      await articleAPI.validateAdjustment(selectedAdj._id, { // L'intercepteur gère l'erreur
         decision: valDecision,
         commentaire: valComment,
       });
-      setSuccessMessage(
+      toast.success(
         `Ajustement ${valDecision === "VALIDE" ? "validé" : "rejeté"} avec succès.`,
       );
       setShowValidationModal(false);
       fetchAdjustments(); // Rafraîchir la liste
       fetchData(); // Rafraîchir l'inventaire car le stock a pu changer
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la validation.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setValLoading(false);
     }
@@ -597,8 +588,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     try {
       const res = await articleAPI.getAdjustments();
       setAdjustments(res.data);
-    } catch (err) {
-      console.error("Erreur chargement ajustements", err);
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setAdjLoading(false);
     }
@@ -633,13 +623,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     e.preventDefault();
     setAdjSubmitLoading(true);
     try {
-      await articleAPI.createAdjustment(adjustmentFormData);
-      setSuccessMessage("Demande d'ajustement envoyée à l'administrateur.");
+      await articleAPI.createAdjustment(adjustmentFormData); // L'intercepteur gère l'erreur
+      toast.success("Demande d'ajustement envoyée à l'administrateur.");
       setShowAdjustmentModal(false);
       fetchAdjustments();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la demande.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setAdjSubmitLoading(false);
     }
@@ -750,7 +739,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         prixAchat: "",
         prixVente: "",
         quantite: "",
-        boutique: "",
+        boutique: userRole === 'Gérant' ? localStorage.getItem('boutiqueId') : "",
         image: "",
         promo: 0,
         promoActive: false,
@@ -768,7 +757,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     setShowModal(true);
     setFieldErrors({});
   };
-
   const handleCloseModal = () => {
     setShowModal(false);
   };
@@ -800,8 +788,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement("canvas");
-          const MAX_WIDTH = 800;
-          const MAX_HEIGHT = 800;
+          const MAX_WIDTH = 500; // Réduit pour la rapidité
+          const MAX_HEIGHT = 500;
           let width = img.width;
           let height = img.height;
 
@@ -821,7 +809,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           const ctx = canvas.getContext("2d");
           ctx.drawImage(img, 0, 0, width, height);
 
-          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.7);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.6); // Qualité optimisée pour mobile
           setCurrentArticle({ ...currentArticle, image: compressedBase64 });
         };
       };
@@ -838,7 +826,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
     setSuccessMessage("");
     setFieldErrors({});
 
@@ -853,7 +840,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       );
 
       if (duplicate) {
-        setError(
+        toast.error(
           `Le code "${currentArticle.code}" est déjà utilisé par l'article "${duplicate.nom}".`,
         );
         setFieldErrors({ code: "Ce code article doit être unique." });
@@ -872,27 +859,19 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     try {
       if (editMode) {
         if (!currentArticle._id) {
-          setError("Erreur interne : ID de l'article manquant.");
+          toast.error("Erreur interne : ID de l'article manquant.");
           return;
         }
-        await articleAPI.update(currentArticle._id, payload);
-        setSuccessMessage("Article modifié avec succès !");
+        await articleAPI.update(currentArticle._id, payload); // L'intercepteur gère l'erreur
+        toast.success("Article modifié avec succès !");
       } else {
-        await articleAPI.create(payload);
-        setSuccessMessage("Article créé avec succès !");
+        await articleAPI.create(payload); // L'intercepteur gère l'erreur
+        toast.success("Article créé avec succès !");
       }
       fetchData();
       handleCloseModal();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      if (err.response?.status === 400 && err.response.data.errors) {
-        // Si le backend renvoie des erreurs de validation par champ
-        setFieldErrors(err.response.data.errors);
-        setError(err.response.data.message);
-      } else {
-        setError(err.response?.data?.message || "Erreur d'enregistrement");
-      }
-    }
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */ }
   };
 
   const confirmDelete = (id) => {
@@ -901,16 +880,14 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   };
 
   const executeDelete = async () => {
-    setError("");
     setSuccessMessage("");
     try {
-      await articleAPI.delete(articleToDelete);
+      await articleAPI.delete(articleToDelete); // L'intercepteur gère l'erreur
       setShowDeleteModal(false);
-      setSuccessMessage("Article supprimé avec succès !");
+      toast.success("Article supprimé avec succès !");
       fetchData();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur de suppression");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     }
   };
 
@@ -1093,10 +1070,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       const fileName = title
         ? `${title.replace(/\s+/g, "_").toLowerCase()}_${new Date().toISOString().split("T")[0]}.pdf`
         : "articles.pdf";
-      doc.save(fileName);
-    } catch (err) {
-      console.error("Erreur export PDF:", err);
-      setError("Impossible de générer le PDF complet.");
+      doc.save(fileName); // L'intercepteur gère l'erreur
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setLoading(false);
     }
@@ -1141,8 +1116,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       setSuccessMessage("Fichier Excel généré avec succès !");
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError("Erreur lors de la génération du fichier Excel.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setLoading(false);
     }
@@ -1151,18 +1125,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const handleAutoPromoSubmit = async (e) => {
     e.preventDefault();
     setAutoPromoLoading(true);
-    setError("");
     try {
-      const res = await articleAPI.applyAutoPromo(autoPromoConfig);
-      setSuccessMessage(res.data.message);
+      const res = await articleAPI.applyAutoPromo(autoPromoConfig); // L'intercepteur gère l'erreur
+      toast.success(res.data.message);
       setShowAutoPromoModal(false);
       fetchData();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(
-        err.response?.data?.message ||
-          "Erreur lors de l'application des promotions.",
-      );
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setAutoPromoLoading(false);
     }
@@ -1470,7 +1439,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   return (
     <div className="p-4">
       <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
-        <h3 className="fw-bold mb-0 text-body">
+        <h3 className="fw-bold mb-0 text-body"> {/* L'intercepteur gère l'erreur */}
           {title || "Gestion des Articles"}
         </h3>
         <div className="d-flex flex-wrap gap-2">
@@ -1497,7 +1466,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                   setPreSelectedSupplier(supplierToPreselect);
                   setShowIntelligentSupplyModal(true);
                 }}
-                className="rounded-pill px-4 shadow-sm"
+                className="rounded-pill px-4 shadow-sm" // L'intercepteur gère l'erreur
               >
                 <iconify-icon
                   icon="solar:box-up-bold"
@@ -1613,21 +1582,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       {/* --- ALERTES DE NOTIFICATION --- */}
       <div className="notification-area">
-        {successMessage && (
-          <Alert variant="success" className="rounded-4 border-0 shadow-sm">
-            {successMessage}
-          </Alert>
-        )}
-        {error && (
-          <Alert
-            variant="danger"
-            onClose={() => setError("")}
-            dismissible
-            className="rounded-4 border-0 shadow-sm"
-          >
-            {error}
-          </Alert>
-        )}
+        {successMessage && <Alert variant="success" className="rounded-4 border-0 shadow-sm">{successMessage}</Alert>}
       </div>
 
       {/* --- CONTENU DES ONGLETS --- */}

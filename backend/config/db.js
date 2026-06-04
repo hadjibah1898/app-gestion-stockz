@@ -2,10 +2,17 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
     try {
-        // Connexion à MongoDB en utilisant la variable d'environnement
-        // La chaîne de connexion doit être dans un fichier .env 
-        const conn = await mongoose.connect(process.env.MONGO_URI);
-        console.log(`✅ MongoDB connecté avec succès sur : ${conn.connection.host}`);
+        // Priorité aux variables spécifiques, sinon repli sur MONGO_URI
+        const mongoUri = (process.env.NODE_ENV === 'production' ? process.env.MONGO_URI_REMOTE : process.env.MONGO_URI_LOCAL) || process.env.MONGO_URI;
+        
+        if (!mongoUri) {
+            throw new Error("Aucune URI MongoDB n'est définie dans le fichier .env (MONGO_URI_LOCAL, MONGO_URI_REMOTE ou MONGO_URI manquant)");
+        }
+
+        const conn = await mongoose.connect(mongoUri, {
+            serverSelectionTimeoutMS: 5000 // Évite de bloquer le démarrage trop longtemps
+        });
+        console.log(`✅ MongoDB connecté avec succès sur : ${conn.connection.host} (${process.env.NODE_ENV === 'production' ? 'Distant' : 'Local'})`);
     } catch (err) {
         // On affiche l'erreur détaillée pour comprendre le problème DNS/IP
         console.error("❌ Erreur de connexion MongoDB:", err.message);

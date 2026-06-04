@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
-import { Modal, Form, Button, Alert, Spinner, InputGroup, Toast, ToastContainer } from 'react-bootstrap';
+import { Modal, Form, Button, Alert, Spinner, InputGroup, Toast, ToastContainer as BSToastContainer } from 'react-bootstrap';
 import { NotificationProvider, useNotifications } from './NotificationContext';
 import Sidebar from './components/common/Sidebar';
 import Header from './components/common/Header'; // Importer le Header
@@ -33,18 +33,24 @@ import DebtManagementView from './components/DebtManagementView';
 import './App.css';
 import setupAxiosInterceptors from './utils/axiosConfig';
 import ServeurDashboard from './components/ServeurDashboard';
-
+import socket, { initSocket } from './services/socket';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import './assets/styles/global.css';
+import './assets/styles/themes.css';
 
 // Le Layout principal qui inclut la Sidebar et la zone de contenu
-const MainLayout = ({ userName, userRole, handleLogout, theme, toggleTheme, isSidebarOpen, toggleSidebar }) => (
-  <>
-    <Sidebar userRole={userRole} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} userName={userName} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} /> {/* Sidebar receives toggleSidebar and other header props */}
-    <div className="page-wrapper"> {/* page-wrapper needs to be aware of sidebar state for margin-left on large screens */}
-      <Header userName={userName} userRole={userRole} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} toggleSidebar={toggleSidebar} /> {/* Header receives toggleSidebar */}
-      <Outlet context={{ theme }} /> {/* Les composants de route enfants s'afficheront ici */}
-    </div>
-  </>
-);
+function MainLayout({ userName, userRole, handleLogout, theme, toggleTheme, isSidebarOpen, toggleSidebar }) {
+  return (
+    <>
+      <Sidebar userRole={userRole} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} userName={userName} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} /> {/* Sidebar receives toggleSidebar and other header props */}
+      <div className="page-wrapper"> {/* page-wrapper needs to be aware of sidebar state for margin-left on large screens */}
+        <Header userName={userName} userRole={userRole} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} toggleSidebar={toggleSidebar} /> {/* Header receives toggleSidebar */}
+        <Outlet context={{ theme }} /> {/* Les composants de route enfants s'afficheront ici */}
+      </div>
+    </>
+  );
+}
 
 // Composant pour gérer l'affichage des Toasts de notification
 const NotificationToasts = () => {
@@ -55,21 +61,30 @@ const NotificationToasts = () => {
     if (!notification.read) {
       markAsRead(notification._id);
     }
+    
+    // Navigation vers le lien spécifique de la notification (ex: vers un article ou une vente)
     if (notification.link) {
       navigate(notification.link);
+    } else {
+      // Si pas de lien spécifique, on redirige vers l'historique global selon le rôle
+      const role = localStorage.getItem('userRole');
+      const basePath = role === 'Admin' ? '/admin' : (role === 'Gérant' ? '/gerant' : (role === 'Serveur' ? '/serveur' : ''));
+      if (basePath) {
+        navigate(`${basePath}/notifications`);
+      }
     }
     removeToast(notification._id);
   };
 
   return (
-    <ToastContainer position="bottom-end" className="p-3" style={{ zIndex: 9999 }}>
+    <BSToastContainer position="bottom-end" className="p-3 notification-toasts-container" style={{ zIndex: 9999 }}>
       {toastQueue.map(toast => (
         <Toast key={toast._id} onClose={() => removeToast(toast._id)} onClick={() => handleToastClick(toast)} bg="dark" autohide delay={8000} className="text-white" style={{ cursor: 'pointer' }}>
           <Toast.Header closeButton><strong className="me-auto">Nouvelle Notification</strong></Toast.Header>
           <Toast.Body>{toast.message}</Toast.Body>
         </Toast>
       ))}
-    </ToastContainer>
+    </BSToastContainer>
   );
 };
 
@@ -95,6 +110,18 @@ function App() {
     // Configure l'intercepteur Axios pour gérer les erreurs 401 (redirection auto) et le spinner de chargement
     setupAxiosInterceptors(setIsApiLoading);
   }, []); // Exécuter une seule fois au montage
+
+  // Gestion de la connexion Socket.io selon l'état d'authentification
+  useEffect(() => {
+    if (userRole) {
+      initSocket({ role: userRole });
+      socket.connect();
+    }
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [userRole]);
 
 
   useEffect(() => {
@@ -129,6 +156,7 @@ function App() {
     localStorage.removeItem('token');
     localStorage.removeItem('userRole');
     localStorage.removeItem('userName');
+    localStorage.removeItem('userId');
     localStorage.removeItem('boutiqueId');
     localStorage.removeItem('mustChangePassword');
     // Redirection forcée pour garantir un état propre et la redirection vers la page de connexion.
@@ -171,11 +199,11 @@ function App() {
           <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={userRole === 'Admin' ? "/admin" : (userRole === 'Serveur' ? "/serveur" : "/gerant")} />} />
 
           {/* Routes Protégées pour l'Admin */}
-          <Route path="/admin" element={
+          <Route path="/admin" element={!mustChangePassword ? (
             <ProtectedRoute userRole={userRole} requiredRole="Admin">
               <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
-          }>
+          ) : <Navigate to="/" />} >
             <Route index element={<Dashboard />} />
             <Route path="managers" element={<ManagersView />} />
             <Route path="shops" element={<ShopsView />} />
@@ -194,11 +222,11 @@ function App() {
           
 
           {/* Routes Protégées pour le Gérant */}
-          <Route path="/gerant" element={
+          <Route path="/gerant" element={!mustChangePassword ? (
             <ProtectedRoute userRole={userRole} requiredRole="Gérant">
               <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
-          }>
+          ) : <Navigate to="/" />} >
             <Route index element={<GerantDashboard />} />
             <Route path="articles" element={<ArticlesView userRole="Gérant" />} />
             <Route path="ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
@@ -211,14 +239,15 @@ function App() {
           </Route>
 
           {/* Routes Protégées pour le Serveur */}
-          <Route path="/serveur" element={
+          <Route path="/serveur" element={!mustChangePassword ? (
             <ProtectedRoute userRole={userRole} requiredRole="Serveur">
               <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
-          }>
+          ) : <Navigate to="/" />} >
             <Route index element={<Navigate to="dashboard" />} />
             <Route path="dashboard" element={<ServeurDashboard />} />
             <Route path="ventes" element={<VentesView userRole="Serveur" initialTab="sale" key="sale" />} />
+            <Route path="notifications" element={<NotificationsHistoryView />} />
           </Route>
 
           {/* Routes Partagées (Profil) */}
@@ -234,6 +263,8 @@ function App() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         {userRole && <NotificationToasts />}
+        {/* Conteneur global pour les alertes react-toastify (utilisé par l'intercepteur Axios) */}
+        <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={true} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="colored" />
       
       </div>
 

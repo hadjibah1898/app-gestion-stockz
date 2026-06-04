@@ -19,6 +19,7 @@ const SaleTab = ({
     selectedClientId,
     setSelectedClientId,
     availableCategories, // Récupérer la prop des catégories dynamiques
+    filteredArticles: filteredArticlesFromProps, // Récupérer les articles déjà filtrés (promo)
     setShowClientModal,
     barcodeInputRef,
     barcode,
@@ -35,6 +36,8 @@ const SaleTab = ({
     setItemRemiseType, // Nouveau prop
     setItemRemiseInput,
     ajouterAuPanier,
+    venteUnitType, // Nouveau prop
+    setVenteUnitType, // Nouveau prop
     getEffectivePrice,
     handleImageClick,
     retirerDuPanier,
@@ -56,7 +59,8 @@ const SaleTab = ({
     setBrouillons,
     showMobilePanier,
     setShowMobilePanier,
-    boutiqueConfig // Nouvelle prop reçue
+    boutiqueConfig, // Nouvelle prop reçue
+    ecoMode
 }) => {
     // Recherche et filtre catégorie
     const [search, setSearch] = useState('');
@@ -174,7 +178,7 @@ const SaleTab = ({
                         <div className="cart-list mb-3 px-1" style={{ maxHeight: isMobile ? 'calc(100vh - 350px)' : '40vh', overflowY: 'auto', overflowX: 'hidden' }}>
                             {panier.map(item => (
                                 <div key={item.article._id} className={`d-flex align-items-start py-3 border-bottom gap-2 ${selectedArticle === item.article._id ? 'border border-3 border-primary bg-primary bg-opacity-10' : ''}`} style={{ cursor: 'pointer', borderRadius: selectedArticle === item.article._id ? 12 : 0 }} onClick={() => setSelectedArticle(item.article._id)}>
-                                    {item.article.image ? (
+                                    {item.article.image && !ecoMode ? (
                                         <img src={item.article.image} alt="" className="rounded shadow-sm me-2" style={{ width: '40px', height: '40px', objectFit: 'cover' }} />
                                     ) : (
                                         <div className="bg-light rounded d-flex align-items-center justify-content-center me-2" style={{ width: '40px', height: '40px' }}><iconify-icon icon="solar:box-bold" className="text-muted"></iconify-icon></div>
@@ -207,6 +211,11 @@ const SaleTab = ({
                                                 <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
                                                 {item.remiseTemp > 0 ? `${parseFloat(item.remiseTemp).toLocaleString()} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
                                             </Button>
+                                            )}
+                                            {item.article.isDoseEnabled && (
+                                                <Badge bg="info" pill className="px-3 py-2">
+                                                    {item.venteUnitType === 'dose' ? '🍷 Verre' : '🍾 Bouteille'}
+                                                </Badge>
                                             )}
                                         </div>
                                     </div>
@@ -250,7 +259,8 @@ const SaleTab = ({
                             </div>
 
                             {/* Mode de Paiement */}
-                            <div className="mb-3">
+                            {userRole !== 'Serveur' && (
+                                <div className="mb-3">
                                 <label className="small fw-bold text-muted">Mode de paiement</label>
                                 <Form.Select 
                                     size="sm" 
@@ -273,9 +283,10 @@ const SaleTab = ({
                                     {userRole !== 'Serveur' && <option value="Dette">📝 Dette (Crédit Total)</option>}
                                 </Form.Select>
                             </div>
+                            )}
 
                             {/* Référence Transactionnelle (pour paiements numériques) */}
-                            {['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(modePaiement) && (
+                            {userRole !== 'Serveur' && ['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(modePaiement) && (
                                 <Form.Group className="mb-3">
                                     <Form.Label className="small fw-bold text-muted">Réf. Transaction <span className="text-danger">*</span></Form.Label>
                                     <Form.Control
@@ -294,9 +305,30 @@ const SaleTab = ({
                                 <div className="p-3 bg-white rounded-4 border">
                                     <Form.Select size="sm" value={selectedArticle} onChange={e => setSelectedArticle(e.target.value)} className="border-0 mb-2">
                                         <option value="">Sélection manuelle...</option>
-                                        {articles.map(article => <option key={article._id} value={article._id}>{article.nom} ({article.quantite})</option>)}
+                                        {Array.isArray(articles) && articles.map(article => <option key={article._id} value={article._id}>{article.nom} ({article.quantite})</option>)}
                                     </Form.Select>
                                     {selectedArticle && (
+                                        <>
+                                        {articles.find(a => a._id === selectedArticle)?.isDoseEnabled && (
+                                            <div className="mb-2 d-flex gap-2 animate__animated animate__fadeIn">
+                                                <Button 
+                                                    variant={venteUnitType === 'bottle' ? 'primary' : 'outline-primary'} 
+                                                    size="sm" 
+                                                    className="flex-fill rounded-pill"
+                                                    onClick={() => setVenteUnitType('bottle')}
+                                                >
+                                                    🍾 Bouteille
+                                                </Button>
+                                                <Button 
+                                                    variant={venteUnitType === 'dose' ? 'primary' : 'outline-primary'} 
+                                                    size="sm" 
+                                                    className="flex-fill rounded-pill"
+                                                    onClick={() => setVenteUnitType('dose')}
+                                                >
+                                                    🍷 Verre (Dose)
+                                                </Button>
+                                            </div>
+                                        )}
                                         <div className="d-flex gap-2">
                                             <Form.Control size="sm" type="number" value={quantite} onChange={e => setQuantite(e.target.value)} className="rounded-pill" />
                                             {userRole !== 'Serveur' && (
@@ -315,19 +347,20 @@ const SaleTab = ({
                                                 ajouterAuPanier();
                                             }}><iconify-icon icon="solar:add-circle-bold"></iconify-icon></Button>
                                         </div>
+                                        </>
                                     )}
                                 </div>
                             )}
                         </div>
 
-                        {selectedClientId && (
+                        {userRole !== 'Serveur' && selectedClientId && (
                             <Form.Group className="mt-2">
                                 <Form.Label className="fw-bold">Montant Payé</Form.Label>
                                 <InputGroup><Form.Control type="number" placeholder={`Total : ${calculerTotal().toLocaleString()} GNF`} value={montantPaye} onChange={e => setMontantPaye(e.target.value)} className="rounded-pill" /><InputGroup.Text>GNF</InputGroup.Text></InputGroup>
                             </Form.Group>
                         )}
                         
-                        {montantPaye !== '' && parseFloat(montantPaye) < calculerTotal() && (
+                        {userRole !== 'Serveur' && montantPaye !== '' && parseFloat(montantPaye) < calculerTotal() && (
                             <Form.Group className="mt-2">
                                 <Form.Label className="fw-bold text-danger">Échéance dette</Form.Label>
                                 <Form.Control 
@@ -412,10 +445,10 @@ const SaleTab = ({
                 {availableCategories
                     .sort((a, b) => a.label.localeCompare(b.label)) // Tri alphabétique
                     .map(cat => {
-                        const count = articles.filter(a => a.categorie === cat.key).length;
-                        const totalStockValue = articles
-                            .filter(a => a.categorie === cat.key)
-                            .reduce((sum, a) => sum + (a.prixAchat * a.quantite), 0);
+                        const count = Array.isArray(articles) ? articles.filter(a => a && a.categorie === cat.key).length : 0;
+                        const totalStockValue = Array.isArray(articles) 
+                            ? articles.filter(a => a && a.categorie === cat.key).reduce((sum, a) => sum + (a.prixAchat * a.quantite), 0)
+                            : 0;
 
                         return (
                             <Button
@@ -465,7 +498,7 @@ const SaleTab = ({
                         <Col xs={6} md={4} lg={3} key={article._id}>
                             <Card className="h-100 shadow-sm border-0">
                                 <div style={{ position: 'relative' }}>
-                                    {article.image ? (
+                                    {article.image && !ecoMode ? (
                                         <Card.Img
                                             src={article.image}
                                             alt={article.nom}
@@ -481,33 +514,33 @@ const SaleTab = ({
                                         <Badge bg="danger" style={{ position: 'absolute', top: 8, right: 8 }}>Rupture</Badge>
                                     )}
                                 </div>
-                                <Card.Body className="py-2 px-2">
-                                    <div className="fw-bold small mb-1">{article.nom}</div>
-                                    <div className="text-muted small mb-1">{article.code}</div>
+                                <Card.Body className="p-2 d-flex flex-column">
+                                    <div className="fw-bold mb-0 text-truncate" style={{ fontSize: '0.8rem' }}>{article.nom}</div>
+                                    <div className="text-muted mb-1" style={{ fontSize: '0.65rem' }}>{article.code || '---'}</div>
                                     <div className="mb-2">
                                         {getEffectivePrice(article) < article.prixVente ? (
-                                            <>
-                                                <span className="text-decoration-line-through text-muted me-1 small">{article.prixVente.toLocaleString()}</span>
-                                                <span className="text-danger fw-bold">{getEffectivePrice(article).toLocaleString()} GNF</span>
-                                            </>
+                                            <div className="d-flex flex-column">
+                                                <span className="text-decoration-line-through text-muted" style={{ fontSize: '0.65rem', lineHeight: 1 }}>{article.prixVente.toLocaleString()}</span>
+                                                <span className="text-danger fw-bold" style={{ fontSize: '0.8rem' }}>{getEffectivePrice(article).toLocaleString()} GNF</span>
+                                            </div>
                                         ) : (
-                                            <span className="fw-bold text-primary">{article.prixVente.toLocaleString()} GNF</span>
+                                            <span className="fw-bold text-primary" style={{ fontSize: '0.8rem' }}>{article.prixVente.toLocaleString()} GNF</span>
                                         )}
                                     </div>
-                                    <InputGroup size="sm" className="mb-2">
+                                    <InputGroup size="sm" className="mb-2 mt-auto">
                                         <Form.Control
                                             type="number"
                                             min={1}
                                             max={article.quantite}
                                             value={quickQty[article._id] || 1}
                                             onChange={e => setQuickQty(q => ({ ...q, [article._id]: e.target.value }))}
-                                            style={{ width: 60 }}
+                                            style={{ width: '40px', padding: '0.25rem', textAlign: 'center' }}
                                             disabled={article.quantite <= 0}
                                         />
                                         <Button
                                             variant="success"
                                             size="sm"
-                                            className="rounded-pill ms-2"
+                                            className="rounded-pill ms-1 px-2"
                                             disabled={article.quantite <= 0}
                                             onClick={() => {
                                                 setSelectedArticle(article._id);
@@ -521,9 +554,9 @@ const SaleTab = ({
                                             Ajouter
                                         </Button>
                                     </InputGroup>
-                                    <div className="d-flex justify-content-between align-items-center">
-                                        <Badge bg="secondary" pill>{article.categorie}</Badge>
-                                        <Badge bg={article.quantite > (article.seuilAlerte || 10) ? "success-subtle" : "danger-subtle"} text={article.quantite > (article.seuilAlerte || 10) ? "success" : "danger"} className="border">Stock: {article.quantite}</Badge>
+                                    <div className="d-flex justify-content-between align-items-center gap-1">
+                                        <Badge bg="secondary" pill style={{ fontSize: '0.6rem' }}>{article.categorie}</Badge>
+                                        <Badge bg={article.quantite > (article.seuilAlerte || 10) ? "success-subtle" : "danger-subtle"} text={article.quantite > (article.seuilAlerte || 10) ? "success" : "danger"} className="border" style={{ fontSize: '0.6rem' }}>St: {article.quantite}</Badge>
                                     </div>
                                 </Card.Body>
                             </Card>
@@ -599,6 +632,11 @@ const SaleTab = ({
                                                 {ticket.items.map(item => (
                                                     <li key={item._id} className="d-flex justify-content-between py-1 border-bottom border-light last-child-0">
                                                         <span>
+                                                            {item.article?.image && !ecoMode && (
+                                                                <img src={item.article.image} alt="" className="rounded shadow-sm me-2" 
+                                                                     style={{ width: '20px', height: '20px', objectFit: 'cover', verticalAlign: 'middle' }} 
+                                                                />
+                                                            )}
                                                             <iconify-icon icon="solar:dot-bold" className="me-1 text-muted"></iconify-icon>
                                                             {item.article?.nom || 'Article supprimé'} 
                                                             <Badge bg="light" text="dark" className="ms-2">x{item.quantite}</Badge>

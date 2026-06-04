@@ -16,6 +16,12 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
     const { sort, order, search, status, ...restFilters } = filter;
     const dbFilters = { ...restFilters };
 
+    // Optimisation : On retire les infos fournisseurs pour le serveur.
+    // L'image est conservée pour l'UX mais sera compressée à l'upload.
+    const projection = (user && user.role === 'Serveur') 
+        ? { fournisseur: 0, __v: 0 } 
+        : { __v: 0 };
+
     // SÉCURITÉ MULTI-TENANT (Isolation Entreprise)
     if (user) {
         if (user.role === 'SuperAdmin') {
@@ -84,10 +90,11 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
     const limitNum = parseInt(limit) || parseInt(filter.limit) || 0;
     const pageNum = parseInt(page) || parseInt(filter.page) || 1;
 
-    let query = Article.find(dbFilters)
+    let query = Article.find(dbFilters, projection)
         .populate('boutique')
         .populate('fournisseur')
-        .populate('remiseEnAttente.gerant', 'nom');
+        .populate('remiseEnAttente.gerant', 'nom')
+        .lean(); // Performance boost
 
     // Tri
     const sortOrder = order === 'desc' ? -1 : 1;
@@ -106,6 +113,22 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
         totalPages: limitNum > 0 ? Math.ceil(totalCount / limitNum) : 1,
         currentPage: pageNum
     };
+};
+
+/**
+ * Vérifie si un code ressemble à un code boutique existant
+ * (Utile pour la visibilité du bouton génération automatique héritage)
+ */
+exports.verifierRessemblanceCode = async (code, boutiqueId) => {
+    const boutique = await Boutique.findById(boutiqueId);
+    if (!boutique || !boutique.codeBoutique) return false;
+
+    // On cherche s'il existe des articles dont le code contient ou commence par le code boutique
+    const similarExists = await Article.exists({ 
+        boutique: boutiqueId, 
+        code: { $regex: new RegExp(`^${boutique.codeBoutique}`, 'i') } 
+    });
+    return !!similarExists;
 };
 
 /**
@@ -130,7 +153,8 @@ exports.modifierArticle = async (id, inputData, user, req) => {
         'nom', 'prixAchat', 'prixVente', 'boutique', 'categorie', 'code', 
         'image', 'promo', 'promoActive', 'dateDebutPromo', 'dateFinPromo', 
         'remise', 'datePeremption', 'fournisseur', 'remiseEnAttente',
-        'seuilAlerte', 'type', 'uniteMesure', 'tva', 'description'
+        'seuilAlerte', 'type', 'uniteMesure', 'tva', 'description',
+        'isDoseEnabled', 'dosesPerBottle', 'prixDose'
     ];
     
     const data = {};
@@ -352,6 +376,12 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
         nomTransporteur,
         operateur: operateurId,
         details: details || `Transfert de ${sourceBoutique.nom} vers ${targetBoutique.nom}`
+    }).then(mvt => {
+        // Signaler à la boutique de destination qu'un nouveau colis arrive
+        if (global.io) {
+            global.io.to(`boutique_${targetId}`).emit('nouveau_transfert', { mvtId: mvt._id });
+        }
+        return mvt;
     });
 };
 

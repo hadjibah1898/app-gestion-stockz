@@ -1,23 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const articleController = require('../controllers/articleController');
-const { protect, checkRole } = require('../middleware/authMiddleware');
+const articlesController = require('../controllers/articlesController'); // Utilisation du bon contrôleur
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { checkMustChangePassword } = require('../middleware/passwordMiddleware');
+const validateObjectId = require('../middleware/validateObjectId');
 
-// Toutes les routes des articles sont protégées
+// Toutes les routes des articles sont protégées et vérifient le changement de mot de passe
 router.use(protect);
+router.use(checkMustChangePassword);
 
-// Routes Standards
-router.get('/', articleController.getArticles);
-router.post('/', checkRole('Admin'), articleController.createArticle);
-router.put('/:id', articleController.updateArticle);
-router.delete('/:id', checkRole('Admin'), articleController.deleteArticle);
+// --- ROUTES STANDARDS ---
+router.get('/', articlesController.getAllArticles);
+router.post('/', authorize('Admin'), articlesController.addArticle);
+router.put('/:id', validateObjectId('id'), articlesController.updateArticle);
+router.delete('/:id', authorize('Admin'), validateObjectId('id'), articlesController.deleteArticle);
 
-// Routes Spécifiques (Promotions)
-router.post('/auto-promo', checkRole('Admin'), articleController.applyAutoPromo);
+// --- LOGIQUE COMMERCIALE (REMISES & PROMOS) ---
+router.post('/:id/demander-remise', authorize('Gérant'), validateObjectId('id'), articlesController.demanderRemise);
+router.post('/auto-promo', authorize('Admin'), articlesController.applyAutoPromo);
 
-// Routes des Ajustements (Pertes/Casses)
-router.get('/adjustments', articleController.getAdjustments);
-router.post('/adjustments', checkRole('Gérant', 'Admin'), articleController.createAdjustment);
-router.put('/adjustments/:id/validate', checkRole('Admin'), articleController.validateAdjustment);
+// --- LOGIQUE DE STOCK ET LOGISTIQUE ---
+router.post('/transfer', authorize('Admin'), articlesController.transferArticles);
+router.post('/restock', authorize('Admin'), articlesController.restockFromCentral);
+router.post('/transfer/:id/cancel', authorize('Admin'), validateObjectId('id'), articlesController.cancelTransfer);
+router.post('/transfer/:id/remind', authorize('Admin'), validateObjectId('id'), articlesController.remindManager);
+
+// --- ROUTES DES AJUSTEMENTS (PERTES/CASSES) ---
+router.get('/adjustments', authorize('Admin', 'Gérant'), articlesController.getAdjustments);
+router.post('/adjustments', authorize('Admin', 'Gérant'), articlesController.createAdjustment);
+router.put('/adjustments/:id/validate', authorize('Admin'), validateObjectId('id'), articlesController.validateAdjustment);
 
 module.exports = router;

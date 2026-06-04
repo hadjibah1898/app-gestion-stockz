@@ -1,239 +1,133 @@
-const notificationService = require('../services/notificationService');
-const { logAction } = require('../services/auditLogService'); // Assurez-vous que l'import est présent
-// Demande de remise par le gérant (stocke la demande et notifie les admins)
-exports.demanderRemise = async (req, res) => {
-    try {
-        if (req.user.role !== 'Gérant') {
-            return res.status(403).json({ message: "Seul un gérant peut demander une remise." });
-        }
-        const articleId = req.params.id;
-        const { remise, clientNom } = req.body;
-        if (!remise || remise <= 0) {
-            return res.status(400).json({ message: "La remise demandée doit être supérieure à 0%." });
-        }
-        // Stocker la demande dans le champ remiseEnAttente
-        const article = await articleService.modifierArticle(articleId, {
-            remiseEnAttente: {
-                valeur: remise,
-                clientNom: clientNom || '',
-                gerant: req.user.id || req.user._id,
-                dateDemande: new Date()
-            }
-        });
-        // Notifier les admins
-        await notificationService.sendRemiseRequestToAdmins(article, remise, req.user, clientNom);
-
-        await logAction({
-            req,
-            user: req.user,
-            action: 'REQUEST_DISCOUNT',
-            entity: 'Article',
-            entityId: article._id,
-            details: { article: article.nom, remise: remise, client: clientNom },
-            status: 'SUCCESS'
-        });
-
-        res.status(200).json({ message: "Demande de remise envoyée à l'administrateur pour validation." });
-    } catch (error) {
-        console.error("Erreur demande remise:", error);
-        res.status(500).json({ message: "Erreur lors de la demande de remise." });
-    }
-};
+/**
+ * Article Controller
+ * Gère les interactions API pour les articles, remises et ajustements.
+ * Délègue la logique métier à articleService.
+ */
 const articleService = require('../services/articleService');
+const notificationService = require('../services/notificationService');
+const auditHelper = require('../utils/auditHelper');
+const asyncHandler = require('../middleware/asyncHandler');
+const Article = require('../models/Article');
 
-//  Nom synchronisé avec ton fichier de routes (articlesRoute.js)
-// Mis à jour pour filtrer par rôle
-exports.getAllArticles = async (req, res) => {
-    try {
-        const { page, limit, search, boutique, fournisseur, sort, order, status } = req.query;
-        const filter = {};
-
-        // Filtre de recherche (Nom ou Code)
-        if (search) {
-            filter.$or = [
-                { nom: { $regex: search, $options: 'i' } },
-                { code: { $regex: search, $options: 'i' } }
-            ];
+// Demande de remise par le gérant (stocke la demande et notifie les admins)
+exports.demanderRemise = asyncHandler(async (req, res) => {
+    const { remise, clientNom } = req.body;
+    const article = await articleService.modifierArticle(req.params.id, {
+        remiseEnAttente: {
+            valeur: remise,
+            clientNom: clientNom || '',
+            gerant: req.user.id,
+            dateDemande: new Date()
         }
+    }, req.user, req);
 
-        // Filtre par boutique (Admin filter param)
-        if (boutique) {
-            filter.boutique = boutique;
-        }
+    await notificationService.sendRemiseRequestToAdmins(article, remise, req.user, clientNom);
+    await auditHelper.logSuccess(req, req.user, 'REQUEST_DISCOUNT', 'Article', article._id, { remise, clientNom });
 
-        // Filtre par fournisseur
-        if (fournisseur) {
-            filter.fournisseur = fournisseur;
-        }
+    res.status(200).json({ success: true, message: "Demande de remise envoyée à l'administrateur pour validation." });
+});
 
-        // Filtre par statut (Stock faible, rupture, etc.)
-        if (status) {
-            filter.status = status;
-        }
+exports.getAllArticles = asyncHandler(async (req, res) => {
+    const result = await articleService.listerArticles(req.query, req.query.page, req.query.limit, req.user);
+    res.status(200).json({ success: true, data: result });
+});
 
-        if (sort) {
-            filter.sort = sort;
-        }
-        if (order) {
-            filter.order = order;
-        }
+exports.addArticle = asyncHandler(async (req, res) => {
+    const article = await Article.create({ ...req.body, createur: req.user.id });
+    await auditHelper.logSuccess(req, req.user, 'CREATE_ARTICLE', 'Article', article._id);
+    res.status(201).json({ success: true, data: article });
+});
 
-        const articles = await articleService.listerArticles(filter, parseInt(page), parseInt(limit), req.user);
-        res.status(200).json(articles);
-    } catch (error) {
-        console.error("Erreur getAllArticles:", error);
-        res.status(500).json({ message: "Impossible de récupérer les articles" });
+exports.deleteArticle = asyncHandler(async (req, res) => {
+    await articleService.supprimerArticle(req.params.id, req.user);
+    await auditHelper.logSuccess(req, req.user, 'DELETE_ARTICLE', 'Article', req.params.id);
+    res.status(200).json({ success: true, message: "Article supprimé avec succès" });
+});
+
+exports.updateArticle = asyncHandler(async (req, res) => {
+    const article = await articleService.modifierArticle(req.params.id, req.body, req.user, req);
+    res.status(200).json({ success: true, data: article });
+});
+
+exports.transferArticles = asyncHandler(async (req, res) => {
+    const { sourceId, targetId, articles, details, nomTransporteur } = req.body;
+    if (!sourceId || !targetId) {
+        return res.status(400).json({ success: false, message: "Les boutiques source et destination sont requises." });
     }
-};
+    const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details, nomTransporteur);
+    const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
 
-//  Une seule version de addArticle (Gestion des articles 
-exports.addArticle = async (req, res) => {
-    // Action désactivée pour forcer l'utilisation du module d'approvisionnement
-    return res.status(403).json({ message: "La création manuelle d'article est désactivée. Veuillez utiliser le module d'approvisionnement." });
-};
+    await auditHelper.logSuccess(req, req.user, 'TRANSFER_STOCK', 'Article', null, { 
+        sourceId, 
+        targetId, 
+        articlesCount: articles.length, 
+        details 
+    });
 
-//  Ajoute l'export pour la suppression 
-exports.deleteArticle = async (req, res) => {
-    try {
-        const { data: articlesFound } = await articleService.listerArticles({ _id: req.params.id });
-        await articleService.supprimerArticle(req.params.id, req.user);
-
-        await logAction({
-            req,
-            user: req.user,
-            action: 'DELETE_ARTICLE',
-            entity: 'Article',
-            entityId: req.params.id,
-            details: { deletedArticle: articlesFound[0] },
-            status: 'SUCCESS'
-        });
-        res.status(200).json({ message: "Article supprimé avec succès" });
-
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
-exports.updateArticle = async (req, res) => {
-    try {
-        const articleId = req.params.id;
-        const articleData = req.body;
-
-        const articleModifie = await articleService.modifierArticle(articleId, articleData, req.user, req);
-
-        // Ajout d'infos calculées pour le frontend
-        const marge = articleModifie.prixVente - articleModifie.prixAchat;
-        const margePourcent = articleModifie.prixVente > 0 ? (marge / articleModifie.prixVente) * 100 : 0;
-
-        res.status(200).json({ ...articleModifie.toObject(), marge, margePourcent });
-    } catch (error) {
-        console.error("❌ Erreur ArticleController (update):", error.message);
-        if (error.message.includes("prix de vente") || error.message.includes("Données de mise à jour vides")) {
-            return res.status(400).json({ message: error.message });
-        }
-        if (error.message.includes("introuvable")) {
-            return res.status(404).json({ message: error.message });
-        }
-        res.status(500).json({ message: "Une erreur interne est survenue lors de la modification de l'article." });
-    }
-};
-
-exports.transferArticles = async (req, res) => {
-    try {
-        const { sourceId, targetId, articles, details, nomTransporteur } = req.body;
-        if (!sourceId || !targetId) {
-            return res.status(400).json({ message: "Les boutiques source et destination sont requises." });
-        }
-        const result = await articleService.transfererStock(sourceId, targetId, articles, req.user, details, nomTransporteur);
-        const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
-
-        await logAction({
-            req,
-            user: req.user,
-            action: 'TRANSFER_STOCK',
-            entity: 'Article',
-            details: { sourceId, targetId, articles, details },
-            status: 'SUCCESS'
-        });
-
-        res.status(200).json({ message: "Articles transférés avec succès.", movement });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+    res.status(200).json({ success: true, message: "Articles transférés avec succès.", data: movement });
+});
 
 /**
  * --- LOGIQUE DES AJUSTEMENTS (CORRECTIONS & ÉCARTS) ---
  */
 
-exports.getAdjustments = async (req, res) => {
-    try {
-        const adjustments = await articleService.listerAjustements(req.query, req.user);
-        res.status(200).json(adjustments);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-};
+exports.getAdjustments = asyncHandler(async (req, res) => {
+    const adjustments = await articleService.listerAjustements(req.query, req.user);
+    res.status(200).json({ success: true, data: adjustments });
+});
 
-exports.createAdjustment = async (req, res) => {
-    try {
-        const adjustment = await articleService.demanderAjustement(req.body, req.user);
-        res.status(201).json(adjustment);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-};
+exports.createAdjustment = asyncHandler(async (req, res) => {
+    const adjustment = await articleService.demanderAjustement(req.body, req.user);
+    res.status(201).json({ success: true, data: adjustment });
+});
 
-exports.validateAdjustment = async (req, res) => {
-    try {
-        const { decision, commentaire } = req.body;
-        const adjustment = await articleService.validerAjustement(req.params.id, decision, commentaire, req.user.id);
-        res.status(200).json(adjustment);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
-    }
-};
+exports.validateAdjustment = asyncHandler(async (req, res) => {
+    const { decision, commentaire } = req.body;
+    const adjustment = await articleService.validerAjustement(req.params.id, decision, commentaire, req.user.id);
+    res.status(200).json({ success: true, data: adjustment });
+});
 
 /**
  * @desc    Réapprovisionner une boutique secondaire depuis la boutique centrale
  * @route   POST /api/articles/restock
  * @access  Private/Admin
  */
-exports.restockFromCentral = async (req, res) => {
-    try {
-        const { targetId, articles, nomTransporteur } = req.body;
-        const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, nomTransporteur);
-        const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
+exports.restockFromCentral = asyncHandler(async (req, res) => {
+    const { targetId, articles, nomTransporteur } = req.body;
+    const result = await articleService.effectuerReapprovisionnement(targetId, articles, req.user, nomTransporteur);
+    const movement = await result.populate('boutiqueSource boutiqueDestination operateur');
 
-        await logAction({
-            req,
-            user: req.user,
-            action: 'RESTOCK_SHOP',
-            entity: 'Article',
-            details: { targetId, articles, details },
-            status: 'SUCCESS'
-        });
+    await auditHelper.logSuccess(req, req.user, 'RESTOCK_SHOP', 'Article', null, { 
+        targetId, 
+        articlesCount: articles.length,
+        nomTransporteur
+    });
 
-        res.status(200).json({ message: "Articles réapprovisionnés avec succès.", movement });
-    } catch (error) {
-        res.status(error.statusCode || 500).json({ message: error.message });
-    }
-};
+    res.status(200).json({ success: true, message: "Articles réapprovisionnés avec succès.", data: movement });
+});
 
-exports.cancelTransfer = async (req, res) => {
-    try {
-        const result = await articleService.annulerTransfert(req.params.id, req.user);
-        res.status(200).json({ message: "Transfert annulé.", result });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+exports.cancelTransfer = asyncHandler(async (req, res) => {
+    const result = await articleService.annulerTransfert(req.params.id, req.user);
+    res.status(200).json({ success: true, message: "Transfert annulé.", data: result });
+});
 
-exports.remindManager = async (req, res) => {
-    try {
-        const result = await articleService.relancerGerantTransfert(req.params.id, req.user);
-        res.status(200).json(result);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+exports.remindManager = asyncHandler(async (req, res) => {
+    const result = await articleService.relancerGerantTransfert(req.params.id, req.user);
+    res.status(200).json({ success: true, data: result });
+});
+
+/**
+ * Applique une promotion automatique sur les articles proches de la péremption
+ */
+exports.applyAutoPromo = asyncHandler(async (req, res) => {
+    const { jours, pourcentage } = req.body;
+    const result = await articleService.appliquerPromoPeremption(jours, pourcentage);
+    
+    await auditHelper.logSuccess(req, req.user, 'APPLY_AUTO_PROMO', 'Article', null, { jours, pourcentage, modifiedCount: result.modifiedCount });
+    
+    res.status(200).json({ 
+        success: true,
+        message: `${result.modifiedCount} articles ont été mis en promotion.`,
+        modifiedCount: result.modifiedCount 
+    });
+});

@@ -34,6 +34,14 @@ const userSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
+    isSynced: {
+        type: Boolean,
+        default: false
+    },
+    syncedAt: {
+        type: Date,
+        default: null
+    },
 }, { timestamps: true });
 
 // Hashage du mot de passe avant sauvegarde [cite: 16]

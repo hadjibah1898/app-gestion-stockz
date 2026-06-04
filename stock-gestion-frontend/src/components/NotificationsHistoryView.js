@@ -111,17 +111,20 @@ const NotificationsHistoryView = () => {
                 .notifications-table tbody tr.clickable {
                     cursor: pointer;
                 }
+                @media (max-width: 767.98px) {
+                    .notifications-table { font-size: 0.85rem; }
+                }
             `}</style>
-            <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+            <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
                 <h3 className="fw-bold mb-0">{userRole === 'Admin' ? 'Historique des Notifications' : 'Mes Notifications'}</h3>
                 <div className="d-flex flex-wrap gap-2">
                     {hasUnread && (
-                        <Button variant="outline-success" onClick={markAllAsRead} className="rounded-pill shadow-sm">
+                        <Button variant="outline-success" onClick={markAllAsRead} className="rounded-pill shadow-sm btn-sm px-3 py-2">
                             <iconify-icon icon="solar:check-read-bold" className="me-2 align-middle"></iconify-icon>
                             Tout marquer comme lu
                         </Button>
                     )}
-                    <Button variant="outline-primary" onClick={fetchNotifications} disabled={loading} className="rounded-pill shadow-sm">
+                    <Button variant="outline-primary" onClick={fetchNotifications} disabled={loading} className="rounded-pill shadow-sm btn-sm px-3 py-2">
                         <iconify-icon icon="solar:refresh-bold" className="me-2 align-middle"></iconify-icon>
                         {loading ? 'Actualisation...' : 'Actualiser'}
                     </Button>
@@ -134,8 +137,8 @@ const NotificationsHistoryView = () => {
                     placeholder={userRole === 'Admin' ? "Rechercher par message ou destinataire..." : "Rechercher par message..."}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    style={{ maxWidth: '300px' }}
-                    className="shadow-sm"
+                    className="shadow-sm w-100 w-md-auto"
+                    style={{ maxWidth: '450px' }}
                 />
             </div>
 

@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Row, Col, Card, Badge, Table, Spinner, Alert, Button, Modal, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { generateReceiptPDF } from '../utils/pdfUtils'; // Import de la fonction de génération de PDF
-import { venteAPI, boutiqueAPI } from '../services/api';
+import { venteAPI, boutiqueAPI, serveurAPI } from '../services/api';
 import ReceiptModal from './ReceiptModal'; // Import de la modale de reçu
+import socket from '../services/socket';
+import NotificationPopover from './NotificationPopover'; // Import NotificationPopover
 
 const ServeurDashboard = () => {
     const [historique, setHistorique] = useState([]);
@@ -15,10 +17,18 @@ const ServeurDashboard = () => {
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [showReceiptModal, setShowReceiptModal] = useState(false);
     const [currentReceiptData, setCurrentReceiptData] = useState(null);
-    const [paymentMode, setPaymentMode] = useState('Cash');
+    const [paymentMode, setPaymentMode] = useState('');
     const [transactionRef, setTransactionRef] = useState('');
     const [showQrCodeFullscreenModal, setShowQrCodeFullscreenModal] = useState(false);
     const [fullscreenQrCode, setFullscreenQrCode] = useState('');
+    const [ecoMode, setEcoMode] = useState(() => localStorage.getItem('ecoMode') === 'true');
+    const [serverStats, setServerStats] = useState({
+        totalVentes: 0,
+        totalPourboires: 0,
+        nombreTickets: 0,
+        commandesEnAttente: 0,
+        commandesPretes: 0
+    });
 
     const prevReadyCount = React.useRef(0);
 
@@ -47,17 +57,31 @@ const ServeurDashboard = () => {
                 throw new Error("ID de boutique non trouvé pour ce serveur. Veuillez contacter l'administrateur.");
             }
 
-            const [ventesRes, boutiqueRes] = await Promise.allSettled([ // Use allSettled to get results even if one promise fails
-                venteAPI.getHistorique({ limit: 100, gerantId: userId }), // Limite à 100 pour la rapidité
-                boutiqueAPI.getAll({ _id: boutiqueId })
+            // Calculer les dates pour filtrer les ventes d'aujourd'hui côté backend
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+            const todayEnd = new Date();
+            todayEnd.setHours(23, 59, 59, 999);
+
+            const startDate = todayStart.toISOString();
+            const endDate = todayEnd.toISOString();
+
+            const [ventesRes, boutiqueRes, statsRes] = await Promise.allSettled([
+                venteAPI.getHistorique({ limit: 20, gerantId: userId, startDate, endDate, groupBy: 'table' }), 
+                boutiqueAPI.getDetailsForServeur(boutiqueId),
+                serveurAPI.getStatsMe() // Appel au nouveau contrôleur backend
             ]);
 
             if (ventesRes.status === 'fulfilled') {
                 setHistorique(ventesRes.value.data.ventes || []);
             } else { console.error("Failed to fetch sales history:", ventesRes.reason); }
+            
+            if (statsRes.status === 'fulfilled') {
+                setServerStats(statsRes.value.data);
+            }
 
-            if (boutiqueRes.status === 'fulfilled' && boutiqueRes.value.data && boutiqueRes.value.data.length > 0) {
-                setBoutiqueConfig(boutiqueRes.value.data[0]);
+            if (boutiqueRes.status === 'fulfilled' && boutiqueRes.value.data) { // getDetailsForServeur retourne directement l'objet
+                setBoutiqueConfig(boutiqueRes.value.data);
             } else { console.error("Failed to fetch boutique config:", boutiqueRes.reason); }
 
         } catch (err) {
@@ -71,14 +95,42 @@ const ServeurDashboard = () => {
 
     useEffect(() => {
         fetchData();
-        // Rafraîchissement automatique toutes les 30 secondes pour le "temps réel"
-        const interval = setInterval(() => fetchData(true), 30000);
-        return () => clearInterval(interval);
+    }, [fetchData]);
+
+    // Gestion des mises à jour temps réel (remplace le polling 30s)
+    useEffect(() => {
+        const userId = localStorage.getItem('userId');
+        const boutiqueId = localStorage.getItem('boutiqueId');
+        
+        if (userId) {
+            socket.emit('join_user_room', userId);
+        }
+        if (boutiqueId) {
+            socket.emit('join_boutique_room', boutiqueId);
+        }
+
+        const handleOrderUpdate = () => {
+            fetchData(true); // Rafraîchissement silencieux (sans spinner global)
+        };
+
+        socket.on('nouvelle_commande', handleOrderUpdate);
+        socket.on('new_notification', handleOrderUpdate); // Rafraîchir les stats sur alerte bar/cuisine
+        socket.on('group_finalized', handleOrderUpdate); // Écoute l'événement de mise à jour de groupe
+        socket.on('commande_annulee', handleOrderUpdate);
+
+        return () => {
+            socket.off('nouvelle_commande', handleOrderUpdate);
+            socket.off('statut_commande_mis_a_jour', handleOrderUpdate);
+            socket.off('commande_prete', handleOrderUpdate);
+            socket.off('commande_annulee', handleOrderUpdate);
+        };
     }, [fetchData]);
 
     const handleFinalizePayment = async () => {
         if (!selectedOrder) return;
         
+        if (!paymentMode) return;
+
         const digitalModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
         
         // UX Validation : Empêcher l'envoi si la référence est vide pour un paiement digital
@@ -94,52 +146,42 @@ const ServeurDashboard = () => {
                 transactionRef: digitalModes.includes(paymentMode) ? transactionRef : undefined
             };
 
-            // Si l'ID contient un tiret, c'est notre clé composite (anciennes données).
-            // On valide alors les articles un par un.
-            if (selectedOrder.id.toString().includes('-')) {
-                const promises = selectedOrder.items.map(item => 
-                    venteAPI.updateStatus(item._id, payload)
-                );
-                await Promise.all(promises);
-            } else {
-                // Sinon, on utilise la mise à jour groupée native du backend
-                await venteAPI.updateGroupStatus(selectedOrder.id, payload); // selectedOrder.id est le orderGroupId
-            }
+            // Utilisation directe de l'orderGroupId fourni par le backend
+            await venteAPI.updateGroupStatus(selectedOrder.orderGroupId, payload);
 
             setShowPayModal(false);
             await fetchData();
 
-            // Préparer les données du ticket de caisse
-            const subTotal = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : ((item.article?.prixVente || (item.prixTotal / item.quantite)) * item.quantite)), 0);
-            const totalNet = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : item.prixTotal), 0);
-            const totalPourboire = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : (item.pourboire || 0)), 0);
-
+            // Préparation robuste des données du ticket
+            const subTotal = selectedOrder.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : ((item.article?.prixVente || (item.prixTotal / (item.quantite || 1))) * item.quantite)), 0);
+            const totalNet = selectedOrder.totalGroupPrice; // Use the pre-calculated group total
+            const totalPourboire = selectedOrder.totalGroupPourboire; // Use the pre-calculated group pourboire
             const receiptData = {
                 shopName: boutiqueConfig?.nom || selectedOrder.boutique?.nom || "Ma Boutique",
                 address: boutiqueConfig?.adresse || selectedOrder.boutique?.adresse || "",
                 phone: boutiqueConfig?.telephone || selectedOrder.boutique?.telephone || "",
-                transactionId: `SRV-${selectedOrder.id.toString().slice(-6).toUpperCase()}`, // ID spécifique au serveur
+                transactionId: `SRV-${selectedOrder.orderGroupId.toString().slice(-6).toUpperCase()}`,
                 cashierName: localStorage.getItem('userName') || "Serveur", // Le serveur est le "caissier" ici
                 serverName: localStorage.getItem('userName') || "Serveur", // Le serveur est aussi le serveur
                 clientName: selectedOrder.client?.nom || 'Client de passage',
-                date: new Date(),
+                date: selectedOrder.createdAt || new Date(),
                 items: selectedOrder.items.map(item => ({
                     article: item.article,
                     quantite: item.quantite,
-                    prixUnitaire: item.prixTotal / item.quantite,
+                    prixUnitaire: item.prixTotal / (item.quantite || 1),
                     prixTotal: item.prixTotal
                 })),
                 modePaiement: paymentMode,
                 subTotal: subTotal,
                 itemLevelDiscount: subTotal - totalNet,
                 pourboire: totalPourboire,
-                totalNet: totalNet + totalPourboire, // Le total net sur le ticket inclut le pourboire
-                amountPaid: totalNet + totalPourboire, // Le client paie le total (prix + pourboire)
+                totalNet: totalNet, // SEPARATION : On garde le total des articles seul
+                amountPaid: totalNet + totalPourboire, // L'encaissé réel inclut le pourboire
                 change: 0
             };
             setCurrentReceiptData(receiptData);
             setShowReceiptModal(true); // Afficher la modale d'impression
-            setPaymentMode('Cash'); // Réinitialiser pour la prochaine fois
+            setPaymentMode(''); // Réinitialiser pour forcer le choix à la prochaine table
             setTransactionRef('');
 
             setSelectedOrder(null);
@@ -162,65 +204,71 @@ const ServeurDashboard = () => {
     const activeQrCode = activePaymentDetails?.qr;
     const activeAccount = activePaymentDetails?.account;
 
-    const handlePrintReceipt = () => {
+    const handlePrintReceipt = (includeTip) => {
         if (currentReceiptData) {
-            generateReceiptPDF(currentReceiptData);
+            const data = { ...currentReceiptData };
+            if (!includeTip) data.pourboire = 0;
+            generateReceiptPDF(data);
         }
+        setShowReceiptModal(false);
     };
 
-    const { stats, groupedActivity } = useMemo(() => {
-        const today = new Date().toLocaleDateString();
-        const validSales = historique.filter(v => !v.isCancelled);
-        const salesToday = validSales.filter(v => new Date(v.createdAt).toLocaleDateString() === today);
-        
-        // Regroupement par transaction (Heure à la seconde + Table)
-        // Utilisation de orderGroupId pour un regroupement plus fiable
-        const groups = {};
-        historique.forEach(vente => {
-            const key = vente.orderGroupId || `${Math.floor(new Date(vente.createdAt).getTime() / 1000)}-${vente.numeroTable || 'N/A'}`;
-            if (!groups[key]) {
-                groups[key] = { 
-                    id: key, 
-                    date: vente.createdAt, 
-                    table: vente.numeroTable, 
-                    items: [], 
-                    total: 0, 
-                    statut: vente.statut, 
-                    isCancelled: vente.isCancelled,
-                    boutique: vente.boutique,
-                    client: vente.client
-                };
-            }
-            groups[key].items.push(vente);
-            if (!vente.isCancelled) {
-                // Le total d'une vente pour un serveur doit inclure son pourboire
-                // car c'est la somme finale que le client doit débourser.
-                groups[key].total += (vente.prixTotal + (vente.pourboire || 0));
-            }
-        });
-
-        return {
-            stats: {
-                count: salesToday.length,
-                total: salesToday.reduce((sum, v) => sum + v.prixTotal, 0),
-                pourboires: salesToday.reduce((sum, v) => sum + (v.pourboire || 0), 0),
-                pending: validSales.filter(v => ['commande', 'en_preparation'].includes(v.statut)).length
-            },
-            groupedActivity: Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date))
+    const handleReprintFromTable = (group) => {
+        const subTotal = group.items.reduce((acc, item) => acc + (item.isCancelled ? 0 : ((item.article?.prixVente || (item.prixTotal / (item.quantite || 1))) * item.quantite)), 0);
+        const receiptData = {
+            shopName: boutiqueConfig?.nom || group.boutique?.nom || "Ma Boutique",
+            address: boutiqueConfig?.adresse || group.boutique?.adresse || "",
+            phone: boutiqueConfig?.telephone || group.boutique?.telephone || "",
+            transactionId: `SRV-${group.orderGroupId.toString().slice(-6).toUpperCase()}`,
+            cashierName: localStorage.getItem('userName') || "Serveur",
+            serverName: localStorage.getItem('userName') || "Serveur",
+            clientName: group.client?.nom || 'Client de passage',
+            date: group.createdAt,
+            items: group.items.map(item => ({
+                article: item.article,
+                quantite: item.quantite,
+                prixUnitaire: item.prixTotal / (item.quantite || 1),
+                prixTotal: item.prixTotal
+            })),
+            modePaiement: group.modePaiement || 'Cash',
+            subTotal: subTotal,
+            itemLevelDiscount: subTotal - group.totalGroupPrice,
+            pourboire: group.totalGroupPourboire,
+            totalNet: group.totalGroupPrice,
+            amountPaid: group.totalGroupPrice + group.totalGroupPourboire,
+            change: 0
         };
-    }, [historique]);
+        setCurrentReceiptData(receiptData);
+        setShowReceiptModal(true);
+    };
 
-    if (loading) return <div className="text-center p-5"><Spinner animation="border" /></div>;
+    const groupedActivity = historique;
+
+    if (loading) return <div className="d-flex justify-content-center align-items-center vh-100"><Spinner animation="border" role="status"><span className="visually-hidden">Chargement...</span></Spinner></div>;
 
     return (
-        <>
-        <div className="p-4">
+        <div className="p-4" data-secteur={boutiqueConfig?.secteur}>
             <div className="d-flex justify-content-between align-items-center mb-4">
                 <div className="d-flex align-items-center gap-3">
+                    <div className="d-md-none"><NotificationPopover /></div>
                     <h3 className="fw-bold mb-0">Mon Tableau de Bord</h3>
                     {refreshing && <Spinner animation="border" size="sm" className="text-primary" />}
+                    <div className="d-none d-md-block"><NotificationPopover /></div>
                 </div>
-                <div className="d-flex gap-2">
+                <div className="d-flex gap-2 flex-wrap justify-content-end">
+                    <Button 
+                        variant={ecoMode ? "success" : "outline-success"} 
+                        size="sm" 
+                        className="rounded-pill px-3 d-flex align-items-center"
+                        onClick={() => {
+                            const newMode = !ecoMode;
+                            setEcoMode(newMode);
+                            localStorage.setItem('ecoMode', newMode);
+                        }}
+                    >
+                        <iconify-icon icon={ecoMode ? "solar:leaf-bold" : "solar:leaf-linear"} className="me-1"></iconify-icon>
+                        {ecoMode ? "Éco: ON" : "Éco"}
+                    </Button>
                     <Button variant="outline-secondary" size="sm" className="rounded-pill px-3" onClick={() => fetchData(true)} disabled={refreshing}>
                         <iconify-icon icon="solar:refresh-bold" className={`align-middle ${refreshing ? 'rotate-animation' : ''}`}></iconify-icon>
                     </Button>
@@ -234,30 +282,36 @@ const ServeurDashboard = () => {
             {error && <Alert variant="danger">{error}</Alert>}
             
             <Row className="g-4 mb-4">
-                <Col md={4} xs={12}>
+                <Col md={3} xs={6}>
                     <Card className="border-0 shadow-sm bg-primary text-white rounded-4">
                         <Card.Body className="p-4">
                             <h6 className="opacity-75">Mes Ventes (Aujourd'hui)</h6>
-                            <h2 className="fw-bold mb-0">{stats.total.toLocaleString()} GNF</h2>
-                            <small className="opacity-75">{stats.count} tickets validés</small>
+                            <h2 className="fw-bold mb-0">{serverStats.totalVentes.toLocaleString()} GNF</h2>
                         </Card.Body>
                     </Card>
                 </Col>
-                <Col md={4} xs={12}>
+                <Col md={3} xs={6}>
                     <Card className="border-0 shadow-sm bg-success text-white rounded-4">
                         <Card.Body className="p-4">
                             <h6 className="opacity-75">Mes Pourboires (Session)</h6>
-                            <h2 className="fw-bold mb-0">{stats.pourboires.toLocaleString()} GNF</h2>
-                            <small className="opacity-75">Accumulés ce jour</small>
+                            <h2 className="fw-bold mb-0">{serverStats.totalPourboires.toLocaleString()} GNF</h2>
                         </Card.Body>
                     </Card>
                 </Col>
-                <Col md={4} xs={12}>
+                <Col md={3} xs={6}>
+                    <Card className="border-0 shadow-sm bg-success rounded-4 text-white border-top border-5 border-white">
+                        <Card.Body className="p-4">
+                            <h6 className="opacity-75">À ENCAISSER</h6>
+                            <h2 className="fw-bold mb-0">{serverStats.commandesPretes}</h2>
+                            <small className="fw-bold">Argent à collecter</small>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col md={3} xs={6}>
                     <Card className="border-0 shadow-sm bg-warning text-white rounded-4">
                         <Card.Body className="p-4">
-                            <h6 className="opacity-75">Commandes en Attente</h6>
-                            <h2 className="fw-bold mb-0">{stats.pending}</h2>
-                            <small className="opacity-75">En cours de préparation au bar</small>
+                            <h6 className="opacity-75">En cuisine/Bar</h6>
+                            <h2 className="fw-bold mb-0">{serverStats.commandesEnAttente}</h2>
                         </Card.Body>
                     </Card>
                 </Col>
@@ -265,33 +319,52 @@ const ServeurDashboard = () => {
 
             <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
                 <Card.Header className="bg-white py-3"><h5 className="mb-0 fw-bold">Activités Récentes</h5></Card.Header>
-                <Table hover responsive className="align-middle mb-0">
+                {refreshing && (
+                    <div className="d-flex justify-content-center py-3"><Spinner animation="border" size="sm" /></div>
+                )}
+                <Table hover responsive className={`align-middle mb-0 ${refreshing ? 'opacity-50' : ''}`}>
                     <thead className="bg-light text-center">
                         <tr><th>Heure</th><th>Table</th><th>Articles</th><th className="text-end pe-4">Total</th><th>Statut</th></tr>
                     </thead>
                     <tbody>
                         {groupedActivity.slice(0, 8).map(group => (
-                            <tr key={group.id} className={group.isCancelled ? "bg-light text-muted" : ""}>
-                                <td className="text-center">{new Date(group.date).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})}</td>
-                                <td className="text-center"><Badge bg="dark" className="px-3">{group.table || 'N/A'}</Badge></td>
+                            <tr key={group.orderGroupId} className={
+                                group.isCancelled ? "bg-light text-muted" : 
+                                group.statut === 'finalisee' ? "bg-warning-subtle" : 
+                                ""
+                            }>
+                                <td className="text-center">{new Date(group.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})}</td>
+                                <td className="text-center"><Badge bg="dark" className="px-3">{group.numeroTable || 'N/A'}</Badge></td>
                                 <td>
                                     <ul className="list-unstyled mb-0 small">
                                         {group.items.map((item, idx) => (
                                             <li key={idx} className={item.isCancelled ? "text-decoration-line-through" : ""}>
+                                                {item.article?.image && !ecoMode && (
+                                                    <img src={item.article.image} alt="" className="rounded shadow-sm me-1" 
+                                                         style={{ width: '22px', height: '22px', objectFit: 'cover', verticalAlign: 'middle' }} 
+                                                    />
+                                                )}
                                                 <iconify-icon icon="solar:dot-bold" className="me-1 text-muted"></iconify-icon>
                                                 {item.article?.nom || 'Article supprimé'} <Badge bg="light" text="dark" className="ms-1">x{item.quantite}</Badge>
                                             </li>
                                         ))}
                                     </ul>
                                 </td>
-                                <td className={`fw-bold text-end pe-4 ${group.isCancelled ? '' : 'text-primary'}`}>{group.total.toLocaleString()} GNF</td>
+                                <td className={`fw-bold text-end pe-4 ${group.isCancelled ? '' : 'text-primary'}`}>{group.totalGroupPrice.toLocaleString()} GNF</td>
                                 <td className="text-center">
                                     {group.statut === 'en_preparation' ? (
                                         <Button variant="success" size="sm" className="rounded-pill shadow-sm animate__animated animate__pulse animate__infinite" onClick={() => { setSelectedOrder(group); setShowPayModal(true); }}>
                                             ENCAISSER
                                         </Button>
                                     ) : (
-                                        group.isCancelled ? <Badge bg="danger">ANNULÉE</Badge> : <Badge bg={group.statut === 'finalisee' ? 'success' : 'warning'}>{group.statut.toUpperCase()}</Badge>
+                                        <div className="d-flex align-items-center justify-content-center gap-2">
+                                            {group.isCancelled ? <Badge bg="danger">ANNULÉE</Badge> : <Badge bg={group.statut === 'finalisee' ? 'success' : 'warning'}>{group.statut.toUpperCase()}</Badge>}
+                                            {group.statut === 'finalisee' && (
+                                                <Button variant="outline-secondary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => handleReprintFromTable(group)} title="Réimprimer ticket">
+                                                    <iconify-icon icon="solar:printer-bold"></iconify-icon>
+                                                </Button>
+                                            )}
+                                        </div>
                                     )}
                                 </td>
                             </tr>
@@ -308,8 +381,8 @@ const ServeurDashboard = () => {
                 </Modal.Header>
                 <Modal.Body className="py-4 text-center">
                     <p className="mb-1 text-muted">Confirmez-vous le règlement par le client de la :</p>
-                    <h5 className="fw-bold mb-3">Table {selectedOrder?.table || 'N/A'}</h5>
-                    <h3 className="text-success fw-bold">{selectedOrder?.total.toLocaleString()} GNF</h3>
+                    <h5 className="fw-bold mb-3">Table {selectedOrder?.numeroTable || 'N/A'}</h5>
+                    <h3 className="text-success fw-bold">{(selectedOrder?.totalGroupPrice || 0).toLocaleString()} GNF</h3>
 
                     <div className="mt-4 pt-3 border-top text-start">
                         <Form.Group className="mb-3">
@@ -371,7 +444,7 @@ const ServeurDashboard = () => {
                         variant="success" 
                         onClick={handleFinalizePayment} 
                         className="rounded-pill px-4 shadow-sm fw-bold"
-                        disabled={['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(paymentMode) && !transactionRef.trim()}
+                        disabled={!paymentMode || (['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(paymentMode) && !transactionRef.trim())}
                     >
                         Valider l'encaissement
                     </Button>
@@ -383,8 +456,8 @@ const ServeurDashboard = () => {
                 show={showReceiptModal}
                 onHide={() => setShowReceiptModal(false)}
                 onPrint={handlePrintReceipt}
+                canPrint={true} // Toujours vrai ici car la modale ne s'affiche qu'après encaissement réussi
             />
-        </div>
         {/* Modale d'aperçu d'image pour le QR Code */}
         <Modal show={showQrCodeFullscreenModal} onHide={() => setShowQrCodeFullscreenModal(false)} centered size="lg">
             <Modal.Header closeButton>
@@ -392,7 +465,7 @@ const ServeurDashboard = () => {
             </Modal.Header>
             <Modal.Body className="text-center bg-light p-4"><img src={fullscreenQrCode} alt="QR Code en plein écran" className="img-fluid rounded shadow" style={{ maxHeight: '80vh' }} /></Modal.Body>
         </Modal>
-        </>
+        </div>
     );
 };
 
