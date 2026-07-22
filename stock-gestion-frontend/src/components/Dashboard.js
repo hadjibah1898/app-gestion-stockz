@@ -39,9 +39,9 @@ const formatCurrency = (value) => {
 const HoverCard = ({ children, className = "", style = {}, ...props }) => {
   const [isHovered, setIsHovered] = useState(false);
   return (
-    <Card 
+    <Card
       className={`border-0 shadow-sm ${className}`}
-      style={{ 
+      style={{
         ...style,
         transform: isHovered ? 'translateY(-5px)' : 'translateY(0)',
         transition: 'transform 0.3s ease, box-shadow 0.3s ease',
@@ -73,11 +73,11 @@ const DashboardSkeleton = () => (
           <Card className="border-0 shadow-sm h-100">
             <Card.Body className="p-4">
               <Placeholder as="div" animation="glow" className="d-flex align-items-center">
-                 <Placeholder xs={3} style={{ height: '50px', width: '50px' }} className="rounded-circle me-3" />
-                 <div className="w-100">
-                    <Placeholder xs={5} />
-                    <Placeholder xs={8} size="lg" />
-                 </div>
+                <Placeholder xs={3} style={{ height: '50px', width: '50px' }} className="rounded-circle me-3" />
+                <div className="w-100">
+                  <Placeholder xs={5} />
+                  <Placeholder xs={8} size="lg" />
+                </div>
               </Placeholder>
             </Card.Body>
           </Card>
@@ -86,8 +86,8 @@ const DashboardSkeleton = () => (
     </Row>
     {/* Charts Skeleton */}
     <Row className="g-4">
-        <Col lg={8}><Card className="border-0 shadow-sm" style={{height: '400px'}}><Card.Body><Placeholder animation="glow" className="w-100 h-100" /></Card.Body></Card></Col>
-        <Col lg={4}><Card className="border-0 shadow-sm" style={{height: '400px'}}><Card.Body><Placeholder animation="glow" className="w-100 h-100" /></Card.Body></Card></Col>
+      <Col lg={8}><Card className="border-0 shadow-sm" style={{ height: '400px' }}><Card.Body><Placeholder animation="glow" className="w-100 h-100" /></Card.Body></Card></Col>
+      <Col lg={4}><Card className="border-0 shadow-sm" style={{ height: '400px' }}><Card.Body><Placeholder animation="glow" className="w-100 h-100" /></Card.Body></Card></Col>
     </Row>
   </div>
 );
@@ -110,7 +110,7 @@ const Dashboard = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // Nombre d'articles par page
   const [offlineCount, setOfflineCount] = useState(0);
-  
+
   // États pour le transfert rapide
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferData, setTransferData] = useState({ sourceId: '', targetId: '', articleId: '', articleName: '', maxQuantity: 0, availableStock: 0 });
@@ -132,30 +132,30 @@ const Dashboard = () => {
           clientAPI.getDebtEvolution(),
           caisseAPI.listerRapports({ limit: 100 }) // Récupérer les rapports récents
         ]);
-        
+
         let statsData = statsRes.data || {};
-        const fetchedArticles = articlesRes.data.data || [];
+        const fetchedArticles = Array.isArray(articlesRes.data) ? articlesRes.data : [];
         const allBoutiques = boutiquesRes.data || [];
         setEvolutionData(evolutionRes.data);
-        
+
         // Identifier la boutique centrale
-        const centrale = allBoutiques.find(b => b.type === 'Centrale');
+        const centrale = allBoutiques.find(b => b.type === 'Centrale' || b.type === 'Bar'); // Correction: Inclure le type 'Bar'
         if (centrale) setCentralShopId(centrale._id);
-        
+
         setStats(statsData);
         setBoutiques(allBoutiques);
         // Extraire le tableau de données du format paginé
         setRapports(rapportsRes.data.data || rapportsRes.data || []);
         setAllArticles(fetchedArticles); // Sauvegarder tous les articles pour la recherche ultérieure
-        
+
         // Calcul du stock faible basé sur le seuil d'alerte personnalisé
         const lowStockItems = fetchedArticles.filter(a => safeNum(a.quantite) <= (a.seuilAlerte || 10));
         setLowStockArticles(lowStockItems);
-        
+
         const userId = localStorage.getItem('userId');
         const count = await getOfflineVentesCount(userId);
         setOfflineCount(count);
-        
+
       } catch (err) {
         setToast({ show: true, message: err.response?.data?.message || "Erreur lors du chargement des statistiques du tableau de bord.", variant: 'danger' });
         // Use some fallback data so the page doesn't crash
@@ -178,13 +178,13 @@ const Dashboard = () => {
   const handleSyncManual = async () => {
     if (userRole === 'Admin' || userRole === 'SuperAdmin') return;
 
-    const result = await syncVentes();
+    const userId = localStorage.getItem('userId');
+    const result = await syncVentes(userId);
     if (result.success > 0) {
       setToast({ show: true, message: `${result.success} ventes synchronisées !`, variant: 'success' });
       playSuccessSound();
       setRefreshTrigger(prev => prev + 1);
     }
-    const userId = localStorage.getItem('userId');
     const count = await getOfflineVentesCount(userId);
     setOfflineCount(count);
   };
@@ -196,28 +196,28 @@ const Dashboard = () => {
 
   // Calcul dynamique des séries du graphique d'Analyse des Ventes
   const processedSalesSeries = useMemo(() => {
-    if (!stats?.detailedSales || !stats?.salesProfit?.categories) return [];
-    
+    if (!stats?.detailedSales || !Array.isArray(stats.detailedSales) || !stats?.salesProfit?.categories) return [];
+
     const categories = stats.salesProfit.categories;
     const metricName = salesMetric === 'ca' ? "Chiffre d'affaires" : "Bénéfice Net";
 
     if (!isDetailedSales) {
-        // Vue Globale (identique à l'ancienne version mais peut switcher metric)
-        const dataMap = new Array(categories.length).fill(0);
-        stats.detailedSales.forEach(item => {
-            if (item.unit) dataMap[item.unit - 1] += safeNum(item[salesMetric]);
-        });
-        return [{ name: metricName, data: dataMap }];
+      // Vue Globale (identique à l'ancienne version mais peut switcher metric)
+      const dataMap = new Array(categories.length).fill(0);
+      stats.detailedSales.forEach(item => {
+        if (item.unit) dataMap[item.unit - 1] += safeNum(item[salesMetric]);
+      });
+      return [{ name: metricName, data: dataMap }];
     } else {
-        // Vue par Boutique
-        const uniqueBoutiques = [...new Set(stats.detailedSales.map(d => d.boutique))];
-        return uniqueBoutiques.map(bName => {
-            const data = new Array(categories.length).fill(0);
-            stats.detailedSales.filter(d => d.boutique === bName).forEach(item => {
-                if (item.unit) data[item.unit - 1] = safeNum(item[salesMetric]);
-            });
-            return { name: bName, data };
+      // Vue par Boutique
+      const uniqueBoutiques = [...new Set(stats.detailedSales.map(d => d.boutique))];
+      return uniqueBoutiques.map(bName => {
+        const data = new Array(categories.length).fill(0);
+        stats.detailedSales.filter(d => d.boutique === bName).forEach(item => {
+          if (item.unit) data[item.unit - 1] = safeNum(item[salesMetric]);
         });
+        return { name: bName, data };
+      });
     }
   }, [stats, isDetailedSales, salesMetric]);
 
@@ -228,15 +228,15 @@ const Dashboard = () => {
     legend: { show: isDetailedSales, position: 'top', labels: { colors: textColor } },
     dataLabels: { enabled: false },
     stroke: { curve: 'smooth', width: 2 },
-    fill: { 
-      type: 'gradient', 
-      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] } 
+    fill: {
+      type: 'gradient',
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
     },
     xaxis: { categories: stats?.salesProfit?.categories || [] },
     tooltip: { theme: theme },
     grid: { borderColor: gridColor }
   };
-  
+
   const productChartOptions = {
     chart: { type: 'donut', fontFamily: 'inherit', foreColor: textColor },
     labels: stats?.productSales?.labels || [],
@@ -245,8 +245,8 @@ const Dashboard = () => {
       pie: {
         donut: {
           size: '75%',
-          labels: { 
-            show: true, 
+          labels: {
+            show: true,
             total: { show: true, label: 'Total', color: textColor, fontSize: '16px', fontWeight: 600 },
             value: { color: textColor }
           }
@@ -260,33 +260,33 @@ const Dashboard = () => {
 
   // Calcul des données d'évolution de la dette (Global ou Par Boutique)
   const processedDebtData = useMemo(() => {
-    if (!evolutionData || evolutionData.length === 0) return { categories: [], series: [], totalLatest: 0 };
+    if (!evolutionData || !Array.isArray(evolutionData) || evolutionData.length === 0) return { categories: [], series: [], totalLatest: 0 };
 
     const uniqueDates = [...new Set(evolutionData.map(d => d.date))].sort();
-    
+
     if (isDetailedDebt) {
-        const uniqueBoutiques = [...new Set(evolutionData.map(d => d.boutiqueName))];
-        const series = uniqueBoutiques.map(bName => {
-            let runningTotal = 0;
-            const data = uniqueDates.map(date => {
-                const dailyEntries = evolutionData.filter(d => d.date === date && d.boutiqueName === bName);
-                runningTotal += dailyEntries.reduce((acc, curr) => acc + safeNum(curr.netChange), 0);
-                return runningTotal;
-            });
-            return { name: bName, data };
-        });
-        const totalLatest = series.reduce((sum, s) => sum + s.data[s.data.length - 1], 0);
-        return { categories: uniqueDates, series, totalLatest };
-    } else {
-        let globalRunningTotal = 0;
+      const uniqueBoutiques = [...new Set(evolutionData.map(d => d.boutiqueName))];
+      const series = uniqueBoutiques.map(bName => {
+        let runningTotal = 0;
         const data = uniqueDates.map(date => {
-            const dailyNetChange = evolutionData
-                .filter(d => d.date === date)
-                .reduce((acc, curr) => acc + safeNum(curr.netChange), 0);
-            globalRunningTotal += dailyNetChange;
-            return globalRunningTotal;
+          const dailyEntries = evolutionData.filter(d => d.date === date && d.boutiqueName === bName);
+          runningTotal += dailyEntries.reduce((acc, curr) => acc + safeNum(curr.netChange), 0);
+          return runningTotal;
         });
-        return { categories: uniqueDates, series: [{ name: "Dette Totale", data }], totalLatest: globalRunningTotal };
+        return { name: bName, data };
+      });
+      const totalLatest = series.reduce((sum, s) => sum + s.data[s.data.length - 1], 0);
+      return { categories: uniqueDates, series, totalLatest };
+    } else {
+      let globalRunningTotal = 0;
+      const data = uniqueDates.map(date => {
+        const dailyNetChange = evolutionData
+          .filter(d => d.date === date)
+          .reduce((acc, curr) => acc + safeNum(curr.netChange), 0);
+        globalRunningTotal += dailyNetChange;
+        return globalRunningTotal;
+      });
+      return { categories: uniqueDates, series: [{ name: "Dette Totale", data }], totalLatest: globalRunningTotal };
     }
   }, [evolutionData, isDetailedDebt]);
 
@@ -296,25 +296,25 @@ const Dashboard = () => {
     legend: { show: isDetailedDebt, position: 'top', labels: { colors: textColor } },
     dataLabels: { enabled: false },
     stroke: { curve: 'smooth', width: 2 },
-    fill: { 
-        type: 'gradient', 
-        gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.1, stops: [0, 100] } 
+    fill: {
+      type: 'gradient',
+      gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.1, stops: [0, 100] }
     },
-    xaxis: { 
-        type: 'datetime',
-        categories: processedDebtData.categories 
+    xaxis: {
+      type: 'datetime',
+      categories: processedDebtData.categories
     }, // Categories are dates, so no safeNum needed here directly on the date string
     yaxis: {
-        title: { text: 'Montant Total des Dettes (GNF)' }
+      title: { text: 'Montant Total des Dettes (GNF)' }
     },
-    tooltip: { 
-        theme: theme,
-        x: { format: 'dd MMM yyyy' },
-        y: {
-            formatter: function (val) {
-                return safeNum(val).toLocaleString('fr-FR') + " GNF"
-            }
+    tooltip: {
+      theme: theme,
+      x: { format: 'dd MMM yyyy' },
+      y: {
+        formatter: function (val) {
+          return safeNum(val).toLocaleString('fr-FR') + " GNF"
         }
+      }
     },
     grid: { borderColor: gridColor }
   };
@@ -322,55 +322,62 @@ const Dashboard = () => {
 
   // Préparation des données pour le graphique des écarts sur 7 jours (Déplacé depuis AdminCaisseView)
   const ecartsChartData = useMemo(() => {
+    // Ensure rapports is an array before processing
+    if (!rapports || !Array.isArray(rapports)) {
+      return {
+        options: { chart: { type: 'bar', stacked: true, toolbar: { show: false }, fontFamily: 'inherit', foreColor: textColor } },
+        series: []
+      };
+    }
     const last7Days = [...Array(7)].map((_, i) => {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        return d.toISOString().split('T')[0];
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      return d.toISOString().split('T')[0];
     }).reverse();
 
     // Extraire les boutiques uniques présentes dans les rapports chargés
     const uniqueBoutiques = [...new Set(rapports.map(r => r.boutique?.nom || 'Boutique Inconnue'))];
 
     const series = uniqueBoutiques.map(boutiqueNom => {
-        const data = last7Days.map(date => {
-            return rapports
-                .filter(r => 
-                    new Date(r.createdAt).toISOString().split('T')[0] === date && 
-                    (r.boutique?.nom || 'Boutique Inconnue') === boutiqueNom
-                )
-                .reduce((acc, r) => acc + safeNum(r.ecart), 0);
-        });
-        return { name: boutiqueNom, data };
+      const data = last7Days.map(date => {
+        return rapports
+          .filter(r =>
+            new Date(r.createdAt).toISOString().split('T')[0] === date &&
+            (r.boutique?.nom || 'Boutique Inconnue') === boutiqueNom
+          )
+          .reduce((acc, r) => acc + safeNum(r.ecart), 0);
+      });
+      return { name: boutiqueNom, data };
     });
 
     return {
-        options: {
-            chart: { 
-                type: 'bar', 
-                stacked: true,
-                toolbar: { show: false },
-                fontFamily: 'inherit',
-                foreColor: textColor
-            },
-            plotOptions: {
-                bar: { columnWidth: '70%', borderRadius: 4 }
-            },
-            xaxis: {
-                categories: last7Days.map(d => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
-            },
-            yaxis: { title: { text: 'Écart (GNF)' } },
-            tooltip: { theme: theme, y: { formatter: (val) => val.toLocaleString() + ' GNF' } },
-            legend: { position: 'top', labels: { colors: textColor } },
-            grid: { borderColor: gridColor }
+      options: {
+        chart: {
+          type: 'bar',
+          stacked: true,
+          toolbar: { show: false },
+          fontFamily: 'inherit',
+          foreColor: textColor
         },
-        series: series
+        plotOptions: {
+          bar: { columnWidth: '70%', borderRadius: 4 }
+        },
+        xaxis: {
+          categories: last7Days.map(d => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
+        },
+        yaxis: { title: { text: 'Écart (GNF)' } },
+        tooltip: { theme: theme, y: { formatter: (val) => val.toLocaleString() + ' GNF' } },
+        legend: { position: 'top', labels: { colors: textColor } },
+        grid: { borderColor: gridColor }
+      },
+      series: series
     };
   }, [rapports, theme, textColor, gridColor]);
 
   // Graphique de Performance par Boutique (Barres)
   const boutiquePerformanceChart = useMemo(() => {
-    if (!stats?.performanceBoutiques) return null;
-    
+    if (!stats?.performanceBoutiques || !Array.isArray(stats.performanceBoutiques)) return null;
+
     return {
       series: [{
         name: "Chiffre d'affaires",
@@ -399,7 +406,7 @@ const Dashboard = () => {
   // Logique de pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentLowStockArticles = lowStockArticles.slice(indexOfFirstItem, indexOfLastItem);
+  const currentLowStockArticles = Array.isArray(lowStockArticles) ? lowStockArticles.slice(indexOfFirstItem, indexOfLastItem) : [];
   const totalPages = Math.ceil(lowStockArticles.length / itemsPerPage);
 
   const handleExportPDF = () => {
@@ -428,165 +435,142 @@ const Dashboard = () => {
     finalY += 5;
 
     const summaryData = [
-        ['Ventes du Jour', formatCurrency(safeNum(stats?.dailySales))],
-        ['Commandes du Jour', safeNum(stats?.dailyOrders)],
-        ['Recouvrement du Jour', formatCurrency(safeNum(stats?.dailyRecoveries))],
-        ['Chiffre d\'Affaires Total', formatCurrency(safeNum(stats?.totalCA))],
-        ['Bénéfice Net Total', formatCurrency(safeNum(stats?.totalBenefice))],
-        ['Dette Totale Actuelle', formatCurrency(safeNum(processedDebtData.totalLatest))],
-        ['Articles en Stock Faible', `${lowStockArticles.length} article(s)`], // lowStockArticles.length is already a number
+      ['Ventes du Jour', formatCurrency(safeNum(stats?.dailySales))],
+      ['Commandes du Jour', safeNum(stats?.dailyOrders)],
+      ['Recouvrement du Jour', formatCurrency(safeNum(stats?.dailyRecoveries))],
+      ['Chiffre d\'Affaires Total', formatCurrency(safeNum(stats?.totalCA))],
+      ['Bénéfice Net Total', formatCurrency(safeNum(stats?.totalBenefice))],
+      ['Dette Totale Actuelle', formatCurrency(safeNum(processedDebtData.totalLatest))],
+      ['Articles en Stock Faible', `${lowStockArticles.length} article(s)`], // lowStockArticles.length is already a number
     ];
 
     autoTable(doc, {
-        startY: finalY,
-        body: summaryData,
-        theme: 'grid',
-        styles: {
-            fontStyle: 'bold',
-            fontSize: 10,
-        },
-        columnStyles: {
-            0: { fillColor: [245, 247, 250], textColor: 50 },
-            1: { halign: 'right' }
-        }
+      startY: finalY,
+      body: summaryData,
+      theme: 'grid',
+      styles: {
+        fontStyle: 'bold',
+        fontSize: 10,
+      },
+      columnStyles: {
+        0: { fillColor: [245, 247, 250], textColor: 50 },
+        1: { halign: 'right' }
+      }
     });
     finalY = doc.lastAutoTable.finalY + 10;
 
     // --- 3. PERFORMANCE ET VOLUME PAR BOUTIQUE (GRAPHIQUE VISUEL) ---
     if (stats?.performanceBoutiques?.length > 0) {
-        doc.setFontSize(14);
-        doc.setTextColor(41, 128, 185);
-        doc.text("Répartition du Chiffre d'Affaires par Boutique", 14, finalY);
-        finalY += 5;
+      doc.setFontSize(14);
+      doc.setTextColor(41, 128, 185);
+      doc.text("Répartition du Chiffre d'Affaires par Boutique", 14, finalY);
+      finalY += 5;
 
-        const totalCA = stats.performanceBoutiques.reduce((sum, b) => sum + (b.chiffreAffaires || 0), 0);
-        const maxCA = Math.max(...stats.performanceBoutiques.map(b => b.chiffreAffaires || 0));
+      const totalCA = stats.performanceBoutiques.reduce((sum, b) => sum + (b.chiffreAffaires || 0), 0);
+      const maxCA = Math.max(...stats.performanceBoutiques.map(b => b.chiffreAffaires || 0));
 
-        autoTable(doc, {
-            startY: finalY,
-            head: [['Boutique', 'Chiffre d\'Affaires', '% Contribution', 'Volume']],
-            body: stats.performanceBoutiques.map(b => {
-                const percentage = totalCA > 0 ? ((b.chiffreAffaires / totalCA) * 100).toFixed(1) : 0;
-                return [b.nom, formatCurrency(b.chiffreAffaires), `${percentage}%`, ''];
-            }), // Performance par Boutique
-            theme: 'striped',
-            headStyles: { fillColor: [41, 128, 185] },
-            columnStyles: { 
-                1: { halign: 'right' }, 
-                2: { halign: 'center' },
-                3: { cellWidth: 40 } 
-            },
-            didDrawCell: (data) => {
-                // Dessiner une barre de progression horizontale dans la dernière colonne
-                if (data.column.index === 3 && data.section === 'body') {
-                    const rowIndex = data.row.index; // Performance par Boutique
-                    const boutiqueCA = stats.performanceBoutiques[rowIndex].chiffreAffaires || 0;
-                    const barWidth = maxCA > 0 ? (boutiqueCA / maxCA) * 30 : 0; // Max 30mm
-                    doc.setFillColor(230, 230, 230); // Fond de la barre
-                    doc.rect(data.cell.x + 2, data.cell.y + 4, 30, 3, 'F');
-                    doc.setFillColor(41, 128, 185); // Remplissage (Bleu)
-                    doc.rect(data.cell.x + 2, data.cell.y + 4, barWidth, 3, 'F');
-                }
-            }
-        });
-        finalY = doc.lastAutoTable.finalY + 10;
-    }
-
-    // --- 4. ÉVOLUTION TEMPORELLE DU CA (GRAPHIQUE TABULAIRE) ---
-    if (stats?.salesProfit?.categories?.length > 0 && stats?.salesProfit?.series?.length > 0) {
-        if (finalY > pageHeight - 60) { doc.addPage(); finalY = 20; }
-        doc.setFontSize(14);
-        doc.setTextColor(41, 128, 185);
-        doc.text("Évolution Temporelle du CA et des Bénéfices", 14, finalY);
-        finalY += 5;
-
-        autoTable(doc, {
-            startY: finalY,
-            head: [['Série (Indicateur)', ...stats.salesProfit.categories]],
-            body: stats.salesProfit.series.map(s => [
-                s.name, 
-                ...s.data.map(val => safeNum(val).toLocaleString('fr-FR'))
-            ]),
-            theme: 'grid',
-            styles: { fontSize: 8 },
-            headStyles: { fillColor: [52, 73, 94] },
-            columnStyles: { 0: { fontStyle: 'bold', fillColor: [245, 247, 250] } }
-        });
-        finalY = doc.lastAutoTable.finalY + 10;
+      autoTable(doc, {
+        startY: finalY,
+        head: [['Boutique', 'Chiffre d\'Affaires', '% Contribution', 'Volume']],
+        body: stats.performanceBoutiques.map(b => {
+          const percentage = totalCA > 0 ? ((b.chiffreAffaires / totalCA) * 100).toFixed(1) : 0;
+          return [b.nom, formatCurrency(b.chiffreAffaires), `${percentage}%`, ''];
+        }), // Performance par Boutique
+        theme: 'striped',
+        headStyles: { fillColor: [41, 128, 185] },
+        columnStyles: {
+          1: { halign: 'right' },
+          2: { halign: 'center' },
+          3: { cellWidth: 40 }
+        },
+        didDrawCell: (data) => {
+          // Dessiner une barre de progression horizontale dans la dernière colonne
+          if (data.column.index === 3 && data.section === 'body') {
+            const rowIndex = data.row.index; // Performance par Boutique
+            const boutiqueCA = stats.performanceBoutiques[rowIndex].chiffreAffaires || 0;
+            const barWidth = maxCA > 0 ? (boutiqueCA / maxCA) * 30 : 0; // Max 30mm
+            doc.setFillColor(230, 230, 230); // Fond de la barre
+            doc.rect(data.cell.x + 2, data.cell.y + 4, 30, 3, 'F');
+            doc.setFillColor(41, 128, 185); // Remplissage (Bleu)
+            doc.rect(data.cell.x + 2, data.cell.y + 4, barWidth, 3, 'F');
+          }
+        }
+      });
+      finalY = doc.lastAutoTable.finalY + 10;
     }
 
     // --- 4. PERFORMANCE PAR GÉRANT ---
     if (stats?.performanceGerants?.length > 0) {
-        // Vérifier si on a besoin d'une nouvelle page
-        if (finalY > pageHeight - 40) {
-            doc.addPage();
-            finalY = 20;
-        }
-        doc.setFontSize(14);
-        doc.setTextColor(41, 128, 185);
-        doc.text("Performance par Gérant", 14, finalY);
-        finalY += 5;
-        autoTable(doc, {
-            startY: finalY,
-            head: [['Gérant', 'Boutique', 'Chiffre d\'Affaires']],
-            body: stats.performanceGerants.map(g => [g.nom, g.boutiqueNom || 'N/A', formatCurrency(safeNum(g.chiffreAffaires))]),
-            theme: 'striped',
-            headStyles: { fillColor: [41, 128, 185] },
-            columnStyles: { 2: { halign: 'right' } }
-        });
-        finalY = doc.lastAutoTable.finalY + 10;
+      // Vérifier si on a besoin d'une nouvelle page
+      if (finalY > pageHeight - 40) {
+        doc.addPage();
+        finalY = 20;
+      }
+      doc.setFontSize(14);
+      doc.setTextColor(41, 128, 185);
+      doc.text("Performance par Gérant", 14, finalY);
+      finalY += 5;
+      autoTable(doc, {
+        startY: finalY,
+        head: [['Gérant', 'Boutique', 'Chiffre d\'Affaires']],
+        body: stats.performanceGerants.map(g => [g.nom, g.boutiqueNom || 'N/A', formatCurrency(safeNum(g.chiffreAffaires))]),
+        theme: 'striped',
+        headStyles: { fillColor: [41, 128, 185] },
+        columnStyles: { 2: { halign: 'right' } }
+      });
+      finalY = doc.lastAutoTable.finalY + 10;
     }
 
     // --- 5. TOP 5 ARTICLES VENDUS ---
     if (stats?.productSales?.labels?.length > 0) {
-        if (finalY > pageHeight - 40) {
-            doc.addPage();
-            finalY = 20;
-        }
-        doc.setFontSize(14);
-        doc.setTextColor(41, 128, 185);
-        doc.text("Top 5 des Articles les plus Vendus", 14, finalY);
-        finalY += 5;
-        autoTable(doc, {
-            startY: finalY,
-            head: [['Article', 'Quantité Vendue']],
-            body: stats.productSales.labels.map((label, index) => [label, safeNum(stats.productSales.series[index])]),
-            theme: 'striped',
-            headStyles: { fillColor: [41, 128, 185] },
-            columnStyles: { 1: { halign: 'center' } }
-        });
-        finalY = doc.lastAutoTable.finalY + 10;
+      if (finalY > pageHeight - 40) {
+        doc.addPage();
+        finalY = 20;
+      }
+      doc.setFontSize(14);
+      doc.setTextColor(41, 128, 185);
+      doc.text("Top 5 des Articles les plus Vendus", 14, finalY);
+      finalY += 5;
+      autoTable(doc, {
+        startY: finalY,
+        head: [['Article', 'Quantité Vendue']],
+        body: stats.productSales.labels.map((label, index) => [label, safeNum(stats.productSales.series[index])]),
+        theme: 'striped',
+        headStyles: { fillColor: [41, 128, 185] },
+        columnStyles: { 1: { halign: 'center' } }
+      });
+      finalY = doc.lastAutoTable.finalY + 10;
     }
 
     // --- 6. ALERTE STOCK FAIBLE ---
     if (lowStockArticles.length > 0) {
-        if (finalY > pageHeight - 50) {
-            doc.addPage();
-            finalY = 20;
-        }
-        doc.setFontSize(14);
-        doc.setTextColor(0, 0, 0); // Noir pour une meilleure lisibilité
-        doc.text("Alerte Stock Faible (≤ 10 unités)", 14, finalY); // Le titre est maintenant en noir
-        finalY += 5;
-        autoTable(doc, {
-            startY: finalY,
-            head: [['Article', 'Boutique', 'Quantité Restante']],
-            body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', safeNum(a.quantite)]),
-            theme: 'striped',
-            headStyles: { fillColor: [220, 53, 69] }, // L'en-tête du tableau reste rouge pour signifier l'alerte
-            columnStyles: { 2: { halign: 'center' } }
-        });
-        finalY = doc.lastAutoTable.finalY + 10;
+      if (finalY > pageHeight - 50) {
+        doc.addPage();
+        finalY = 20;
+      }
+      doc.setFontSize(14);
+      doc.setTextColor(0, 0, 0); // Noir pour une meilleure lisibilité
+      doc.text("Alerte Stock Faible (max 10 unites)", 14, finalY);
+      finalY += 5;
+      autoTable(doc, {
+        startY: finalY,
+        head: [['Article', 'Boutique', 'Quantité Restante']],
+        body: lowStockArticles.map(a => [a.nom, a.boutique?.nom || 'N/A', safeNum(a.quantite)]),
+        theme: 'striped',
+        headStyles: { fillColor: [220, 53, 69] }, // L'en-tête du tableau reste rouge pour signifier l'alerte
+        columnStyles: { 2: { halign: 'center' } }
+      });
+      finalY = doc.lastAutoTable.finalY + 10;
     }
 
     // --- 7. PIED DE PAGE ---
     const pageCount = doc.internal.getNumberOfPages();
-    for(let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text(`StockDash - Rapport Admin`, 14, pageHeight - 10);
-        doc.text(`Page ${i} sur ${pageCount}`, doc.internal.pageSize.width - 14, pageHeight - 10, { align: 'right' });
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150);
+      doc.text(`StockDash - Rapport Admin`, 14, pageHeight - 10);
+      doc.text(`Page ${i} sur ${pageCount}`, doc.internal.pageSize.width - 14, pageHeight - 10, { align: 'right' });
     }
 
     doc.save(`rapport_synthese_admin_${new Date().toISOString().split('T')[0]}.pdf`);
@@ -595,27 +579,27 @@ const Dashboard = () => {
   const handleLowStockAction = useCallback((article) => {
     // Si c'est une boutique secondaire, on propose un transfert depuis la centrale
     if (article.boutique && article.boutique.type !== 'Centrale' && centralShopId) {
-        // Trouver l'article correspondant dans la centrale pour connaître son stock
-        const centralArticle = allArticles.find(a => 
-            (a.boutique?._id?.toString() === centralShopId?.toString() || a.boutique?.toString() === centralShopId?.toString()) && 
-            a.nom === article.nom
-        );
-        const availableStock = centralArticle ? centralArticle.quantite : 0;
+      // Trouver l'article correspondant dans la centrale pour connaître son stock
+      const centralArticle = allArticles.find(a =>
+        (a.boutique?._id?.toString() === centralShopId?.toString() || a.boutique?.toString() === centralShopId?.toString()) &&
+        a.nom === article.nom
+      );
+      const availableStock = centralArticle ? centralArticle.quantite : 0;
 
-        setTransferData({
-            sourceId: centralShopId,
-            targetId: article.boutique._id,
-            articleId: article._id, // Note: L'ID de l'article dans la boutique secondaire
-            articleName: article.nom,
-            // On ne connaît pas la quantité dispo en centrale ici sans refaire une requête, 
-            // mais le backend validera. On met une valeur indicative ou on laisse l'utilisateur saisir.
-            availableStock: availableStock
-        });
-        setTransferQuantity(10); // Valeur par défaut pour le réapprovisionnement
-        setShowTransferModal(true);
+      setTransferData({
+        sourceId: centralShopId,
+        targetId: article.boutique._id,
+        articleId: article._id, // Note: L'ID de l'article dans la boutique secondaire
+        articleName: article.nom,
+        // On ne connaît pas la quantité dispo en centrale ici sans refaire une requête, 
+        // mais le backend validera. On met une valeur indicative ou on laisse l'utilisateur saisir.
+        availableStock: availableStock
+      });
+      setTransferQuantity(10); // Valeur par défaut pour le réapprovisionnement
+      setShowTransferModal(true);
     } else {
-        // Sinon (Centrale ou indéfini), on redirige vers l'approvisionnement fournisseur
-        // Redirection gérée par le Link dans le JSX
+      // Sinon (Centrale ou indéfini), on redirige vers l'approvisionnement fournisseur
+      // Redirection gérée par le Link dans le JSX
     }
   }, [allArticles, centralShopId]);
 
@@ -623,15 +607,15 @@ const Dashboard = () => {
   useEffect(() => {
     const openTransferId = searchParams.get('openTransfer');
     if (openTransferId && !loading && allArticles.length > 0) {
-        const article = allArticles.find(a => a._id === openTransferId);
-        if (article) {
-            handleLowStockAction(article);
-            // Nettoyer l'URL pour éviter la réouverture au rafraîchissement
-            setSearchParams(params => {
-                params.delete('openTransfer');
-                return params;
-            });
-        }
+      const article = allArticles.find(a => a._id === openTransferId);
+      if (article) {
+        handleLowStockAction(article);
+        // Nettoyer l'URL pour éviter la réouverture au rafraîchissement
+        setSearchParams(params => {
+          params.delete('openTransfer');
+          return params;
+        });
+      }
     }
   }, [loading, allArticles, searchParams, setSearchParams, handleLowStockAction]);
 
@@ -639,24 +623,24 @@ const Dashboard = () => {
     e.preventDefault();
     const qty = parseInt(transferQuantity);
     if (isNaN(qty) || qty <= 0) {
-        setToast({ show: true, message: "Veuillez saisir une quantité valide (supérieure à 0).", variant: 'warning' });
-        return;
+      setToast({ show: true, message: "Veuillez saisir une quantité valide (supérieure à 0).", variant: 'warning' });
+      return;
     }
 
     setTransferLoading(true);
     try {
-        // On utilise la route de réapprovisionnement (restock) qui gère le transfert Centrale -> Secondaire
-        const res = await articleAPI.restock({
-            targetId: transferData.targetId,
-            articles: [{ articleId: transferData.articleId, quantite: qty }]
-        });
-        setToast({ show: true, message: res.data.message, variant: 'success' });
-        setShowTransferModal(false);
-        setRefreshTrigger(prev => prev + 1); // Rafraîchir le dashboard
+      // On utilise la route de réapprovisionnement (restock) qui gère le transfert Centrale -> Secondaire
+      const res = await articleAPI.restock({
+        targetId: transferData.targetId,
+        articles: [{ articleId: transferData.articleId, quantite: qty }]
+      });
+      setToast({ show: true, message: res.data.message, variant: 'success' });
+      setShowTransferModal(false);
+      setRefreshTrigger(prev => prev + 1); // Rafraîchir le dashboard
     } catch (err) {
-        setToast({ show: true, message: err.response?.data?.message || "Erreur lors du transfert.", variant: 'danger' });
+      setToast({ show: true, message: err.response?.data?.message || "Erreur lors du transfert.", variant: 'danger' });
     } finally {
-        setTransferLoading(false);
+      setTransferLoading(false);
     }
   };
 
@@ -667,9 +651,9 @@ const Dashboard = () => {
   return (
     <div className="dashboard-content p-4 position-relative" role="main" aria-label="Tableau de bord administrateur">
       {/* Bouton retour en haut discret */}
-      <Button 
-        variant="primary" 
-        className="position-fixed bottom-0 end-0 m-4 rounded-circle shadow-lg z-3 d-flex align-items-center justify-content-center border-0" 
+      <Button
+        variant="primary"
+        className="position-fixed bottom-0 end-0 m-4 rounded-circle shadow-lg z-3 d-flex align-items-center justify-content-center border-0"
         style={{ width: '45px', height: '45px', opacity: '0.8' }}
         onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
         aria-label="Retour en haut de page"
@@ -704,11 +688,11 @@ const Dashboard = () => {
         <Card.Body className="p-4 d-flex align-items-center justify-content-between position-relative">
           <div className="z-1 position-relative w-100">
             <div className="d-flex flex-wrap align-items-center gap-3 mb-2">
-                <h1 className="fw-bold mb-0 fs-2">{userRole === 'Admin' ? 'Tableau de Bord Admin' : 'Mes Performances Ventes'} 👋</h1>
-                <Button variant="light" size="sm" onClick={handleExportPDF} className="text-primary fw-bold shadow-sm">
-                    <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
-                    Exporter Rapport
-                </Button>
+              <h1 className="fw-bold mb-0 fs-2">{userRole === 'Admin' ? 'Tableau de Bord Admin' : 'Mes Performances Ventes'} 👋</h1>
+              <Button variant="light" size="sm" onClick={handleExportPDF} className="text-primary fw-bold shadow-sm">
+                <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
+                Exporter Rapport
+              </Button>
             </div>
             <p className="mb-4 opacity-75" style={{ maxWidth: '600px' }}>
               {userRole === 'Admin' ? 'Aperçu global de toutes les boutiques.' : 'Voici vos résultats personnels pour cette période.'}
@@ -733,8 +717,8 @@ const Dashboard = () => {
             </div>
           </div>
           <div className="illustration-placeholder d-none d-md-block">
-             {/* Icône décorative style 3D */}
-             <iconify-icon icon="solar:rocket-2-bold-duotone" style={{ fontSize: '180px', opacity: '0.9', transform: 'rotate(-15deg)' }}></iconify-icon>
+            {/* Icône décorative style 3D */}
+            <iconify-icon icon="solar:rocket-2-bold-duotone" style={{ fontSize: '180px', opacity: '0.9', transform: 'rotate(-15deg)' }}></iconify-icon>
           </div>
         </Card.Body>
       </Card>
@@ -792,30 +776,30 @@ const Dashboard = () => {
               <div className="d-flex justify-content-between align-items-center mb-4">
                 <h5 className="fw-bold mb-0">{salesMetric === 'ca' ? 'Analyse des Ventes' : 'Analyse des Bénéfices'}</h5>
                 <div className="d-flex gap-3 align-items-center">
-                    <Form.Check 
-                        type="switch"
-                        id="sales-metric-switch"
-                        label={salesMetric === 'ca' ? "Vue CA" : "Vue Bénéfice"}
-                        checked={salesMetric === 'profit'}
-                        onChange={(e) => setSalesMetric(e.target.checked ? 'profit' : 'ca')}
-                        className="fw-medium small text-primary"
-                    />
-                    <Form.Check 
-                        type="switch"
-                        id="sales-detail-switch"
-                        label="Par boutique"
-                        checked={isDetailedSales}
-                        onChange={(e) => setIsDetailedSales(e.target.checked)}
-                        className="fw-medium small"
-                    />
-                    <select 
-                        className="form-select form-select-sm w-auto border-0 bg-body-tertiary fw-medium"
-                        value={timeRange}
-                        onChange={(e) => setTimeRange(e.target.value)}
-                    >
-                        <option value="monthly">Ce mois</option>
-                        <option value="yearly">Cette année</option>
-                    </select>
+                  <Form.Check
+                    type="switch"
+                    id="sales-metric-switch"
+                    label={salesMetric === 'ca' ? "Vue CA" : "Vue Bénéfice"}
+                    checked={salesMetric === 'profit'}
+                    onChange={(e) => setSalesMetric(e.target.checked ? 'profit' : 'ca')}
+                    className="fw-medium small text-primary"
+                  />
+                  <Form.Check
+                    type="switch"
+                    id="sales-detail-switch"
+                    label="Par boutique"
+                    checked={isDetailedSales}
+                    onChange={(e) => setIsDetailedSales(e.target.checked)}
+                    className="fw-medium small"
+                  />
+                  <select
+                    className="form-select form-select-sm w-auto border-0 bg-body-tertiary fw-medium"
+                    value={timeRange}
+                    onChange={(e) => setTimeRange(e.target.value)}
+                  >
+                    <option value="monthly">Ce mois</option>
+                    <option value="yearly">Cette année</option>
+                  </select>
                 </div>
               </div>
               <Chart options={salesChartOptions} series={processedSalesSeries} type="area" height={350} />
@@ -825,8 +809,8 @@ const Dashboard = () => {
         <Col lg={4}>
           <Card className="border-0 shadow-sm h-100 rounded-4">
             <Card.Body className="p-4">
-              <h5 className="fw-bold mb-4">Articles les plus vendus</h5>
-              <Chart options={productChartOptions} series={stats?.productSales?.series.map(safeNum) || []} type="donut" height={320} />
+              <h5 className="fw-bold mb-4">Articles les plus vendus</h5> {/* Ensure series is an array before mapping */}
+              <Chart options={productChartOptions} series={Array.isArray(stats?.productSales?.series) ? stats.productSales.series.map(safeNum) : []} type="donut" height={320} />
             </Card.Body>
           </Card>
         </Col>
@@ -834,44 +818,44 @@ const Dashboard = () => {
 
       <Row className="g-4 mt-4">
         <Col lg={12}>
-            <Card className="border-0 shadow-sm h-100 rounded-4">
-                <Card.Body className="p-4">
-                    <h5 className="fw-bold mb-2">Précision des Caisses (7 derniers jours)</h5>
-                    <p className="text-muted small mb-4">
-                        Ce graphique montre les erreurs de comptage par boutique. 
-                        Une barre qui <strong>monte</strong> indique un surplus d'argent, 
-                        une barre qui <strong>descend</strong> indique un manque d'argent (déficit).
-                    </p>
-                    <Chart options={ecartsChartData.options} series={ecartsChartData.series} type="bar" height={300} />
-                </Card.Body>
-            </Card>
+          <Card className="border-0 shadow-sm h-100 rounded-4">
+            <Card.Body className="p-4">
+              <h5 className="fw-bold mb-2">Précision des Caisses (7 derniers jours)</h5>
+              <p className="text-muted small mb-4">
+                Ce graphique montre les erreurs de comptage par boutique.
+                Une barre qui <strong>monte</strong> indique un surplus d'argent,
+                une barre qui <strong>descend</strong> indique un manque d'argent (déficit).
+              </p>
+              <Chart options={ecartsChartData.options} series={ecartsChartData.series} type="bar" height={300} />
+            </Card.Body>
+          </Card>
         </Col>
       </Row>
 
       <Row className="g-4 mt-4">
         <Col lg={12}>
-            <Card className="border-0 shadow-sm h-100 rounded-4">
-                <Card.Body className="p-4">
-                    <div className="d-flex justify-content-between align-items-center mb-3">
-                        <h5 className="fw-bold mb-0">Évolution du Total des Dettes</h5>
-                        <Form.Check 
-                            type="switch"
-                            id="debt-detail-switch"
-                            label="Comparer par boutique"
-                            checked={isDetailedDebt}
-                            onChange={(e) => setIsDetailedDebt(e.target.checked)}
-                            className="fw-medium small"
-                        />
-                    </div>
-                    {loading ? (
-                        <div className="text-center py-5"><Spinner animation="border" /></div>
-                    ) : processedDebtData.series.length > 0 ? (
-                        <Chart options={debtEvolutionChartOptions} series={debtEvolutionChartSeries} type="area" height={300} />
-                    ) : (
-                        <Alert variant="info" className="m-0">Aucune donnée disponible pour afficher l'évolution des dettes.</Alert>
-                    )}
-                </Card.Body>
-            </Card>
+          <Card className="border-0 shadow-sm h-100 rounded-4">
+            <Card.Body className="p-4">
+              <div className="d-flex justify-content-between align-items-center mb-3">
+                <h5 className="fw-bold mb-0">Évolution du Total des Dettes</h5>
+                <Form.Check
+                  type="switch"
+                  id="debt-detail-switch"
+                  label="Comparer par boutique"
+                  checked={isDetailedDebt}
+                  onChange={(e) => setIsDetailedDebt(e.target.checked)}
+                  className="fw-medium small"
+                />
+              </div>
+              {loading ? (
+                <div className="text-center py-5"><Spinner animation="border" /></div>
+              ) : processedDebtData.series.length > 0 ? (
+                <Chart options={debtEvolutionChartOptions} series={debtEvolutionChartSeries} type="area" height={300} />
+              ) : (
+                <Alert variant="info" className="m-0">Aucune donnée disponible pour afficher l'évolution des dettes.</Alert>
+              )}
+            </Card.Body>
+          </Card>
         </Col>
       </Row>
 
@@ -887,63 +871,63 @@ const Dashboard = () => {
             <Card.Body className="p-0">
               {lowStockArticles.length > 0 ? (
                 <>
-                <Table responsive hover className="align-middle mb-0">
-                  <thead>
-                    <tr>
-                      <th className="ps-4 border-0">Article</th>
-                      <th className="border-0">Boutique</th>
-                      <th className="text-center border-0">Quantité Restante</th>
-                      <th className="text-end pe-4 border-0">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentLowStockArticles.map(article => (
-                      <tr key={article._id}>
-                        <td className="ps-4"><span className="fw-bold">{article.nom}</span></td>
-                        <td>{article.boutique?.nom || <Badge bg="secondary">Non assignée</Badge>}</td>
-                        <td className="text-center"><Badge bg="danger" pill>{safeNum(article.quantite)}</Badge></td>
-                        <td className="text-end pe-4">
-                          {article.boutique && article.boutique.type !== 'Centrale' && centralShopId ? (
-                              <Button 
-                                variant="outline-success" 
+                  <Table responsive hover className="align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th className="ps-4 border-0">Article</th>
+                        <th className="border-0">Boutique</th>
+                        <th className="text-center border-0">Quantité Restante</th>
+                        <th className="text-end pe-4 border-0">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentLowStockArticles.map(article => (
+                        <tr key={article._id}>
+                          <td className="ps-4"><span className="fw-bold">{article.nom}</span></td>
+                          <td>{article.boutique?.nom || <Badge bg="secondary">Non assignée</Badge>}</td>
+                          <td className="text-center"><Badge bg="danger" pill>{safeNum(article.quantite)}</Badge></td>
+                          <td className="text-end pe-4">
+                            {article.boutique && article.boutique.type !== 'Centrale' && centralShopId ? (
+                              <Button
+                                variant="outline-success"
                                 size="sm"
                                 onClick={() => handleLowStockAction(article)}
                               >
-                                Transférer
+                                Expédier vers une Boutique
                               </Button>
-                          ) : (
-                              <Button 
-                                as={Link} 
-                                to="/admin/articles" 
-                                state={{ 
-                                    openSupplyModal: true, 
-                                    articleId: article._id, 
-                                    supplierId: article.fournisseur?._id 
+                            ) : (
+                              <Button
+                                as={Link}
+                                to="/admin/articles"
+                                state={{
+                                  openSupplyModal: true,
+                                  articleId: article._id,
+                                  supplierId: article.fournisseur?._id
                                 }}
-                                variant="outline-primary" 
+                                variant="outline-primary"
                                 size="sm"
                               >
                                 Approvisionner
                               </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-                {totalPages > 1 && (
-                  <div className="d-flex justify-content-center p-3 border-top">
-                    <Pagination size="sm" className="mb-0">
-                      <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
-                      {[...Array(totalPages)].map((_, idx) => (
-                        <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
-                          {idx + 1}
-                        </Pagination.Item>
+                            )}
+                          </td>
+                        </tr>
                       ))}
-                      <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
-                    </Pagination>
-                  </div>
-                )}
+                    </tbody>
+                  </Table>
+                  {totalPages > 1 && (
+                    <div className="d-flex justify-content-center p-3 border-top">
+                      <Pagination size="sm" className="mb-0">
+                        <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
+                        {[...Array(totalPages)].map((_, idx) => (
+                          <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
+                            {idx + 1}
+                          </Pagination.Item>
+                        ))}
+                        <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
+                      </Pagination>
+                    </div>
+                  )}
                 </>
               ) : (
                 <Alert variant="success" className="m-4 text-center">Aucun article en stock faible pour le moment. Excellent travail !</Alert>
@@ -956,151 +940,151 @@ const Dashboard = () => {
       {/* F. Performances par Boutique et Gérant */}
       {/* On cache cette section pour les gérants (ils ne voient pas la performance des autres) */}
       {userRole === 'Admin' && (
-      <Row className="mt-4 g-4" id="performance">
-        <Col lg={5}>
-          <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Body className="p-4">
-              <h5 className="fw-bold mb-4">CA par Boutique</h5>
-              {boutiquePerformanceChart && (
-                <Chart 
-                  options={boutiquePerformanceChart.options} 
-                  series={boutiquePerformanceChart.series} 
-                  type="bar" 
-                  height={300} 
-                />
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col lg={7}>
-          <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Body className="p-4">
-              <h5 className="fw-bold mb-4">Classement des Gérants</h5>
-              <div className="table-responsive">
-                <Table hover className="align-middle mb-0">
-                  <thead className="bg-light">
-                    <tr>
-                      <th className="border-0 small">Gérant</th>
-                      <th className="border-0 text-end small">Ventes</th>
-                      <th className="border-0 text-end small">Recouvrement</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats?.performanceGerants?.map((gerant, idx) => (
-                      <tr key={idx}>
-                        <td>
-                          <div className="fw-bold">{gerant.nom}</div>
-                          <div className="small text-muted">{gerant.boutiqueNom}</div>
-                        </td>
-                        <td className="text-end fw-bold text-primary">{formatCurrency(gerant.chiffreAffaires)}</td>
-                        <td className="text-end fw-bold text-success">{formatCurrency(gerant.totalRecouvrements)}</td>
+        <Row className="mt-4 g-4" id="performance">
+          <Col lg={5}>
+            <Card className="border-0 shadow-sm h-100 rounded-4">
+              <Card.Body className="p-4">
+                <h5 className="fw-bold mb-4">CA par Boutique</h5>
+                {boutiquePerformanceChart && (
+                  <Chart
+                    options={boutiquePerformanceChart.options}
+                    series={boutiquePerformanceChart.series}
+                    type="bar"
+                    height={300}
+                  />
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+          <Col lg={7}>
+            <Card className="border-0 shadow-sm h-100 rounded-4">
+              <Card.Body className="p-4">
+                <h5 className="fw-bold mb-4">Classement des Gérants</h5>
+                <div className="table-responsive">
+                  <Table hover className="align-middle mb-0">
+                    <thead className="bg-light">
+                      <tr>
+                        <th className="border-0 small">Gérant</th>
+                        <th className="border-0 text-end small">Ventes</th>
+                        <th className="border-0 text-end small">Recouvrement</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
+                    </thead>
+                    <tbody>
+                      {stats?.performanceGerants?.map((gerant, idx) => (
+                        <tr key={idx}>
+                          <td>
+                            <div className="fw-bold">{gerant.nom}</div>
+                            <div className="small text-muted">{gerant.boutiqueNom}</div>
+                          </td>
+                          <td className="text-end fw-bold text-primary">{formatCurrency(gerant.chiffreAffaires)}</td>
+                          <td className="text-end fw-bold text-success">{formatCurrency(gerant.totalRecouvrements)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
       )}
 
       {/* H. Répartition des Gérants par Boutique (Vue Admin) */}
       {userRole === 'Admin' && (
-      <Row className="mt-4">
-        <Col lg={12}>
-          <Card className="border-0 shadow-sm h-100 rounded-4">
-            <Card.Header className="bg-body py-3 d-flex justify-content-between align-items-center">
-              <h5 className="fw-bold mb-0">Affectation des Gérants par Boutique</h5>
-              <Button as={Link} to="/admin/boutiques" variant="primary" size="sm" className="rounded-pill px-3 fw-bold shadow-sm">
-                <iconify-icon icon="solar:user-plus-bold" className="me-2 align-middle"></iconify-icon>
-                Modifier les accès
-              </Button>
-            </Card.Header>
-            <Card.Body className="p-0">
-              <Table responsive hover className="align-middle mb-0">
-                <thead className="bg-body-tertiary">
-                  <tr>
-                    <th className="ps-4 border-0 text-muted small text-uppercase">Boutique</th>
-                    <th className="border-0 text-muted small text-uppercase">Type</th>
-                    <th className="border-0 text-muted small text-uppercase">Gérants Assignés</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {boutiques.map((boutique) => (
-                    <tr key={boutique._id}>
-                      <td className="ps-4">
-                        <div className="d-flex align-items-center">
-                          <div className={`bg-${boutique.type === 'Centrale' ? 'primary' : 'info'}-subtle text-${boutique.type === 'Centrale' ? 'primary' : 'info'} rounded-circle p-2 me-3 d-flex align-items-center justify-content-center`} style={{ width: '35px', height: '35px' }}>
-                            <iconify-icon icon={boutique.type === 'Centrale' ? "solar:home-2-bold" : "solar:shop-2-bold"}></iconify-icon>
-                          </div>
-                          <span className="fw-bold">{boutique.nom}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <Badge bg={boutique.type === 'Centrale' ? 'primary-subtle' : 'info-subtle'} text={boutique.type === 'Centrale' ? 'primary' : 'info'} pill>
-                          {boutique.type}
-                        </Badge>
-                      </td>
-                      <td>
-                        <div className="d-flex flex-wrap gap-1">
-                          {boutique.vendeurs && boutique.vendeurs.length > 0 ? (
-                            boutique.vendeurs.map((v, i) => (
-                              <Badge key={i} bg="secondary-subtle" text="dark" pill className="fw-normal">
-                                <iconify-icon icon="solar:user-bold" className="me-1 small"></iconify-icon>
-                                {v.nom || 'Utilisateur'}
-                              </Badge>
-                            ))
-                          ) : (
-                            <span className="text-muted small italic">Aucun gérant assigné</span>
-                          )}
-                        </div>
-                      </td>
+        <Row className="mt-4">
+          <Col lg={12}>
+            <Card className="border-0 shadow-sm h-100 rounded-4">
+              <Card.Header className="bg-body py-3 d-flex justify-content-between align-items-center">
+                <h5 className="fw-bold mb-0">Affectation des Gérants par Boutique</h5>
+                <Button as={Link} to="/admin/boutiques" variant="primary" size="sm" className="rounded-pill px-3 fw-bold shadow-sm">
+                  <iconify-icon icon="solar:user-plus-bold" className="me-2 align-middle"></iconify-icon>
+                  Modifier les accès
+                </Button>
+              </Card.Header>
+              <Card.Body className="p-0">
+                <Table responsive hover className="align-middle mb-0">
+                  <thead className="bg-body-tertiary">
+                    <tr>
+                      <th className="ps-4 border-0 text-muted small text-uppercase">Boutique</th>
+                      <th className="border-0 text-muted small text-uppercase">Type</th>
+                      <th className="border-0 text-muted small text-uppercase">Gérants Assignés</th>
                     </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
+                  </thead>
+                  <tbody>
+                    {boutiques.map((boutique) => (
+                      <tr key={boutique._id}>
+                        <td className="ps-4">
+                          <div className="d-flex align-items-center">
+                            <div className={`bg-${boutique.type === 'Centrale' || boutique.type === 'Bar' ? 'primary' : 'info'}-subtle text-${boutique.type === 'Centrale' || boutique.type === 'Bar' ? 'primary' : 'info'} rounded-circle p-2 me-3 d-flex align-items-center justify-content-center`} style={{ width: '35px', height: '35px' }}>
+                              <iconify-icon icon={boutique.type === 'Centrale' ? "solar:home-2-bold" : (boutique.type === 'Bar' ? "solar:wine-glass-bold" : "solar:shop-2-bold")}></iconify-icon>
+                            </div>
+                            <span className="fw-bold">{boutique.nom}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <Badge bg={boutique.type === 'Centrale' ? 'primary-subtle' : 'info-subtle'} text={boutique.type === 'Centrale' ? 'primary' : 'info'} pill>
+                            {boutique.type === 'Centrale' ? 'Dépôt Principal' : (boutique.type === 'Bar' ? 'Bar / Boîte' : 'Secondaire')}
+                          </Badge>
+                        </td>
+                        <td>
+                          <div className="d-flex flex-wrap gap-1">
+                            {boutique.vendeurs && boutique.vendeurs.length > 0 ? (
+                              boutique.vendeurs.map((v, i) => (
+                                <Badge key={i} bg="secondary-subtle" text="dark" pill className="fw-normal">
+                                  <iconify-icon icon="solar:user-bold" className="me-1 small"></iconify-icon>
+                                  {v.nom || 'Utilisateur'}
+                                </Badge>
+                              ))
+                            ) : (
+                              <span className="text-muted small italic">Aucun gérant assigné</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
       )}
 
       {/* Modale de Transfert Rapide (Réapprovisionnement d'urgence) */}
       <Modal show={showTransferModal} onHide={() => setShowTransferModal(false)} centered>
         <Modal.Header closeButton>
-            <Modal.Title>Réapprovisionner {transferData.articleName}</Modal.Title>
+          <Modal.Title>Réapprovisionner {transferData.articleName}</Modal.Title>
         </Modal.Header>
         <Form onSubmit={confirmTransfer}>
-            <Modal.Body>
-                <Alert variant="info" className="small">
-                    Transfert depuis le <strong>Dépôt Principal</strong> vers la boutique concernée.
-                    <div className="mt-2 fw-bold">
-                        Stock disponible en centrale : <Badge bg={transferData.availableStock > 0 ? "success" : "danger"}>{transferData.availableStock}</Badge>
-                    </div>
-                </Alert>
-                <Form.Group>
-                    <Form.Label>Quantité à transférer</Form.Label>
-                    <Form.Control 
-                        type="number" 
-                        min="1" 
-                        value={transferQuantity} 
-                        max={transferData.availableStock}
-                        onChange={(e) => setTransferQuantity(e.target.value)} 
-                        required 
-                        isInvalid={parseInt(transferQuantity) > transferData.availableStock}
-                    />
-                    <Form.Control.Feedback type="invalid">
-                        La quantité ne peut pas dépasser le stock disponible ({transferData.availableStock}).
-                    </Form.Control.Feedback>
-                </Form.Group>
-            </Modal.Body>
-            <Modal.Footer>
-                <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
-                <Button variant="success" type="submit" disabled={transferLoading || parseInt(transferQuantity) > transferData.availableStock || transferData.availableStock <= 0}>
-                    {transferLoading ? <Spinner size="sm" /> : 'Valider le transfert'}
-                </Button>
-            </Modal.Footer>
+          <Modal.Body>
+            <Alert variant="info" className="small">
+              Transfert depuis le <strong>Dépôt Principal</strong> vers la boutique concernée.
+              <div className="mt-2 fw-bold">
+                Stock disponible en centrale : <Badge bg={transferData.availableStock > 0 ? "success" : "danger"}>{transferData.availableStock}</Badge>
+              </div>
+            </Alert>
+            <Form.Group>
+              <Form.Label>Quantité à transférer</Form.Label>
+              <Form.Control
+                type="number"
+                min="1"
+                value={transferQuantity}
+                max={transferData.availableStock}
+                onChange={(e) => setTransferQuantity(e.target.value)}
+                required
+                isInvalid={parseInt(transferQuantity) > transferData.availableStock}
+              />
+              <Form.Control.Feedback type="invalid">
+                La quantité ne peut pas dépasser le stock disponible ({transferData.availableStock}).
+              </Form.Control.Feedback>
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
+            <Button variant="success" type="submit" disabled={transferLoading || parseInt(transferQuantity) > transferData.availableStock || transferData.availableStock <= 0}>
+              {transferLoading ? <Spinner size="sm" /> : 'Valider le transfert'}
+            </Button>
+          </Modal.Footer>
         </Form>
       </Modal>
     </div>

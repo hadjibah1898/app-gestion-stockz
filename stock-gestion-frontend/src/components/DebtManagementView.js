@@ -1,7 +1,13 @@
+/**
+ * @file DebtManagementView.js
+ * @description Vue de gestion des créances : suivi des dettes clients, paiements.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Badge, Card, Form, Modal, Spinner, Tab, Tabs, Alert, Pagination, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { clientAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
+import { safeNum, formatCurrency } from '../utils/formatUtils'; // Import safeNum et formatCurrency
 import jsPDF from 'jspdf';
 import logo from '../assets/logo.png';
 
@@ -12,7 +18,7 @@ const DebtManagementView = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
-    
+
     const [showPayModal, setShowPayModal] = useState(false);
     const [selectedDebt, setSelectedDebt] = useState(null);
     const [amount, setAmount] = useState('');
@@ -37,9 +43,11 @@ const DebtManagementView = () => {
                 })
             ]);
 
-            setDettes(dettesRes.data);
+            // L'intercepteur Axios unwrap déjà : dettesRes est le tableau ou { data: [...] }
+            setDettes(Array.isArray(dettesRes) ? dettesRes : (dettesRes.data || []));
 
-            const sortedHistory = (historyRes.data || []).sort((a, b) => {
+            const historyData = Array.isArray(historyRes) ? historyRes : (historyRes.data || []);
+            const sortedHistory = historyData.sort((a, b) => {
                 return new Date(b.datePaiement || b.createdAt) - new Date(a.datePaiement || a.createdAt);
             });
             setHistory(sortedHistory);
@@ -71,34 +79,47 @@ const DebtManagementView = () => {
 
         try {
             const montantPaye = Number(amount);
-            const res = await clientAPI.payDette(selectedDebt._id, { montant: montantPaye, modePaiement, transactionRef });
+            console.log("[DEBUG] 1. Envoi du paiement au backend avec montant:", montantPaye);
+            // L'intercepteur retourne maintenant directement l'objet de données.
+            const responseData = await clientAPI.payDette(selectedDebt._id, { montant: montantPaye, modePaiement, transactionRef });
+            console.log("[DEBUG] 2. Données reçues du backend:", responseData);
+
+            const clientInfo = { email: selectedDebt.email, nom: selectedDebt.nom };
+
+            const { nouveauSolde, paiement, soldeAnterieur } = responseData;
+            console.log("[DEBUG] 3. Données extraites de la réponse:", { nouveauSolde, paiement, soldeAnterieur });
+
+            // Mettre à jour l'état local pour un feedback visuel instantané
+            setDettes(prevDettes => prevDettes.map(d => // Utiliser safeNum pour la cohérence
+                d._id === selectedDebt._id ? { ...d, dette: safeNum(nouveauSolde) } : d
+            ));
+            console.log("[DEBUG] 4. État 'dettes' mis à jour localement.");
+
             setShowPayModal(false);
             setAmount('');
             setModePaiement('Cash');
             setTransactionRef('');
-            
             const paymentReceipt = {
-                id: res.data.paiement?._id,
-                clientEmail: selectedDebt.email,
-                clientName: selectedDebt.nom,
-                amount: amount,
-                oldDebt: selectedDebt.dette,
+                id: paiement?._id,
+                clientEmail: clientInfo.email,
+                clientName: clientInfo.nom,
+                amount: montantPaye,
+                oldDebt: safeNum(soldeAnterieur),
                 modePaiement: modePaiement,
                 transactionRef: transactionRef
             };
+            console.log("[DEBUG] 5. Données du reçu préparées:", paymentReceipt);
 
             setLastPayment(paymentReceipt);
-            
-            // Déclenchement AUTOMATIQUE de la génération du PDF
-            generateReceipt(paymentReceipt);
 
             setSuccess("Paiement encaissé avec succès ! Le solde du client et votre caisse ont été mis à jour.");
-            loadData(); // Recharger les données
-            
-            // Note : J'ai retiré le setTimeout ici pour que le bouton "Télécharger" reste visible
-            // jusqu'à ce que vous fermiez manuellement l'alerte.
+            loadData();
+            console.log("[DEBUG] 6. Opération terminée avec succès !");
+
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'enregistrement du paiement.");
+            // LOG CRUCIAL : Affiche l'erreur complète dans la console pour l'analyse.
+            console.error("--- ERREUR CAPTURÉE DANS handlePayment ---", err);
+            setError(err.response?.data?.message || "Erreur lors de l'enregistrement du paiement. (Voir console pour détails)");
         } finally {
             setSubmitLoading(false);
         }
@@ -124,76 +145,105 @@ const DebtManagementView = () => {
     };
 
     const generateReceipt = (payment) => {
-        // Format optimisé pour les imprimantes thermiques (largeur 80mm)
+        // Format professionnel pour imprimante thermique (80mm)
         const doc = new jsPDF({
             orientation: 'portrait',
             unit: 'mm',
-            format: [80, 150] 
+            format: [80, 200] // Hauteur augmentée pour plus de détails
         });
 
         const pageWidth = 80;
         const margin = 5;
+        let yPos = 5;
+
+        // --- INFOS BOUTIQUE (Récupérées depuis le localStorage) ---
+        const shopName = localStorage.getItem('shopName') || 'MON ENTREPRISE';
+        const shopAddress = localStorage.getItem('shopAddress') || 'Adresse';
+        const shopPhone = localStorage.getItem('shopPhone') || 'Téléphone';
 
         // --- LOGO ---
         try {
-            doc.addImage(logo, 'PNG', (pageWidth - 30) / 2, 5, 30, 10);
+            doc.addImage(logo, 'PNG', (pageWidth - 25) / 2, yPos, 25, 8);
+            yPos += 12;
         } catch (e) {
             console.error("Erreur lors de l'ajout du logo", e);
+            yPos += 5;
         }
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text(shopName, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 4;
+        doc.text(shopAddress, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 4;
+        doc.text(`Tel: ${shopPhone}`, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 6;
+
+        doc.setLineDashPattern([1, 1], 0);
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 6;
 
         doc.setFont("helvetica", "bold");
         doc.setFontSize(12);
-        doc.text("RECU DE PAIEMENT", pageWidth / 2, 22, { align: 'center' });
-        
+        doc.text("REÇU DE PAIEMENT", pageWidth / 2, yPos, { align: 'center' }); // Correction: "REÇU"
+        yPos += 8;
+
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
-        doc.text(`Date: ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, margin, 30);
-        
-        doc.setLineWidth(0.1);
-        doc.line(margin, 33, pageWidth - margin, 33);
-        
+        doc.text(`Date: ${new Date().toLocaleString('fr-FR')}`, margin, yPos);
+        yPos += 5;
+        doc.text(`Reçu N°: PAY-${payment.id?.slice(-6).toUpperCase() || 'N/A'}`, margin, yPos); // Correction: "Reçu"
+        yPos += 8;
+
         doc.setFont("helvetica", "bold");
-        doc.text(`CLIENT:`, margin, 40);
+        doc.text(`CLIENT: ${payment.clientName.toUpperCase()}`, margin, yPos);
+        yPos += 8;
+
+        doc.setLineDashPattern([0], 0); // Ligne pleine
+        doc.setLineWidth(0.2);
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 8;
+
         doc.setFontSize(10);
-        doc.text(`${payment.clientName.toUpperCase()}`, margin, 45);
-
-        doc.setFontSize(9);
-        doc.setFont("helvetica", "normal");
-        
-        let yPos = 55;
-        doc.text(`Montant Versé:`, margin, yPos);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${parseFloat(payment.amount).toLocaleString('fr-FR')} GNF`, pageWidth - margin, yPos, { align: 'right' });
-        
-        yPos += 7;
-        doc.setFont("helvetica", "normal");
-        doc.text(`Mode de Paiement:`, margin, yPos);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${payment.modePaiement}`, pageWidth - margin, yPos, { align: 'right' });
-
-        if (payment.transactionRef) {
-            yPos += 7;
+        const addLineItem = (label, value) => {
             doc.setFont("helvetica", "normal");
-            doc.text(`Réf. Transaction:`, margin, yPos);
+            doc.text(label, margin, yPos);
             doc.setFont("helvetica", "bold");
-            doc.text(`${payment.transactionRef}`, pageWidth - margin, yPos, { align: 'right' });
-        }
+            doc.text(value, pageWidth - margin, yPos, { align: 'right' });
+            yPos += 7;
+        };
+
+        addLineItem("Ancien Solde:", formatCurrency(payment.oldDebt));
+        addLineItem("Montant Versé:", formatCurrency(payment.amount));
+        if (payment.modePaiement) addLineItem("Mode de Paiement:", payment.modePaiement);
+        if (payment.transactionRef) addLineItem("Réf. Transaction:", payment.transactionRef);
+
+        yPos += 2;
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 8;
+
+        doc.setFontSize(12);
+        const remaining = Math.max(0, safeNum(payment.oldDebt) - safeNum(payment.amount)); // Utilisation de safeNum
+        addLineItem("NOUVEAU SOLDE:", formatCurrency(remaining));
 
         yPos += 10;
-        doc.line(margin, yPos - 5, pageWidth - margin, yPos - 5);
-        
-        doc.setFont("helvetica", "normal");
-        doc.text(`RESTE À PAYER:`, margin, yPos);
-        doc.setFont("helvetica", "bold");
-        const remaining = Math.max(0, payment.oldDebt - parseFloat(payment.amount));
-        doc.text(`${remaining.toLocaleString('fr-FR')} GNF`, pageWidth - margin, yPos, { align: 'right' });
-
-        yPos += 15;
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8);
-        doc.text("Merci de votre confiance !", pageWidth / 2, yPos, { align: 'center' });
-        doc.text("Signature & Cachet", pageWidth / 2, yPos + 8, { align: 'center' });
-        
+        doc.text("Merci de votre confiance !", pageWidth / 2, yPos, { align: 'center' }); // Centered thank you message
+        yPos += 8;
+        doc.text("........................................", pageWidth / 2, yPos, { align: 'center' });
+        yPos += 4;
+
+        // --- SIGNATURE NUMÉRIQUE ---
+        const cashierName = localStorage.getItem('userName') || 'Opérateur';
+        doc.setFont("helvetica", "bold");
+        doc.text(cashierName, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 4;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(150);
+        doc.text(`Reçu généré par StockDash - ID: ${payment.id || 'N/A'}`, pageWidth / 2, yPos, { align: 'center' });
+
         doc.save(`recu_${payment.clientName.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
     };
 
@@ -250,17 +300,17 @@ const DebtManagementView = () => {
                     <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2">
                         <span>{success}</span>
                         <div className="d-flex gap-2 flex-wrap">
-                        {lastPayment && (
-                            <Button variant="outline-success" size="sm" onClick={() => generateReceipt(lastPayment)}>
-                                <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
-                                Générer reçu PDF
-                            </Button>
-                        )}
-                        {lastPayment?.id && lastPayment.clientEmail && (
-                            <Button variant="outline-primary" size="sm" onClick={() => handleSendEmailReceipt(lastPayment.id)} disabled={emailLoading}>
-                                {emailLoading ? <Spinner size="sm" /> : <><iconify-icon icon="solar:letter-bold" className="me-1"></iconify-icon> Envoyer par Email</>}
-                            </Button>
-                        )}
+                            {lastPayment && (
+                                <Button variant="outline-success" size="sm" onClick={() => generateReceipt(lastPayment)}>
+                                    <iconify-icon icon="solar:printer-bold" className="me-1"></iconify-icon>
+                                    Générer reçu PDF
+                                </Button>
+                            )}
+                            {lastPayment?.id && lastPayment.clientEmail && (
+                                <Button variant="outline-primary" size="sm" onClick={() => handleSendEmailReceipt(lastPayment.id)} disabled={emailLoading}>
+                                    {emailLoading ? <Spinner size="sm" /> : <><iconify-icon icon="solar:letter-bold" className="me-1"></iconify-icon> Envoyer par Email</>}
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </Alert>
@@ -284,31 +334,31 @@ const DebtManagementView = () => {
                                     {loading && dettes.length === 0 ? (
                                         <tr><td colSpan="4" className="text-center py-5"><Spinner animation="border" /></td></tr>
                                     ) : dettes.length > 0 ? dettes.map(d => (
-                                            <tr key={d._id}>
-                                                <td className="ps-4">
-                                                    <div className="fw-bold">{d.nom}</div>
-                                                    <small className="text-muted">{d.telephone}</small>
-                                                </td>
-                                                <td className="text-danger fw-bold fs-6">{d.dette.toLocaleString()} GNF</td>
-                                                <td>{d.echeanceDette ? new Date(d.echeanceDette).toLocaleDateString() : '-'}</td>
-                                                <td>{getStatusBadge(d.echeanceDette)}</td>
-                                                <td className="pe-4 text-end text-nowrap">
-                                                    {!isAdmin && d.dette > 0 && (
-                                                        <OverlayTrigger placement="top" overlay={<Tooltip>Encaisser un versement</Tooltip>}>
-                                                            <Button variant="success" size="sm" className="me-1 me-md-2 table-action-btn d-inline-flex align-items-center" onClick={() => { setSelectedDebt(d); setShowPayModal(true); }}>
-                                                                <iconify-icon icon="solar:money-bag-bold" className="me-1"></iconify-icon>
-                                                                <span className="d-none d-md-inline">Encaisser</span>
-                                                            </Button>
-                                                        </OverlayTrigger>
-                                                    )}
-                                                    <OverlayTrigger placement="top" overlay={<Tooltip>Envoyer un rappel WhatsApp</Tooltip>}>
-                                                        <Button variant="info" size="sm" onClick={() => sendWhatsApp(d)} className="text-white table-action-btn d-inline-flex align-items-center">
-                                                            <iconify-icon icon="logos:whatsapp-icon" className="me-1"></iconify-icon>
-                                                            <span className="d-none d-md-inline">Rappel</span>
+                                        <tr key={d._id}>
+                                            <td className="ps-4">
+                                                <div className="fw-bold">{d.nom}</div>
+                                                <small className="text-muted">{d.telephone}</small>
+                                            </td>
+                                            <td className="text-danger fw-bold fs-6">{d.dette.toLocaleString()} GNF</td>
+                                            <td>{d.echeanceDette ? new Date(d.echeanceDette).toLocaleDateString() : '-'}</td>
+                                            <td>{getStatusBadge(d.echeanceDette)}</td>
+                                            <td className="pe-4 text-end text-nowrap">
+                                                {!isAdmin && d.dette > 0 && (
+                                                    <OverlayTrigger placement="top" overlay={<Tooltip>Encaisser un versement</Tooltip>}>
+                                                        <Button variant="success" size="sm" className="me-1 me-md-2 table-action-btn d-inline-flex align-items-center" onClick={() => { setSelectedDebt(d); setShowPayModal(true); }}>
+                                                            <iconify-icon icon="solar:money-bag-bold" className="me-1"></iconify-icon>
+                                                            <span className="d-none d-md-inline">Encaisser</span>
                                                         </Button>
                                                     </OverlayTrigger>
-                                                </td>
-                                            </tr>
+                                                )}
+                                                <OverlayTrigger placement="top" overlay={<Tooltip>Envoyer un rappel WhatsApp</Tooltip>}>
+                                                    <Button variant="info" size="sm" onClick={() => sendWhatsApp(d)} className="text-white table-action-btn d-inline-flex align-items-center">
+                                                        <iconify-icon icon="logos:whatsapp-icon" className="me-1"></iconify-icon>
+                                                        <span className="d-none d-md-inline">Rappel</span>
+                                                    </Button>
+                                                </OverlayTrigger>
+                                            </td>
+                                        </tr>
                                     )) : (
                                         <tr><td colSpan="4" className="text-center text-muted py-5">Aucune dette en cours.</td></tr>
                                     )}
@@ -335,24 +385,24 @@ const DebtManagementView = () => {
                 <Form onSubmit={handlePayment}>
                     <Modal.Body>
                         <p>Client: <strong className="text-primary">{selectedDebt?.nom}</strong></p>
-                        <p>Dette actuelle: <strong className="text-danger">{selectedDebt?.dette.toLocaleString()} GNF</strong></p>
+                        <p>Dette actuelle: <strong className="text-danger">{safeNum(selectedDebt?.dette).toLocaleString()} GNF</strong></p>
                         <Form.Group className="mb-3">
                             <Form.Label>Mode de paiement</Form.Label>
-                            <Form.Select 
-                                value={modePaiement} 
+                            <Form.Select
+                                value={modePaiement}
                                 onChange={(e) => setModePaiement(e.target.value)} // Added rounded-pill for consistency
                                 className="rounded-pill"
                             >
                                 <option value="Cash">💵 Espèces (Cash)</option>
                                 <option value="Orange Money">🍊 Orange Money</option>
-                                <option value="MobiCash">🟡 MobiCash (MTN)</option>
+                                <option value="MobiCash">🟡 Mobile money (MTN)</option>
                                 <option value="PayCard">💳 PayCard</option>
-                                <option value="Virement">🏦 Virement Bancaire</option>
+                         
                             </Form.Select>
                         </Form.Group>
                         {['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(modePaiement) && (
                             <Form.Group className="mb-3">
-                                <Form.Label>Réf. Transaction {modePaiement === 'Orange Money' && <span className="text-danger">*</span>}</Form.Label>
+                                <Form.Label>numero de telephone {modePaiement === 'Orange Money' && <span className="text-danger">*</span>}</Form.Label>
                                 <Form.Control
                                     type="text"
                                     value={transactionRef}
@@ -371,8 +421,8 @@ const DebtManagementView = () => {
                                 onChange={(e) => setAmount(e.target.value)}
                                 placeholder="Entrez le montant en GNF"
                                 required
-                                min="1"
-                                max={selectedDebt?.dette}
+                                min="1" // safeNum handles potential object conversion
+                                max={safeNum(selectedDebt?.dette)}
                                 autoFocus
                             />
                         </Form.Group>
@@ -409,34 +459,34 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
     };
 
     // Helper pour le formatage de la devise dans le PDF
-    const formatCurrencyPdf = (amount) => (amount || 0).toLocaleString('fr-FR') + ' GNF';
+    const formatCurrencyPdf = (amount) => safeNum(amount).toLocaleString('fr-FR') + ' GNF';
 
     const exportToPDF = () => {
         const doc = new jsPDF();
-        
+
         // Titre
         doc.setFontSize(18);
         doc.text("Historique des Paiements", 14, 20);
-        
+
         doc.setFontSize(10);
         doc.setTextColor(100);
         doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 14, 28);
-        
+
         // En-têtes du tableau manuel
         let y = 40;
         doc.setFontSize(11);
         doc.setTextColor(0);
         doc.setFont("helvetica", "bold");
-        
+
         doc.text("Date", 14, y);
         doc.text("Client", 50, y);
         doc.text("Montant", 110, y);
         doc.text("Statut", 150, y);
-        
+
         // Ligne de séparation
         doc.line(14, y + 2, 196, y + 2);
         y += 10;
-        
+
         doc.setFont("helvetica", "normal");
         doc.setFontSize(10);
 
@@ -446,21 +496,21 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
                 doc.addPage();
                 y = 20;
             }
-            
+
             const date = p.datePaiement ? new Date(p.datePaiement).toLocaleDateString('fr-FR') : '-';
             const client = p.client?.nom || 'Client inconnu';
             const montant = formatCurrencyPdf(p.montant);
             const statut = p.statut === 'VALIDEE' ? 'Validé' : (p.statut === 'REJETEE' ? 'Rejeté' : 'En attente');
-            
+
             doc.text(date, 14, y);
             doc.text(client.substring(0, 25), 50, y); // Tronquer si trop long
             doc.text(montant, 110, y);
             doc.text(statut, 150, y);
-            
+
             y += 8;
         });
-        
-        doc.save(`historique_paiements_${new Date().toISOString().slice(0,10)}.pdf`);
+
+        doc.save(`historique_paiements_${new Date().toISOString().slice(0, 10)}.pdf`);
     };
 
     // Filtrage dynamique par nom de client
@@ -477,118 +527,125 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
     const totalPages = Math.ceil(filteredHistory.length / itemsPerPage);
 
     return (
-        <Card className="border-0 shadow-sm rounded-4">
-            <Card.Body className="p-0">
-                <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 p-3 gap-3">
-                    <Form.Group className="flex-grow-1">
-                        <Form.Control
-                            type="text"
-                            placeholder="Rechercher par nom de client..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="rounded-pill shadow-sm w-100"
-                            style={{ maxWidth: '300px' }}
-                        />
-                    </Form.Group>
-                    <Form.Group className="flex-grow-1">
-                        <Form.Select 
-                            value={filterMode} 
-                            onChange={(e) => setFilterMode(e.target.value)}
-                            className="rounded-pill shadow-sm w-100"
-                            style={{ maxWidth: '200px' }}
-                        >
-                            <option value="all">Tous les modes</option>
-                            <option value="Cash">💵 Espèces uniquement</option>
-                            <option value="Orange Money">🍊 Orange Money</option>
-                            <option value="MobiCash">🟡 MobiCash</option>
-                        </Form.Select>
-                    </Form.Group>
-                    <Button variant="outline-danger" onClick={exportToPDF} disabled={loading || filteredHistory.length === 0} className="rounded-pill shadow-sm">
-                        <iconify-icon icon="solar:file-pdf-bold" className="me-2"></iconify-icon>
-                        Exporter PDF
-                    </Button>
-                </div>
-                <Table responsive hover>
-                    <thead className="bg-light">
-                        <tr>
-                            <th>Date Versement</th>
-                            <th>Client</th>
-                            <th>Mode</th>
-                            <th>Référence</th>
-                            <th>Dette Actuelle</th>
-                            <th>Montant</th>
-                            <th>Statut</th>
-                            <th>Encaissé par</th>
-                            <th>Boutique</th>
-                            <th>Validé le</th>
-                            <th className="text-end">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loading ? (
-                            <tr><td colSpan="10" className="text-center py-5"><Spinner /></td></tr>
-                        ) : currentItems.length > 0 ? currentItems.map(p => {
-                            const datePaiement = p.datePaiement ? new Date(p.datePaiement).toLocaleString('fr-FR') : <span className="text-danger fw-bold">Date Manquante</span>;
-                            const dateValidation = p.dateValidation ? new Date(p.dateValidation).toLocaleString('fr-FR') : '-';
-                            const detteActuelle = p.client?.dette || 0;
-                            return (
-                                <tr key={p._id}>
-                                    <td>{datePaiement}</td>
-                                    <td>{p.client?.nom || <span className="text-muted">Client supprimé</span>}</td>
-                                    <td>
-                                        {p.modePaiement === 'Orange Money' ? <Badge style={{backgroundColor: '#FF6600'}}>OM</Badge> :
-                                         p.modePaiement === 'MobiCash' ? <Badge style={{backgroundColor: '#FFCC00', color: '#000'}}>Mobi</Badge> :
-                                         p.modePaiement === 'PayCard' ? <Badge bg="info">Card</Badge> :
-                                         p.modePaiement === 'Virement' ? <Badge bg="secondary">Bank</Badge> :
-                                         <Badge bg="success-subtle" text="success">Cash</Badge>}
-                                    </td>
-                                    <td className="small text-muted">{p.transactionRef || '-'}</td>
-                                    <td className="text-muted">{detteActuelle.toLocaleString()} GNF</td>
-                                    <td className="fw-bold text-success">+{p.montant.toLocaleString()} GNF</td>
-                                    <td>{getStatusBadge(p.statut)}</td>
-                                    <td className="fw-bold">{p.gerant?.nom || <span className="text-muted">N/A</span>}</td>
-                                    <td>{p.boutique?.nom || <span className="text-muted">N/A</span>}</td>
-                                    <td>{dateValidation}</td>
-                                    <td className="text-end">
-                                        <div className="d-flex justify-content-end gap-2">
-                                        <Button variant="link" size="sm" className="p-0 text-success table-action-btn-icon" onClick={() => onPrint({
-                                            clientName: p.client?.nom || 'Client',
-                                            amount: p.montant,
-                                            modePaiement: p.modePaiement,
-                                            transactionRef: p.transactionRef,
-                                            oldDebt: (parseFloat(p.client?.dette?.$numberDecimal || p.client?.dette) || 0) + p.montant
-                                        })} title="Réimprimer le reçu">
-                                            <iconify-icon icon="solar:printer-bold" style={{fontSize: '20px'}}></iconify-icon>
-                                        </Button>
-                                        {p.client?.email && (
-                                            <Button variant="link" size="sm" className="p-0 text-primary table-action-btn-icon" onClick={() => onSendEmail(p._id)} disabled={emailLoading} title="Envoyer le reçu par email">
-                                                <iconify-icon icon="solar:letter-bold" style={{fontSize: '20px'}}></iconify-icon>
-                                            </Button>
-                                        )}
-                                        </div>
-                                    </td>
-                                </tr>
-                            );
-                        }) : (
-                            <tr><td colSpan="10" className="text-center text-muted py-5">Aucun paiement trouvé pour cette recherche.</td></tr>
-                        )}
-                    </tbody>
-                </Table>
+        <div className="animate__animated animate__fadeIn">
+            <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
+                <Form.Group className="flex-grow-1" style={{ maxWidth: '300px' }}>
+                    <Form.Control
+                        type="text"
+                        placeholder="Rechercher par nom de client..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="rounded-pill shadow-sm"
+                    />
+                </Form.Group>
+                <Form.Group>
+                    <Form.Select
+                        value={filterMode}
+                        onChange={(e) => setFilterMode(e.target.value)}
+                        className="rounded-pill shadow-sm"
+                    >
+                        <option value="all">Tous les modes</option>
+                        <option value="Cash">💵 Espèces</option>
+                        <option value="Orange Money">🍊 Orange Money</option>
+                        <option value="MobiCash">🟡 MobiCash</option>
+                    </Form.Select>
+                </Form.Group>
+                <Button variant="outline-danger" onClick={exportToPDF} disabled={loading || filteredHistory.length === 0} className="rounded-pill shadow-sm">
+                    <iconify-icon icon="solar:file-pdf-bold" className="me-2"></iconify-icon>
+                    Exporter PDF
+                </Button>
+            </div>
 
-                {/* Contrôles de Pagination */}
-                {!loading && filteredHistory.length > itemsPerPage && (
-                    <div className="d-flex justify-content-center p-3 border-top">
-                        <Pagination>
-                            <Pagination.First onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
-                            <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
-                            <Pagination.Item active>{currentPage} / {totalPages}</Pagination.Item>
-                            <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
-                            <Pagination.Last onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
-                        </Pagination>
-                    </div>
-                )}
-            </Card.Body>
-        </Card>
+            {loading ? (
+                <div className="text-center py-5"><Spinner /></div>
+            ) : currentItems.length > 0 ? (
+                <div className="d-flex flex-column gap-3">
+                    {currentItems.map(p => {
+                        const datePaiement = p.datePaiement ? new Date(p.datePaiement) : new Date(p.createdAt);
+                        return (
+                            <Card key={p._id} className="border-0 shadow-sm rounded-4">
+                                <Card.Body className="p-3">
+                                    <div className="d-flex flex-column flex-md-row align-items-start gap-3">
+                                        {/* Colonne 1: Client & Boutique */}
+                                        <div className="flex-grow-1">
+                                            <div className="d-flex align-items-center mb-2">
+                                                <iconify-icon icon="solar:user-bold-duotone" className="text-primary fs-4 me-2"></iconify-icon>
+                                                <span className="fw-bold fs-6">{p.client?.nom || 'Client supprimé'}</span>
+                                            </div>
+                                            <Badge bg="light" text="dark" className="border fw-normal">
+                                                <iconify-icon icon="solar:shop-2-bold" className="me-1"></iconify-icon>
+                                                {p.boutique?.nom || 'N/A'}
+                                            </Badge>
+                                        </div>
+
+                                        {/* Colonne 2: Détails du paiement */}
+                                        <div className="flex-grow-1">
+                                            <div className="d-flex align-items-center mb-2">
+                                                <iconify-icon icon="solar:calendar-bold-duotone" className="text-muted fs-5 me-2"></iconify-icon>
+                                                <span className="small">{datePaiement.toLocaleString('fr-FR')}</span>
+                                            </div>
+                                            <div className="d-flex align-items-center">
+                                                <iconify-icon icon="solar:wallet-money-bold-duotone" className="text-success fs-4 me-2"></iconify-icon>
+                                                <span className="fw-bold text-success fs-5">+{p.montant.toLocaleString()} GNF</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Colonne 3: Mode & Référence */}
+                                        <div className="flex-grow-1">
+                                            <div className="d-flex align-items-center mb-2">
+                                                {p.modePaiement === 'Orange Money' ? <Badge bg="warning" text="dark">OM</Badge> :
+                                                    p.modePaiement === 'MobiCash' ? <Badge bg="info">Mobi</Badge> :
+                                                        <Badge bg="success-subtle" text="success">Cash</Badge>}
+                                            </div>
+                                            {p.transactionRef && <div className="small text-muted font-monospace">Réf: {p.transactionRef}</div>}
+                                        </div>
+
+                                        {/* Colonne 4: Acteurs */}
+                                        <div className="flex-grow-1">
+                                            <div className="small text-muted">Encaissé par: <span className="fw-bold text-dark">{p.gerant?.nom || 'N/A'}</span></div>
+                                            <div className="small text-muted">Validé le: <span className="fw-bold text-dark">{p.dateValidation ? new Date(p.dateValidation).toLocaleDateString() : '-'}</span></div>
+                                        </div>
+
+                                        {/* Colonne 5: Statut & Actions */}
+                                        <div className="d-flex flex-column align-items-md-end gap-2">
+                                            {getStatusBadge(p.statut)}
+                                            <div className="d-flex gap-2">
+                                                <OverlayTrigger overlay={<Tooltip>Réimprimer le reçu</Tooltip>}>
+                                                    <Button variant="outline-secondary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => onPrint({ clientName: p.client?.nom, amount: p.montant, modePaiement: p.modePaiement, transactionRef: p.transactionRef, oldDebt: (p.client?.dette || 0) + p.montant })}>
+                                                        <iconify-icon icon="solar:printer-bold" style={{ fontSize: '18px' }}></iconify-icon>
+                                                    </Button>
+                                                </OverlayTrigger>
+                                                {p.client?.email && (
+                                                    <OverlayTrigger overlay={<Tooltip>Envoyer par email</Tooltip>}>
+                                                        <Button variant="outline-primary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => onSendEmail(p._id)} disabled={emailLoading}>
+                                                            <iconify-icon icon="solar:letter-bold" style={{ fontSize: '18px' }}></iconify-icon>
+                                                        </Button>
+                                                    </OverlayTrigger>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Card.Body>
+                            </Card>
+                        );
+                    })}
+                </div>
+            ) : (
+                <Alert variant="info" className="text-center border-0 shadow-sm rounded-4">Aucun paiement trouvé pour cette recherche.</Alert>
+            )}
+
+            {!loading && filteredHistory.length > itemsPerPage && (
+                <div className="d-flex justify-content-center mt-4">
+                    <Pagination>
+                        <Pagination.First onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
+                        <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
+                        <Pagination.Item active>{currentPage} / {totalPages}</Pagination.Item>
+                        <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
+                        <Pagination.Last onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
+                    </Pagination>
+                </div>
+            )}
+        </div>
     );
 };
 

@@ -40,18 +40,21 @@ const StockMovementsView = () => {
                 fournisseurAPI.getAll()
             ]);
 
-            // Utilisation des métadonnées du backend
-            if (mouvementsRes.data && mouvementsRes.data.data) {
-                setMouvements(mouvementsRes.data.data);
-                setTotalPages(mouvementsRes.data.totalPages || 1);
+            // L'intercepteur Axios unwrap déjà : mouvementsRes = { data: [...], totalPages, totalCount }
+            // ou parfois directement un tableau
+            if (mouvementsRes.data && Array.isArray(mouvementsRes.data)) {
+                setMouvements(mouvementsRes.data);
+                setTotalPages(mouvementsRes.totalPages || 1);
+            } else if (Array.isArray(mouvementsRes)) {
+                setMouvements(mouvementsRes);
+                setTotalPages(1);
             } else {
-                // Fallback si l'API renvoie encore un tableau simple (compatibilité)
-                setMouvements(mouvementsRes.data || []);
+                setMouvements([]);
                 setTotalPages(1);
             }
 
-            setBoutiques(boutiquesRes.data);
-            setFournisseurs(fournisseursRes.data.data || fournisseursRes.data || []);
+            setBoutiques(Array.isArray(boutiquesRes) ? boutiquesRes : (boutiquesRes.data || []));
+            setFournisseurs((fournisseursRes.data && Array.isArray(fournisseursRes.data)) ? fournisseursRes.data : (Array.isArray(fournisseursRes) ? fournisseursRes : []));
         } catch (err) {
             setError(err.response?.data?.message || "Erreur lors du chargement des mouvements.");
         } finally {
@@ -116,7 +119,8 @@ const StockMovementsView = () => {
             setLoading(true);
             // Récupérer TOUS les mouvements correspondant aux filtres (limit: 0)
             const res = await mouvementAPI.getAll({ ...filters, limit: 0 });
-            const allData = res.data.data || res.data || [];
+            // L'intercepteur Axios unwrap déjà : le retour est soit un tableau soit { data: [...], totalPages }
+            const allData = Array.isArray(res) ? res : (res.data || []);
             generateMovementsSummary(allData);
         } catch (err) {
             setError("Erreur lors de la préparation du PDF.");
@@ -128,7 +132,7 @@ const StockMovementsView = () => {
     const handleExportExcel = async () => {
         setLoading(true);
         const res = await mouvementAPI.getAll({ ...filters, limit: 0 });
-        const allData = res.data.data || res.data || [];
+        const allData = Array.isArray(res) ? res : (res.data || []);
         
         const dataToExport = allData.map(mvt => ({
             'Date': new Date(mvt.createdAt).toLocaleString('fr-FR'),
@@ -266,10 +270,6 @@ const StockMovementsView = () => {
                             Imprimer la sélection ({selectedIds.length})
                         </Button>
                     )}
-                    <Button variant="outline-success" onClick={handleExportExcel} className="rounded-pill px-4 shadow-sm">
-                        <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle"></iconify-icon>
-                        Exporter Excel
-                    </Button>
                     <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                         <iconify-icon icon="solar:printer-bold" className="me-2 align-middle"></iconify-icon>
                         Exporter PDF
@@ -299,6 +299,7 @@ const StockMovementsView = () => {
                                 <option value="">Toutes les boutiques</option>
                                 {boutiques.map(b => (
                                     <option key={b._id} value={b._id}>{b.nom}</option>
+                                    // Correction: Ajouter le type de boutique pour une meilleure clarté
                                 ))}
                             </Form.Select>
                         </Col>

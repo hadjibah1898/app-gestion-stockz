@@ -1,3 +1,8 @@
+/**
+ * @file AuditLogView.js
+ * @description Composant React.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Spinner, Alert, Form, Row, Col, Badge, Pagination, Table, Button } from 'react-bootstrap';
 import jsPDF from 'jspdf';

@@ -77,7 +77,9 @@ exports.getAdjustments = asyncHandler(async (req, res) => {
 });
 
 exports.createAdjustment = asyncHandler(async (req, res) => {
+    console.log('[DEBUG AJUSTEMENT] createAdjustment appelé - body:', JSON.stringify(req.body), '- user._id:', req.user._id, '- role:', req.user.role, '- boutique:', req.user.boutique);
     const adjustment = await articleService.demanderAjustement(req.body, req.user);
+    console.log('[DEBUG AJUSTEMENT] Ajustement créé avec succès - id:', adjustment._id, '- gerant:', adjustment.gerant);
     res.status(201).json({ success: true, data: adjustment });
 });
 
@@ -109,6 +111,15 @@ exports.restockFromCentral = asyncHandler(async (req, res) => {
 exports.cancelTransfer = asyncHandler(async (req, res) => {
     const result = await articleService.annulerTransfert(req.params.id, req.user);
     res.status(200).json({ success: true, message: "Transfert annulé.", data: result });
+});
+
+exports.corrigerTransfert = asyncHandler(async (req, res) => {
+    const { articles } = req.body;
+    if (!articles || !Array.isArray(articles) || articles.length === 0) {
+        return res.status(400).json({ success: false, message: "Liste d'articles requise." });
+    }
+    const result = await articleService.corrigerTransfert(req.params.id, articles, req.user);
+    res.status(200).json({ success: true, message: result.message, data: result.data });
 });
 
 exports.remindManager = asyncHandler(async (req, res) => {

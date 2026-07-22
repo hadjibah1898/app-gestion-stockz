@@ -1,3 +1,8 @@
+/**
+ * @file useCrud.js
+ * @description Composant React.
+ */
+
 import { useState, useEffect, useCallback } from 'react';
 
 export const useCrud = (apiService) => {

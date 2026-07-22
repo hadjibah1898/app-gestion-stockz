@@ -1,9 +1,20 @@
-// src/services/api.js
+/**
+ * @file api.js
+ * @description Configuration des appels API avec Axios.
+ */
+
 import axios from 'axios';
 import { toast } from 'react-toastify';
 
-const API_URL = process.env.REACT_APP_API_URL;
-
+// Sécurité : Si la variable .env n'est pas lue, on évite le "undefined" avec une URL de repli
+let API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api/';
+// Assurer que l'URL de base a un protocole valide
+if (!API_URL.startsWith('http://') && !API_URL.startsWith('https://')) {
+  // Si l'URL commence par "localhost" ou une IP sans protocole, on ajoute "http://"
+  if (API_URL.startsWith('localhost') || API_URL.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/)) {
+    API_URL = `http://${API_URL}`;
+  }
+}
 /**
  * Configuration de l'instance Axios
  */
@@ -12,6 +23,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true
 });
 
 /**
@@ -36,31 +48,16 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
-// À ajouter dans stock-gestion-frontend/src/services/api.js
-
-export const serveurAPI = {
-    /**
-     * Récupère les statistiques personnelles du serveur connecté
-     */
-    getStatsMe: () => api.get('serveurs/stats/me'),
-    
-    /**
-     * Récupère la liste de l'équipe pour un gérant
-     */
-    getEquipe: () => api.get('serveurs/equipe'),
-};
 
 /**
- * Interceptor : Gestion des erreurs globales (401)
+ * Interceptor : Gestion des erreurs globales (401) et extraction des données
  */
 api.interceptors.response.use(
   (response) => {
-    // Si le backend renvoie l'enveloppe standard { success: true, data: ... }
     if (response.data && response.data.success === true) {
-      return {
-        ...response,
-        data: response.data.data
-      };
+      // CORRECTION : On retourne directement l'objet de données, pas l'objet de réponse complet.
+      // Le composant recevra directement { nouveauSolde: ..., paiement: ... }
+      return response.data.data;
     }
     return response;
   },
@@ -68,7 +65,6 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       clearAuthSession();
     } else {
-      // Capture et affichage automatique des messages d'erreur du serveur (ex: Caisse fermée)
       const message = error.response?.data?.message || error.message || "Une erreur est survenue";
       toast.error(message);
     }
@@ -80,33 +76,47 @@ api.interceptors.response.use(
  * SERVICES API
  */
 
+export const serveurAPI = {
+  getStatsMe: () => api.get('serveurs/stats/me'),
+  getEquipe: () => api.get('serveurs/equipe'),
+};
+
 export const authAPI = {
   login: (email, password) => api.post('auth/login', { email, password }),
   register: (data) => api.post('auth/register', data),
   getCurrentUser: () => api.get('auth/me'),
-  getUsers: () => api.get('auth/users'),
-  getDeletedUsers: () => api.get('auth/users/trash'),
+  getUsers: (params) => api.get('auth/users', { params }),
+  getDeletedUsers: () => api.get('auth/users/deleted'),
   createManager: (data) => api.post('auth/create-manager', data),
-  updateManager: (id, data) => api.put(`auth/managers/${id}`, data),
-  deleteManager: (id) => api.delete(`auth/managers/${id}`),
-  restoreManager: (id) => api.put(`auth/managers/${id}/restore`),
-  forceDeleteManager: (id) => api.delete(`auth/managers/${id}/force`),
-  changePassword: (data) => api.post('auth/change-password', data),
+  createCashier: (data) => api.post('auth/create-cashier', data),
+  updateManager: (id, data) => api.put(`auth/users/${id}`, data),
+  deleteManager: (id) => api.delete(`auth/users/${id}`),
+  restoreManager: (id) => api.put(`auth/users/${id}/restore`),
+  forceDeleteManager: (id) => api.delete(`auth/users/${id}/force`),
+  changePassword: (data) => api.put('auth/change-password', data),
+  validateUser: (id) => api.put(`auth/users/${id}/validate`), // Nouvelle route pour valider
+  rejectUser: (id) => api.put(`auth/users/${id}/reject`),     // Nouvelle route pour rejeter
   forgotPassword: (email) => api.post('auth/forgot-password', { email }),
   updateProfile: (data) => api.put('auth/profile', data),
-  getNotifications: () => api.get('auth/notifications'),
+  getNotifications: async () => {
+    const response = await api.get('auth/notifications');
+    return Array.isArray(response.data) ? response.data : (response.data?.data || []);
+  },
   markNotificationRead: (id) => api.put(`auth/notifications/${id}/read`),
-  markAllNotificationsRead: () => api.put('auth/notifications/mark-all-read'),
-  getAllNotifications: () => api.get('auth/admin/notifications'),
+  markAllNotificationsRead: () => api.put('auth/notifications/read-all'),
+  getAllNotifications: async () => {
+    const response = await api.get('auth/all-notifications');
+    return Array.isArray(response.data) ? response.data : (response.data?.data || []);
+  },
 };
 
 export const boutiqueAPI = {
   getAll: () => api.get('boutiques'),
   create: (data) => api.post('boutiques', data),
   update: (id, data) => api.put(`boutiques/${id}`, data),
-  getDetailsForServeur: (id) => api.get(`boutiques/${id}`), // Nouvelle méthode
+  getDetailsForServeur: (id) => api.get(`boutiques/${id}`),
   delete: (id) => api.delete(`boutiques/${id}`),
-  syncCodes: () => api.post('boutiques/sync-codes'), // Nouvelle méthode pour l'Admin
+  syncCodes: () => api.post('boutiques/sync-codes'),
 };
 
 export const articleAPI = {
@@ -121,11 +131,28 @@ export const articleAPI = {
   updateMany: (data) => api.put('articles/update-many', data),
   getAdjustments: () => api.get('articles/adjustments'),
   createAdjustment: (data) => api.post('articles/adjustments', data),
-  validateAdjustment: (id, data) => api.put(`articles/adjustments/${id}/validate`, data),
+    validateAdjustment: (id, data) => api.put(`articles/adjustments/${id}/validate`, data),
+    corrigerTransfert: (id, data) => api.put(`articles/transfer/${id}/correct`, data),
 };
 
+// Cache global pour éviter les appels répétitifs (ex: boucle infinie dans useEffect)
+let fournisseursCache = null;
+let fournisseursCacheTime = 0;
+const CACHE_TTL = 30000; // 30 secondes
+
 export const fournisseurAPI = {
-  getAll: () => api.get('fournisseurs'),
+  getAll: async (params) => {
+    const now = Date.now();
+    if (!params && fournisseursCache && (now - fournisseursCacheTime) < CACHE_TTL) {
+      return fournisseursCache;
+    }
+    const res = await api.get('fournisseurs', { params });
+    if (!params) {
+      fournisseursCache = res;
+      fournisseursCacheTime = now;
+    }
+    return res;
+  },
   create: (data) => api.post('fournisseurs', data),
   update: (id, data) => api.put(`fournisseurs/${id}`, data),
   delete: (id) => api.delete(`fournisseurs/${id}`),
@@ -154,6 +181,7 @@ export const clientAPI = {
   payDette: (id, data) => api.post(`clients/${id}/pay-dette`, data),
   getDebts: () => api.get('clients/debts'),
   getDebtHistory: () => api.get('clients/debt-history'),
+  getDebtHistoryForClient: (id) => api.get(`clients/${id}/debt-history`),
   getDebtEvolution: () => api.get('clients/debt-evolution'),
   payerCommission: (data) => api.post('clients/pay-commission', data),
 };
@@ -164,7 +192,7 @@ export const caisseAPI = {
   fermer: (data) => api.post('caisse/fermer', data),
   creerDepense: (data) => api.post('caisse/depenses', data),
   getMesDepenses: () => api.get('caisse/depenses/me'),
-  getMesRapports: () => api.get('caisse/rapports/me'),
+  getMesRapports: (params) => api.get('caisse/rapports/me', { params }),
   listerRapports: (params) => api.get('caisse/rapports', { params }),
   getReportDetails: (id) => api.get(`caisse/rapports/${id}/details`),
   validerRapport: (id, data) => api.put(`caisse/rapports/${id}/valider`, data),
@@ -172,6 +200,15 @@ export const caisseAPI = {
   getCaisseAdmin: () => api.get('caisse/admin'),
   getStatistiquesSession: () => api.get('caisse/statistiques-session'),
   corrigerRapport: (data) => api.put('caisse/correction', data),
+  // Nouvelles méthodes pour les détails Fintech
+  getVentesHistorique: (params) => api.get('ventes/historique', { params }),
+  getDettesHistorique: () => api.get('clients/debt-history'),
+  // Routes pour le workflow caissier
+  listerRapportsCaissiers: (params) => api.get('caisse/rapports/caissiers', { params }),
+  validerRapportCaissier: (id, data) => api.put(`caisse/rapports/caissiers/${id}/valider`, data),
+  rejeterRapportCaissier: (id, data) => api.put(`caisse/rapports/caissiers/${id}/rejeter`, data),
+  // Détails d'un rapport de caissier
+  getRapportCaissierDetails: (id) => api.get(`caisse/rapports/caissiers/${id}/details`),
 };
 
 export const mouvementAPI = {
@@ -182,7 +219,7 @@ export const mouvementAPI = {
 
 export const dashboardAPI = {
   getStats: (params) => api.get('dashboard/stats', { params }),
-  getGerantSummary: () => api.get('dashboard/gerant-summary'), // Endpoint agrégé recommandé
+  getGerantSummary: () => api.get('dashboard/gerant-summary'),
 };
 
 export const auditAPI = {

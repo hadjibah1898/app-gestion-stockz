@@ -1,3 +1,8 @@
+/**
+ * @file NewProductForSupplyModal.js
+ * @description Composant React.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Row, Col, InputGroup, Alert } from 'react-bootstrap';
 import { Html5QrcodeScanner } from 'html5-qrcode';

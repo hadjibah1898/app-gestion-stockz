@@ -1,3 +1,8 @@
+/**
+ * @file venteService.js
+ * @description Service de traitement des ventes : création panier, annulation, listing, clôture caisse.
+ */
+
 const Vente = require('../models/Vente');
 const Setting = require('../models/Setting');
 const Boutique = require('../models/Boutique');
@@ -18,13 +23,13 @@ let currentTipPercentage = 0.05;
 // Helper to safely convert value to number (handles Decimal128 from MongoDB)
 // This is crucial for arithmetic operations on potentially mixed number types from the DB.
 const safeNum = (value) => {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') return parseFloat(value) || 0;
-  if (typeof value === 'object' && value.$numberDecimal) {
-    return parseFloat(value.$numberDecimal) || 0;
-  }
-  return 0;
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value) || 0;
+    if (typeof value === 'object' && value.$numberDecimal) {
+        return parseFloat(value.$numberDecimal) || 0;
+    }
+    return 0;
 };
 /**
  * Initialise ou synchronise le taux de pourboire depuis la base de données.
@@ -33,10 +38,10 @@ const syncTipPercentage = async () => {
     try {
         let setting = await Setting.findOne({ key: 'tip_percentage' });
         if (!setting) {
-            setting = await Setting.create({ 
-                key: 'tip_percentage', 
-                value: 0.05, 
-                description: 'Taux de pourboire automatique pour les serveurs' 
+            setting = await Setting.create({
+                key: 'tip_percentage',
+                value: 0.05,
+                description: 'Taux de pourboire automatique pour les serveurs'
             });
         }
         currentTipPercentage = setting.value;
@@ -65,12 +70,50 @@ exports.updateTipConfig = async (newPercentage) => {
  */
 exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clientId = null, montantPaye = null, echeanceDette = null, ouvertureCaisseId = null, req = null, modePaiementSaisi = 'Cash', transactionRefSaisi = null, numeroTable = null) => {
     try {
+        // Validation : Pour les paiements Fintech, la référence (téléphone) est obligatoire
+        const fintechModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
+        if (fintechModes.includes(modePaiementSaisi) && !transactionRefSaisi) {
+            throw new Error(`Le numéro de téléphone est obligatoire pour les paiements par ${modePaiementSaisi}.`);
+        }
+
+        // Si le panier est vide, qu'un client est sélectionné et qu'un montant est payé, c'est un paiement de dette.
+        if (items.length === 0 && clientId && montantPaye > 0) {
+            const client = await Client.findById(clientId);
+            if (!client) throw new Error("Client introuvable pour le paiement de la dette.");
+
+            const soldeAnterieur = client.dette;
+            client.dette -= montantPaye;
+
+            // Créer un mouvement de dette pour le paiement
+            await DebtMovement.create({
+                client: clientId,
+                type: 'PAIEMENT',
+                montant: montantPaye,
+                soldeAnterieur,
+                nouveauSolde: client.dette,
+                operateur: user.id,
+                boutique: boutiqueId,
+                modePaiement: modePaiementSaisi,
+                transactionRef: transactionRefSaisi
+            });
+            await client.save();
+            return []; // On retourne un tableau vide car aucune vente d'article n'a été créée.
+        }
+
         // 1. SÉCURITÉ : Vérifier la session de caisse
-        // Si l'ID n'est pas fourni (cas fréquent chez les serveurs), on cherche la session ouverte de la boutique
+        // Si l'ID n'est pas fourni, on cherche la session ouverte correspondant au rôle de l'utilisateur
         const sessionQuery = { boutique: boutiqueId, statut: 'OUVERTE' };
         if (ouvertureCaisseId && mongoose.Types.ObjectId.isValid(ouvertureCaisseId)) {
             sessionQuery._id = ouvertureCaisseId;
+        } else if (user.role === 'Caissier') {
+            // Le Caissier doit avoir sa propre caisse ouverte (type CAISSIER)
+            sessionQuery.gerant = user.id;
+            sessionQuery.type = 'CAISSIER';
+        } else if (user.role === 'Gérant' || user.role === 'Admin') {
+            // Le Gérant/Admin utilise la caisse de type GERANT
+            sessionQuery.type = 'GERANT';
         }
+        // Pour le Serveur, on ne filtre pas par gerant car il utilise la caisse du Gérant
 
         const sessionActive = await OuvertureCaisse.findOne(sessionQuery);
         if (!sessionActive) throw new Error("La session de caisse de la boutique est fermée. Le gérant doit ouvrir la caisse avant de prendre des commandes.");
@@ -79,7 +122,7 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
         const finalCaisseId = sessionActive._id;
 
         const isOrderOnly = user.role === 'Serveur';
-        
+
         // Récupérer le taux de pourboire spécifique à la boutique
         const boutique = await Boutique.findById(boutiqueId).lean();
 
@@ -87,10 +130,10 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
         if (user.role === 'Admin' && boutique.createur.toString() !== user.id.toString()) {
             throw new Error("Accès refusé : Vous ne pouvez créer des ventes que dans vos propres boutiques.");
         }
-        
+
         // Calcul du taux effectif : 0 si désactivé manuellement, sinon taux boutique ou taux global
-        const effectiveTipRate = (boutique && boutique.tipsEnabled === false) 
-            ? 0 
+        const effectiveTipRate = (boutique && boutique.tipsEnabled === false)
+            ? 0
             : ((boutique && boutique.tipPercentage !== undefined) ? (boutique.tipPercentage / 100) : currentTipPercentage);
 
         const orderGroupId = new mongoose.Types.ObjectId().toString(); // Générer un ID unique pour regrouper les articles de cette commande
@@ -99,7 +142,9 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
         let totalGeneralVente = 0;
 
         // 2. BOUCLE SUR LES ARTICLES DU PANIER
+        let itemIndex = 0;
         for (const item of items) {
+            itemIndex++;
             let { article: articleId, quantite, remiseTemp, remiseType, venteUnitType } = item;
 
             // SÉCURITÉ SYNC : Extraire l'ID si c'est un objet
@@ -109,15 +154,15 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
             if (!article) throw new Error(`L'article ${item.article?.nom || 'ID: ' + cleanArticleId} est introuvable.`);
 
             // Calcul du décrément de stock fractionnaire
-            const stockDecrement = (venteUnitType === 'dose' && article.isDoseEnabled) 
-                ? (quantite / (article.dosesPerBottle || 10)) 
+            const stockDecrement = (venteUnitType === 'dose' && article.isDoseEnabled)
+                ? (quantite / (article.dosesPerBottle || 10))
                 : quantite;
 
             if (!isOrderOnly) {
                 const articleUpdated = await Article.findOneAndUpdate(
                     { _id: cleanArticleId, quantite: { $gte: stockDecrement } },
                     { $inc: { quantite: -stockDecrement } },
-                    { new: true } 
+                    { new: true }
                 );
                 if (!articleUpdated) throw new Error(`Stock insuffisant pour "${article.nom}".`);
             }
@@ -131,8 +176,8 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
             if (!isDoseVente && article.promoActive && article.promo > 0) {
                 prixUnitaire = prixUnitaire * (1 - article.promo / 100);
             } else if (!isDoseVente && remiseVal > 0) {
-                prixUnitaire = remiseType === 'pourcentage' 
-                    ? prixUnitaire * (1 - remiseVal / 100) 
+                prixUnitaire = remiseType === 'pourcentage'
+                    ? prixUnitaire * (1 - remiseVal / 100)
                     : prixUnitaire - remiseVal;
             } else if (article.remise > 0) {
                 prixUnitaire = prixUnitaire * (1 - article.remise / 100);
@@ -146,6 +191,9 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
             const qty = parseInt(quantite);
             const prixTotal = prixUnitaire * qty;
             totalGeneralVente += prixTotal;
+
+            // Générer le numéro de facture unique pour cet article
+            const numeroFacture = `FAC-${orderGroupId.slice(-6).toUpperCase()}-${itemIndex}-${new Date().getFullYear()}`;
 
             // Création de l'entrée de vente
             const vente = await Vente.create({
@@ -163,19 +211,20 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
                 numeroTable,
                 pourboire: isOrderOnly ? Math.round(prixTotal * effectiveTipRate) : 0,
                 transactionRef: transactionRefSaisi,
+                numeroFacture: numeroFacture, // Numéro de facture unique
                 orderGroupId: orderGroupId, // Assigner l'ID de groupe
                 modePaiement: modePaiementSaisi, // Capture du mode de paiement
                 codeBoutique: boutique.codeBoutique // Tag de l'organisation
             });
 
             itemsVendus.push(vente);
-            
+
             if (!isOrderOnly) {
-                articlesPourMvt.push({ 
-                    articleId: article._id, 
-                    nomArticle: article.nom, 
-                    quantite: stockDecrement, 
-                    prixAchatUnitaire: article.prixAchat 
+                articlesPourMvt.push({
+                    articleId: article._id,
+                    nomArticle: article.nom,
+                    quantite: stockDecrement,
+                    prixAchatUnitaire: article.prixAchat
                 });
             }
 
@@ -203,7 +252,7 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
 
                 if (detteGeneree > 0) {
                     if (!echeanceDette) throw new Error("Échéance obligatoire pour une vente à crédit.");
-                    
+
                     const soldeAnterieur = client.dette;
                     client.dette += detteGeneree;
                     client.echeanceDette = echeanceDette;
@@ -211,29 +260,17 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
                     // Historique du mouvement de dette
                     await DebtMovement.create({
                         client: clientId,
-                        type: 'CREATION',
+                        type: 'CREATION', // This is for new debt from a sale
                         montant: detteGeneree,
                         soldeAnterieur,
                         nouveauSolde: client.dette,
                         operateur: user.id,
                         boutique: boutiqueId,
-                        venteAssociee: itemsVendus[0]._id
+                        venteAssociee: itemsVendus.length > 0 ? itemsVendus[0]._id : null
                     });
                 }
                 await client.save();
             }
-        }
-
-        // Notification temps réel pour le gérant de la boutique
-        if (isOrderOnly && global.io) {
-            global.io.to(`boutique_${boutiqueId}`).emit('nouvelle_commande', { table: numeroTable, orderGroupId });
-            console.log(`[Socket.io] Émis 'nouvelle_commande' vers boutique_${boutiqueId} pour table ${numeroTable}, orderGroupId ${orderGroupId}`);
-        }
-
-        // Notification pour les ventes standards (Gérant) : permet aux autres gérants de voir le stock/CA à jour
-        if (!isOrderOnly && global.io) {
-            global.io.to(`boutique_${boutiqueId}`).emit('vente_effectuee', { orderGroupId });
-            console.log(`[Socket.io] Émis 'vente_effectuee' vers boutique_${boutiqueId}`);
         }
 
         // Définir refVente ici pour qu'elle soit toujours disponible pour l'audit
@@ -252,18 +289,6 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
 
         // Déterminer le mode de paiement pour le log d'audit
         let modeFinal = modePaiementSaisi;
-        if (clientId) {
-            const montantEncaissé = montantPaye !== null ? montantPaye : totalGeneralVente;
-            const detteGeneree = totalGeneralVente - montantEncaissé;
-            if (detteGeneree > 0) {
-                modeFinal = montantEncaissé > 0 ? `${modePaiementSaisi} + Dette` : 'Dette';
-                // Si c'est une dette, l'echeanceDette est valide.
-            }
-        }
-        if (montantPaye !== null && montantPaye < totalGeneralVente && !clientId) {
-            // Ce cas ne devrait normalement pas arriver sans clientId, mais par sécurité
-            modeFinal = `Partiel (${modePaiementSaisi})`;
-        }
 
         // 5. JOURNAL D'AUDIT (Centralisation type Odoo)
         await auditHelper.logSuccess(req, user, 'CREATE_SALE', 'Vente', itemsVendus[0]?._id, {
@@ -278,7 +303,7 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
         // --- MISE À JOUR DE LA CAISSE (Nécessaire pour le Dashboard) ---
         if (!isOrderOnly && finalCaisseId) {
             await OuvertureCaisse.findByIdAndUpdate(finalCaisseId, {
-                $inc: { 
+                $inc: {
                     totalVentes: totalGeneralVente,
                     nombreVentes: 1
                 }
@@ -289,7 +314,7 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
 
     } catch (error) {
         console.error("ERREUR TRAITER_PANIER:", error.message);
-        
+
         // Enregistrement de l'échec dans l'audit
         await auditHelper.logFailure(req, user, 'CREATE_SALE', 'Vente', null, error, {
             nbArticles: items?.length || 0
@@ -371,7 +396,7 @@ exports.annulerVente = async (id, user, req = null) => {
  */
 exports.updateGroupStatus = async (orderGroupId, status, user, req = null, modePaiement = 'Cash', transactionRef = null, itemIds = []) => {
     console.log(`[venteService] updateGroupStatus called for ${orderGroupId}, status: ${status}, items: ${itemIds?.length || 'all'}`);
-    
+
     // 1. Construction intelligente de la requête
     let query = {};
     if (itemIds && itemIds.length > 0) {
@@ -407,8 +432,8 @@ exports.updateGroupStatus = async (orderGroupId, status, user, req = null, modeP
             if (vente.isCancelled || vente.statut === 'finalisee') continue;
 
             const article = await Article.findById(vente.article).lean();
-            const stockDecrement = (vente.venteUnitType === 'dose' && article?.isDoseEnabled) 
-                ? (vente.quantite / (article.dosesPerBottle || 10)) 
+            const stockDecrement = (vente.venteUnitType === 'dose' && article?.isDoseEnabled)
+                ? (vente.quantite / (article.dosesPerBottle || 10))
                 : vente.quantite;
 
             // Décrémenter le stock
@@ -458,7 +483,7 @@ exports.updateGroupStatus = async (orderGroupId, status, user, req = null, modeP
         // Mise à jour de la caisse session
         if (itemsToUpdateCount > 0 && ventes[0].ouvertureCaisse) {
             await OuvertureCaisse.findByIdAndUpdate(ventes[0].ouvertureCaisse, {
-                $inc: { 
+                $inc: {
                     totalVentes: Math.round(totalGeneralVente),
                     nombreVentes: itemsToUpdateCount
                 }
@@ -479,28 +504,18 @@ exports.updateGroupStatus = async (orderGroupId, status, user, req = null, modeP
         } else {
             console.warn(`[venteService] Skipping order ready alert for orderGroupId ${orderGroupId}: ventes[0] or ventes[0].gerant is missing.`);
         }
-        
+
     } else if (status === 'annulee') {
         // Annulation du groupe (ne restaure pas le stock car 'commande' ne l'a pas déduit)
         await Vente.updateMany({ orderGroupId }, { $set: { isCancelled: true, statut: 'annulee' } });
         notificationService.sendOrderCancelledAlert(ventes[0], user).catch(e => console.error(e));
-        
+
         // Audit
         await auditHelper.logSuccess(req, user, 'CANCEL_GROUP', 'Vente', orderGroupId, { status: 'annulee' });
     } else {
         // Autres changements de statut simples
         await Vente.updateMany({ orderGroupId }, { $set: { statut: status } });
     }
-
-    // Notification Socket.io pour mettre à jour les interfaces en temps réel
-    if (global.io) {
-        global.io.to(`boutique_${boutiqueId}`).emit('group_finalized', { 
-            orderGroupId, 
-            status,
-            numeroTable: ventes[0].numeroTable 
-        });
-    }
-
     return { success: true };
 };
 
@@ -545,7 +560,7 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
     if (filter.statut) {
         query.statut = Array.isArray(filter.statut) ? { $in: filter.statut } : filter.statut;
     }
-    
+
     // Support pour exclure un statut spécifique (ex: exclure les commandes de l'historique)
     if (filter.excludeStatut) query.statut = { ...query.statut, $ne: filter.excludeStatut };
 
@@ -554,53 +569,88 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
         query.transactionRef = { $regex: filter.transactionRefSearch, $options: 'i' };
     }
 
-    // Appliquer le filtre codeBoutique à toutes les requêtes
-    if (codeBoutique) {
-        query.codeBoutique = codeBoutique;
-    } else if (user?.role !== 'SuperAdmin') {
-        // SÉCURITÉ CRITIQUE : Si aucun codeBoutique n'est trouvé pour un non-SuperAdmin,
-        // on force un filtre qui ne retournera rien plutôt que de tout retourner.
-        // Cela évite qu'un Admin sans boutique ne voie les ventes globales.
-        query.codeBoutique = "___FORCE_EMPTY_RESULT___";
+    // Filtrer par mode de paiement
+    if (filter.modePaiement) {
+        query.modePaiement = filter.modePaiement;
     }
 
-    if (user && user.role === 'Admin') {
-        // Pour l'Admin, on filtre par son codeBoutique (qui est le même pour toutes ses boutiques)
-        // Si un filtre boutique spécifique est demandé, on le respecte s'il appartient à l'Admin
+    // Filtrer par numéro de facture
+    if (filter.numeroFacture) {
+        query.numeroFacture = { $regex: filter.numeroFacture, $options: 'i' };
+    }
+
+    // Filtrer par client
+    if (filter.clientId) {
+        query.client = filter.clientId;
+    }
+
+    // --- FILTRAGE PAR RÔLE ---
+    // Définir les groupes de rôles pour simplifier les conditions
+    const isAdminLike = ['Admin', 'AdminBar'].includes(user?.role);
+    const isGerantLike = ['Gérant', 'GérantBar'].includes(user?.role);
+    const isEquipeLike = ['Serveur', 'ServeurBar', 'Caissier'].includes(user?.role);
+    const isSuperAdmin = user?.role === 'SuperAdmin';
+
+    if (user && isAdminLike) {
+        // Pour l'Admin (Marchand ou Bar), récupère toutes les boutiques de son organisation
+        if (!codeBoutique) {
+            const primaryBoutique = await Boutique.findOne({ createur: user.id, type: { $in: ['Centrale', 'Bar'] } });
+            if (primaryBoutique) {
+                codeBoutique = primaryBoutique.codeBoutique;
+            }
+        }
         if (filter.boutique) {
             const targetBoutique = await Boutique.findById(filter.boutique);
             if (targetBoutique && targetBoutique.codeBoutique === codeBoutique) {
                 query.boutique = filter.boutique;
             } else {
-                query.boutique = { $in: [] }; // Empêcher l'accès à une boutique qui ne lui appartient pas
+                query.boutique = { $in: [] };
             }
+        } else if (codeBoutique) {
+            const adminBoutiques = await Boutique.find({ codeBoutique: codeBoutique }).select('_id');
+            query.boutique = { $in: adminBoutiques.map(b => b._id) };
         } else {
-            // Si pas de filtre boutique, on voit toutes les ventes de son organisation
-            // Le filtre codeBoutique est déjà appliqué
+            query.boutique = { $in: [] };
         }
-    } else if (user && (user.role === 'Serveur' || user.role === 'Gérant')) {
-        // Le serveur est limité à ses propres ventes, le gérant voit toute l'équipe
-        if (user.role === 'Serveur') {
+    } else if (user && (isGerantLike || isEquipeLike)) {
+        // Gérant/GérantBar voient toute l'équipe
+        // Serveur/ServeurBar/Caissier limités à leurs propres ventes
+        if (!isGerantLike) {
             query.gerant = user.id;
         }
 
+        query.boutique = user.boutique?._id || user.boutique;
+
         // LOGIQUE DE RÉINITIALISATION (Gérant & Serveur) : 
-        // Si aucune date n'est spécifiée, on ne montre par défaut que les ventes de la session ACTUELLE.
-        // Cela permet de vider les tableaux (Prêts, Commandes) et de remettre les compteurs à zéro 
-        // dès que la caisse est clôturée par le gérant.
+        // Si aucune date n'est spécifiée, on ne montre par défaut que les ventes de la session ACTUELLE
+        // SEULEMENT POUR LES COMMANDES EN ATTENTE (Prêts, Commandes).
+        // Cela permet de vider les tableaux (Prêts, Commandes) dès que la caisse est clôturée.
         if (!filter.startDate && !filter.endDate) {
-            const activeSession = await OuvertureCaisse.findOne({ 
-                boutique: user.boutique?._id || user.boutique, 
-                statut: 'OUVERTE' 
-            });
-            if (activeSession) {
-                query.ouvertureCaisse = activeSession._id;
-            } else {
-                // Si la caisse est fermée, on force un résultat vide pour le "reset" visuel
-                query._id = { $in: [] }; 
+            const isPendingStatut = filter.statut && (
+                filter.statut === 'commande' ||
+                filter.statut === 'en_preparation' ||
+                (Array.isArray(filter.statut) && (filter.statut.includes('commande') || filter.statut.includes('en_preparation')))
+            );
+
+            if (isPendingStatut) {
+                const activeSession = await OuvertureCaisse.findOne({
+                    boutique: query.boutique,
+                    statut: 'OUVERTE'
+                });
+                if (activeSession) {
+                    query.ouvertureCaisse = activeSession._id;
+                } else {
+                    // Si la caisse est fermée, on force un résultat vide pour le "reset" visuel
+                    query._id = { $in: [] };
+                }
             }
         }
+    } else if (user?.role !== 'SuperAdmin') {
+        // SÉCURITÉ : Tout autre rôle non-SuperAdmin sans gestion explicite -> aucun résultat
+        query._id = { $in: [] };
     }
+
+    console.log(`[listerVentes DEBUG] Role: ${user?.role}, Query:`, JSON.stringify(query));
 
     // Optimisation des champs Article selon le rôle (économie de bande passante pour le Serveur)
     // On inclut l'image pour l'expérience utilisateur (UX) dans les listings
@@ -761,7 +811,7 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
             const articleObj = group.populatedArticles.find(a => a._id.toString() === item.article.toString());
             const gerantObj = group.populatedGerants.find(u => u._id.toString() === item.gerant.toString());
             const clientObj = group.populatedClients.find(c => c._id.toString() === (item.client || '').toString());
-            
+
             const newItem = {
                 ...item,
                 article: articleObj,
@@ -784,7 +834,7 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
             items: mappedItems,
             // Récupérer le gérant et le client du premier item pour les infos de l'en-tête du groupe
             gerant: mappedItems[0]?.gerant,
-            client: mappedItems[0]?.client,
+            client: group.populatedClients?.[0] || mappedItems[0]?.client,
             boutique: group.boutique,
             totalGroupPrice: group.totalGroupPrice,
             totalGroupPourboire: group.totalGroupPourboire,
@@ -810,17 +860,17 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
  * @param {Object} session - Session MongoDB (pour les transactions)
  */
 exports.annulerCommandesNonEncaissees = async (ouvertureCaisseId, session = null) => {
-    const query = { 
-        ouvertureCaisse: ouvertureCaisseId, 
+    const query = {
+        ouvertureCaisse: ouvertureCaisseId,
         statut: { $in: ['commande', 'en_preparation'] },
-        isCancelled: false 
+        isCancelled: false
     };
 
     // On marque tout comme annulé. 
     // Note : On ne restaure pas le stock ici car dans votre logique actuelle, 
     // les statuts 'commande' et 'en_preparation' n'ont pas encore déduit le stock.
     return await Vente.updateMany(
-        query, 
+        query,
         { $set: { statut: 'annulee', isCancelled: true } },
         { session }
     );
@@ -834,7 +884,7 @@ exports.annulerCommandesNonEncaissees = async (ouvertureCaisseId, session = null
  * @returns {object} Les données formatées pour le modèle RapportCaisse
  */
 exports.preparerRapportCloture = async (ouvertureCaisseId, soldeReel, user) => {
-    
+
     let session;
     // 1. Vérifier si l'identifiant passé est déjà l'objet session complet (possède une propriété statut)
     if (ouvertureCaisseId && typeof ouvertureCaisseId === 'object' && ouvertureCaisseId.statut) {
@@ -852,7 +902,7 @@ exports.preparerRapportCloture = async (ouvertureCaisseId, soldeReel, user) => {
             session = await OuvertureCaisse.findOne({ boutique: boutiqueId, statut: 'OUVERTE' });
         }
     }
-    
+
     if (!session) {
         throw new Error("Caisse introuvable : aucune session ouverte n'a pu être identifiée pour cette clôture.");
     }

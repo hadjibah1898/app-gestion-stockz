@@ -1,3 +1,8 @@
+/**
+ * @file passwordMiddleware.js
+ * @description Middleware de vérification du changement obligatoire de mot de passe.
+ */
+
 const { logAction } = require('../services/auditLogService');
 
 /**

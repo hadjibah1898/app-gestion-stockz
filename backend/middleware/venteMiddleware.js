@@ -1,3 +1,8 @@
+/**
+ * @file venteMiddleware.js
+ * @description Middleware de validation des données de vente avant traitement.
+ */
+
 const Article = require('../models/Article');
 const Client = require('../models/Client'); // Import du modèle Client
 const mongoose = require('mongoose'); // Pour valider les ObjectId

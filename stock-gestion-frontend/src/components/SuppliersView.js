@@ -38,11 +38,11 @@ const SuppliersView = () => {
         search: searchTerm,
       };
       const res = await fournisseurAPI.getAll(params);
-      if (res.data.data) {
-        setFournisseurs(res.data.data);
-        setTotalPages(res.data.totalPages);
-      } else {
+      if (res.data && Array.isArray(res.data)) {
         setFournisseurs(res.data);
+        setTotalPages(res.totalPages || 1);
+      } else if (Array.isArray(res)) {
+        setFournisseurs(res);
         setTotalPages(1);
       }
     } catch (err) {
@@ -112,7 +112,7 @@ const SuppliersView = () => {
     setLoading(true);
     // On récupère tous les fournisseurs sans pagination (limit: 0) mais avec la recherche actuelle
     const res = await fournisseurAPI.getAll({ search: searchTerm, limit: 0 });
-    const allFournisseurs = res.data.data || res.data || [];
+    const allFournisseurs = (res.data && Array.isArray(res.data)) ? res.data : (Array.isArray(res) ? res : []);
 
     const dataToExport = allFournisseurs.map(f => ({
       'Nom': f.nom,
@@ -237,6 +237,7 @@ const SuppliersView = () => {
             <Form.Group className="mb-3">
               <Form.Label>Email</Form.Label>
               <Form.Control type="email" value={currentFournisseur.email} onChange={e => setCurrentFournisseur({...currentFournisseur, email: e.target.value})} placeholder="exemple@email.com" />
+              <Form.Text className="text-muted">L'email est optionnel.</Form.Text>
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>

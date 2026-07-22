@@ -1,3 +1,8 @@
+/**
+ * @file venteController.js
+ * @description Contrôleur des ventes : création, historique, annulation, statut de groupe.
+ */
+
 const venteService = require('../services/venteService');
 const auditHelper = require('../utils/auditHelper');
 const asyncHandler = require('../middleware/asyncHandler');

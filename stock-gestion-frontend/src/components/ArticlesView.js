@@ -85,6 +85,11 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [globalReceptionComment, setGlobalReceptionComment] = useState("");
   const [filterReceptionBoutique, setFilterReceptionBoutique] = useState("");
 
+  // États pour la modale de correction de transfert (Admin)
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  const [correctionMvt, setCorrectionMvt] = useState(null);
+  const [correctionItems, setCorrectionItems] = useState([]);
+
   // États pour les ajustements de stock
   const [adjustments, setAdjustments] = useState([]);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
@@ -227,8 +232,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         );
         fetchData();
         setTimeout(() => setSuccessMessage(""), 3000);
-      } catch (err) { /* Erreur gérée par l'intercepteur Axios */
-      } finally {
+    } catch (err) {
+      console.error("Erreur ajustement:", err);
+      toast.error(err.response?.data?.message || err.message || "Erreur lors de la création de l'ajustement");
+    } finally {
         setLoading(false);
       }
     }
@@ -310,17 +317,18 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       ]);
 
       // Handle paginated response or simple array
-      if (articlesRes.data && articlesRes.data.data) {
-        setArticles(applyClientSideSort(articlesRes.data.data)); // Appliquer un tri client si nécessaire
-        setTotalPages(articlesRes.data.totalPages);
+      if (articlesRes.data && Array.isArray(articlesRes.data)) {
+        setArticles(applyClientSideSort(articlesRes.data)); // Appliquer un tri client si nécessaire
+        setTotalPages(articlesRes.totalPages);
       } else {
-        setArticles(articlesRes.data || []);
+        setArticles([]);
         setTotalPages(1);
       }
 
-      setBoutiques(boutiquesRes.data);
+      const boutiquesList = Array.isArray(boutiquesRes) ? boutiquesRes : (boutiquesRes.data || []);
+      setBoutiques(boutiquesList);
       // Identifier la boutique centrale pour la logique de filtrage
-      const centrale = boutiquesRes.data.find((b) => b.type === "Centrale");
+      const centrale = boutiquesList.find((b) => b.type === "Centrale" || b.type === "Bar");
       const effectiveCentralId = centrale ? centrale._id : centralShopId;
 
       if (centrale) {
@@ -349,21 +357,20 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
               "Dépôt Principal non trouvé pour l'administrateur. Impossible de suivre les transferts.",
             );
           paramsPending.boutiqueSource = effectiveCentralId;
-          paramsPending.boutiqueDestinationType = "Secondaire"; // Ajout d'un filtre pour le type
 
           paramsReceived.boutiqueSource = effectiveCentralId;
-          paramsReceived.boutiqueDestinationType = "Secondaire"; // Ajout d'un filtre pour le type
         }
 
         const [pendingRes, receivedRes] = await Promise.all([
           mouvementAPI.getAll(paramsPending),
           mouvementAPI.getAll(paramsReceived),
         ]);
-        setPendingMovements(pendingRes.data.data || pendingRes.data || []);
-        setReceivedMovements(receivedRes.data.data || receivedRes.data || []);
+        // L'intercepteur Axios unwrap déjà : pendingRes/receivedRes sont les objets paginés { data: [...], totalCount, ... }
+        setPendingMovements(Array.isArray(pendingRes) ? pendingRes : (pendingRes.data || []));
+        setReceivedMovements(Array.isArray(receivedRes) ? receivedRes : (receivedRes.data || []));
       }
 
-      setFournisseurs(fournisseursRes.data);
+      setFournisseurs((fournisseursRes.data && Array.isArray(fournisseursRes.data)) ? fournisseursRes.data : (Array.isArray(fournisseursRes) ? fournisseursRes : []));
     } catch (err) {
       // Erreur gérée par l'intercepteur Axios
     } finally {
@@ -392,6 +399,58 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       toast.success("Notification de rappel envoyée au gérant.");
       setTimeout(() => setSuccessMessage(""), 3000); // Garder le message de succès local
     } catch (err) { /* Erreur gérée par l'intercepteur Axios */
+    }
+  };
+
+  const handleOpenCorrectionModal = async (mvt) => {
+    setCorrectionMvt(mvt);
+    setValLoading(true);
+    try {
+      // Charger le stock disponible de la boutique source
+      const sourceId = mvt.boutiqueSource?._id || mvt.boutiqueSource;
+      const sourceStock = await articleAPI.getAll({ boutique: sourceId, limit: 0 });
+      const stockList = Array.isArray(sourceStock) ? sourceStock : (sourceStock.data || []);
+      
+      const items = mvt.articles.map(a => {
+        const stockArticle = stockList.find(s => s.nom === a.nomArticle);
+        return {
+          articleId: a.articleId || a._id,
+          nomArticle: a.nomArticle,
+          quantite: a.quantite,
+          prixAchatUnitaire: a.prixAchatUnitaire || 0,
+          stockDisponible: stockArticle ? stockArticle.quantite : 0
+        };
+      });
+      setCorrectionItems(items);
+      setShowCorrectionModal(true);
+    } catch (err) {
+      toast.error("Impossible de charger le stock source.");
+    } finally {
+      setValLoading(false);
+    }
+  };
+
+  const handleCorrigerTransfert = async () => {
+    if (!correctionMvt) return;
+    setValLoading(true);
+    try {
+      const articles = correctionItems.filter(a => a.quantite > 0).map(a => ({
+        articleId: a.articleId,
+        nomArticle: a.nomArticle,
+        quantite: a.quantite
+      }));
+      if (articles.length === 0) {
+        toast.error("Aucun article à transférer.");
+        return;
+      }
+      await articleAPI.corrigerTransfert(correctionMvt._id, { articles });
+      toast.success("Transfert corrigé et relancé avec succès !");
+      setShowCorrectionModal(false);
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || "Erreur lors de la correction");
+    } finally {
+      setValLoading(false);
     }
   };
 
@@ -587,8 +646,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     setAdjLoading(true);
     try {
       const res = await articleAPI.getAdjustments();
-      setAdjustments(res.data);
-    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
+      // L'intercepteur Axios unwrap déjà la réponse : res est le tableau d'ajustements
+      const data = Array.isArray(res) ? res : (res.data || []);
+      setAdjustments(data);
+    } catch (err) {
+      console.error("Erreur chargement ajustements:", err);
+      toast.error(err.response?.data?.message || "Erreur chargement des ajustements");
     } finally {
       setAdjLoading(false);
     }
@@ -623,12 +686,14 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     e.preventDefault();
     setAdjSubmitLoading(true);
     try {
-      await articleAPI.createAdjustment(adjustmentFormData); // L'intercepteur gère l'erreur
+      await articleAPI.createAdjustment(adjustmentFormData);
       toast.success("Demande d'ajustement envoyée à l'administrateur.");
       setShowAdjustmentModal(false);
       fetchAdjustments();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
+    } catch (err) {
+      console.error("Erreur création ajustement:", err);
+      toast.error(err.response?.data?.message || err.message || "Erreur lors de la création de l'ajustement");
     } finally {
       setAdjSubmitLoading(false);
     }
@@ -726,6 +791,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, articles, searchParams, setSearchParams]);
 
   const handleShowModal = (article = null) => {
@@ -903,7 +969,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         status: filterStatus,
       };
       const res = await articleAPI.getAll(params);
-      let allArticles = res.data.data || res.data || [];
+      let allArticles = (Array.isArray(res.data) ? res.data : []);
 
       // 2. Application du filtre local promo si actif
       if (showPromoOnly) {
@@ -1089,7 +1155,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         status: filterStatus,
       };
       const res = await articleAPI.getAll(params);
-      const allData = res.data.data || res.data || [];
+      const allData = (Array.isArray(res.data) ? res.data : []);
 
       const dataToExport = allData.map((a) => ({
         Code: a.code || "-",
@@ -1472,35 +1538,9 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                   icon="solar:box-up-bold"
                   className="me-2 align-middle"
                 ></iconify-icon>
-                Approvisionner ({selectedArticles.length})
+                Enregistrer une Livraison ({selectedArticles.length})
               </Button>
             </>
-          )}
-          {userRole === "Admin" && (
-            <Button
-              variant="outline-warning"
-              onClick={handleRenameCategory}
-              className="rounded-pill px-4 shadow-sm"
-            >
-              <iconify-icon
-                icon="solar:pen-new-square-bold"
-                className="me-2 align-middle"
-              ></iconify-icon>
-              Renommer une Catégorie
-            </Button>
-          )}
-          {userRole === "Admin" && (
-            <Button
-              variant="warning"
-              onClick={() => setShowAutoPromoModal(true)}
-              className="rounded-pill px-4 shadow-sm text-white"
-            >
-              <iconify-icon
-                icon="solar:tag-price-bold-duotone"
-                className="me-2 align-middle"
-              ></iconify-icon>
-              Promo Péremption
-            </Button>
           )}
           <Button
             variant="outline-success"
@@ -1623,7 +1663,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                   >
                     <option value="">Toutes les destinations</option>
                     {boutiques
-                      .filter((b) => b.type !== "Centrale")
+                      .filter((b) => b.type !== "Centrale" && b.type !== "Bar")
                       .map((b) => (
                         <option key={b._id} value={b._id}>
                           {b.nom}
@@ -1723,7 +1763,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                                 De
                               </small>
                               <span className="fw-bold">
-                                {mvt.boutiqueSource?.type === 'Centrale' ? "Dépôt Principal" : (mvt.boutiqueSource?.nom || "Dépôt")}
+                                {mvt.boutiqueSource?.type === 'Centrale' || mvt.boutiqueSource?.type === 'Bar' ? "Dépôt Principal" : (mvt.boutiqueSource?.nom || "Dépôt")}
                               </span>
                             </div>
                             <iconify-icon
@@ -1852,8 +1892,19 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                                 </Button>
                               ) : (
                                 <div className="d-flex gap-2">
+                                  <Button variant="outline-danger" size="sm" className="rounded-pill fw-bold d-flex align-items-center gap-1" onClick={() => {
+                                    const items = mvt.articles.map((a) => ({
+                                      nomArticle: a.nomArticle,
+                                      quantiteAttendue: a.quantite,
+                                      quantiteRecue: a.quantite,
+                                      commentaire: ''
+                                    }));
+                                    handleGenerateReceptionPDF(mvt, items, mvt.details);
+                                  }} title="Générer le bon de transfert PDF">
+                                    <iconify-icon icon="solar:file-pdf-bold" style={{fontSize:'16px'}}></iconify-icon> PDF
+                                  </Button>
+                                  <Button variant="outline-warning" size="sm" className="rounded-pill flex-grow-1 fw-bold text-dark" onClick={() => handleOpenCorrectionModal(mvt)}>Relancer</Button>
                                   <Button variant="outline-danger" size="sm" className="rounded-pill flex-grow-1 fw-bold" onClick={() => handleCancelTransfer(mvt._id)}>Annuler</Button>
-                                  <Button variant="outline-warning" size="sm" className="rounded-pill flex-grow-1 fw-bold text-dark" onClick={() => handleRemindManager(mvt._id)}>Relancer</Button>
                                 </div>
                               )
                             )}
@@ -1922,6 +1973,80 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           userRole,
         }}
       />
+
+      {/* Modale de Correction de Transfert (Admin) */}
+      <Modal show={showCorrectionModal} onHide={() => setShowCorrectionModal(false)} centered size="lg">
+        <Modal.Header closeButton className="border-0 pb-0">
+          <Modal.Title className="fw-bold">
+            📦 Correction Transfert #{correctionMvt?._id?.toString().slice(-6)}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {correctionMvt && (
+            <>
+              <div className="d-flex align-items-center gap-3 mb-3 p-2 bg-light rounded-3">
+                <span className="text-muted small">De: <strong>{correctionMvt.boutiqueSource?.nom || 'Dépôt Principal'}</strong></span>
+                <iconify-icon icon="solar:double-alt-arrow-right-bold" className="text-primary" />
+                <span className="text-muted small">Pour: <strong className="text-primary">{correctionMvt.boutiqueDestination?.nom || 'Boutique'}</strong></span>
+              </div>
+              <div className="table-responsive">
+                <table className="table table-sm table-borderless align-middle">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Article</th>
+                      <th className="text-end" style={{width:'90px'}}>Stock Dispo</th>
+                      <th className="text-end" style={{width:'100px'}}>Quantité</th>
+                      <th className="text-end" style={{width:'120px'}}>Valeur</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {correctionItems.map((item, idx) => {
+                      const depasseStock = item.quantite > item.stockDisponible;
+                      return (
+                      <tr key={idx} className={depasseStock ? 'table-danger' : ''}>
+                        <td className="fw-bold">
+                          {item.nomArticle}
+                          {depasseStock && <Badge bg="danger" className="ms-2">Stock insuffisant</Badge>}
+                        </td>
+                        <td className="text-end fw-bold">
+                          <Badge bg="light" text="dark">{item.stockDisponible}</Badge>
+                        </td>
+                        <td>
+                          <Form.Control
+                            type="number"
+                            size="sm"
+                            min="0"
+                            max={item.stockDisponible}
+                            value={item.quantite}
+                            onChange={(e) => {
+                              const newItems = [...correctionItems];
+                              newItems[idx].quantite = parseInt(e.target.value) || 0;
+                              setCorrectionItems(newItems);
+                            }}
+                            className={`rounded-pill text-center ${depasseStock ? 'border-danger' : ''}`}
+                          />
+                        </td>
+                        <td className="text-end fw-bold text-muted">
+                          {(item.quantite * (item.prixAchatUnitaire || 0)).toLocaleString()} GNF
+                        </td>
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer className="border-0 pt-0">
+          <Button variant="secondary" className="rounded-pill px-4" onClick={() => setShowCorrectionModal(false)}>
+            Annuler
+          </Button>
+          <Button variant="primary" className="rounded-pill px-4 fw-bold shadow-sm" onClick={handleCorrigerTransfert} disabled={valLoading}>
+            {valLoading ? <Spinner size="sm" /> : <><iconify-icon icon="solar:refresh-bold" className="me-2" />Relancer avec corrections</>}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <AdjustmentModals
         {...{

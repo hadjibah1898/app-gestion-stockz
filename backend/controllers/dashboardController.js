@@ -1,3 +1,8 @@
+/**
+ * @file dashboardController.js
+ * @description Contrôleur du tableau de bord : agrégation des statistiques globales.
+ */
+
 const Vente = require('../models/Vente');
 const User = require('../models/User');
 const Article = require('../models/Article');
@@ -274,7 +279,8 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
                 $group: {
                     _id: '$gerant',
                     totalVendu: { $sum: '$prixTotal' },
-                    totalPourboires: { $sum: '$pourboire' }
+                    totalPourboires: { $sum: '$pourboire' },
+                    nbVentes: { $sum: 1 }
                 }
             },
             {
@@ -303,7 +309,8 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
                     nom: '$gerantDetails.nom',
                     boutiqueNom: '$boutiqueDetails.nom', // Inclure le nom de la boutique
                     chiffreAffaires: '$totalVendu',
-                    pourboires: '$totalPourboires'
+                    pourboires: '$totalPourboires',
+                    nbVentes: 1
                 }
             }
         ]);
@@ -313,6 +320,68 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
             totalRecouvrements: recoveryMap[g.id?.toString()] || 0,
             totalPourboires: g.pourboires || 0
         }));
+        }
+
+        // 5b. Performance par Caissier (NOUVEAU)
+        let performanceCaissiers = [];
+        if (userRole === 'Gérant' || userRole === 'Admin') {
+            const caissierFilter = userRole === 'Gérant' 
+                ? { boutique: { $in: myBoutiqueIds }, role: 'Caissier' }
+                : { boutique: { $in: myBoutiqueIds }, role: 'Caissier' };
+            
+            const caissiers = await User.find(caissierFilter).select('_id nom');
+            const caissierIds = caissiers.map(c => c._id);
+
+            if (caissierIds.length > 0) {
+                const performanceCaissiersRaw = await Vente.aggregate([
+                    { 
+                        $match: { 
+                            gerant: { $in: caissierIds }, 
+                            boutique: { $in: myBoutiqueIds }, 
+                            isCancelled: false 
+                        } 
+                    },
+                    {
+                        $group: {
+                            _id: '$gerant',
+                            totalVendu: { $sum: '$prixTotal' },
+                            totalPourboires: { $sum: '$pourboire' },
+                            nbVentes: { $sum: 1 },
+                            nbDettes: { 
+                                $sum: { 
+                                    $cond: [{ $gt: ['$client', null] }, 1, 0] 
+                                } 
+                            }
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: User.collection.name,
+                            localField: '_id',
+                            foreignField: '_id',
+                            as: 'caissierDetails'
+                        }
+                    },
+                    { $unwind: '$caissierDetails' },
+                    { $sort: { totalVendu: -1 } },
+                    {
+                        $project: {
+                            id: '$_id',
+                            nom: '$caissierDetails.nom',
+                            chiffreAffaires: '$totalVendu',
+                            pourboires: '$totalPourboires',
+                            nbVentes: 1,
+                            nbDettes: 1,
+                            panierMoyen: { $cond: [{ $gt: ['$nbVentes', 0] }, { $divide: ['$totalVendu', '$nbVentes'] }, 0] }
+                        }
+                    }
+                ]);
+
+                performanceCaissiers = performanceCaissiersRaw.map(c => ({
+                    ...c,
+                    totalRecouvrements: recoveryMap[c.id?.toString()] || 0
+                }));
+            }
         }
 
         // 6. Performance par Boutique
@@ -442,6 +511,7 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
             totalVentes: await Vente.countDocuments({ boutique: { $in: myBoutiqueIds } }),
             performanceEquipe, // Ajouté pour le Gérant
             performanceGerants: performanceGerants,
+            performanceCaissiers: performanceCaissiers, // NOUVEAU: Performance des caissiers
             performanceBoutiques: performanceBoutiques, // Ajouté à la réponse
             stockBoutiques: stockBoutiques, // Ajouté à la réponse
             boutiquesActives: await Boutique.countDocuments({ ...myBoutiqueFilter, active: true }),

@@ -1,3 +1,8 @@
+/**
+ * @file injectCodeBoutique.js
+ * @description injectCodeBoutique - middleware
+ */
+
 const injectCodeBoutique = (req, res, next) => {
     // Le middleware 'protect' doit avoir déjà peuplé req.user
     if (req.user) {

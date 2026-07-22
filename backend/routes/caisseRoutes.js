@@ -1,3 +1,8 @@
+/**
+ * @file caisseRoutes.js
+ * @description Routes de gestion des caisses (ouverture, fermeture, dépenses, rapports).
+ */
+
 const express = require('express');
 const router = express.Router();
 const caisseController = require('../controllers/caisseController');
@@ -19,23 +24,33 @@ router.use(checkMustChangePassword);
 // ==========================================
 
 // Gérer sa propre caisse
-router.post('/ouvrir', authorize('Gérant'), validateOuvertureCaisse, caisseController.ouvrirCaisse);
-router.post('/fermer', authorize('Gérant', 'Admin'), checkCaisseOuverte, validateFermetureCaisse, caisseController.fermerCaisse); // L'Admin peut avoir besoin de forcer la fermeture
-router.put('/correction', authorize('Gérant'), validateFermetureCaisse, caisseController.corrigerRapport);
+// IMPORTANT: Pas de checkCaisseOuverte sur /ouvrir car c'est justement pour ouvrir la caisse !
+router.post('/ouvrir', authorize('Gérant', 'GérantBar', 'Caissier'), validateOuvertureCaisse, caisseController.ouvrirCaisse);
+router.post('/fermer', authorize('Gérant', 'GérantBar', 'Admin', 'AdminBar', 'Caissier'), checkCaisseOuverte, validateFermetureCaisse, caisseController.fermerCaisse);
+router.put('/correction', authorize('Gérant', 'GérantBar', 'Caissier'), checkCaisseOuverte, validateFermetureCaisse, caisseController.corrigerRapport);
 
-// Consultation du statut et des statistiques (Autorisé aux serveurs pour vérifier l'ouverture)
-router.get('/statut', authorize('Gérant', 'Admin', 'Serveur'), caisseController.getStatutCaisse);
-router.get('/statistiques-session', authorize('Gérant', 'Admin', 'Serveur'), caisseController.getStatistiquesSession);
+// Consultation du statut et des statistiques
+router.get('/statut', authorize('Gérant', 'GérantBar', 'Admin', 'AdminBar', 'Serveur', 'ServeurBar', 'Caissier'), caisseController.getStatutCaisse);
+router.get('/statistiques-session', authorize('Gérant', 'GérantBar', 'Admin', 'AdminBar', 'Serveur', 'ServeurBar', 'Caissier'), caisseController.getStatistiquesSession);
 
 // Dépenses et Paiements (Liés à la caisse ouverte)
-router.post('/depenses', authorize('Gérant'), checkCaisseOuverte, validateDepense, caisseController.creerDepense);
-router.get('/depenses/me', authorize('Gérant'), caisseController.listerMesDepenses);
+router.post('/depenses', authorize('Gérant', 'GérantBar', 'Caissier'), checkCaisseOuverte, validateDepense, caisseController.creerDepense);
+router.get('/depenses/me', authorize('Gérant', 'GérantBar', 'Caissier'), caisseController.listerMesDepenses);
 
 // Paiement de dette via la caisse
-router.post('/pay-dette/:id', authorize('Gérant'), validateObjectId('id'), checkCaisseOuverte, clientController.payDette);
+router.post('/pay-dette/:id', authorize('Gérant', 'GérantBar', 'Caissier'), validateObjectId('id'), checkCaisseOuverte, clientController.payDette);
 
-// Rapports personnels (Le gérant consulte sa liste de rapports soumis)
-router.get('/rapports/me', authorize('Gérant'), caisseController.listerMesRapports);
+// Rapports personnels
+router.get('/rapports/me', authorize('Gérant', 'GérantBar', 'Caissier'), caisseController.listerMesRapports);
+
+// ==========================================
+// ROUTES POUR CAISSIER (Nouveau workflow)
+// ==========================================
+
+// Le caissier peut soumettre son rapport (déjà couvert par /fermer)
+// Routes spécifiques pour le workflow caissier
+router.get('/rapports/caissier/me', authorize('Caissier'), caisseController.listerMesRapports);
+router.put('/rapports/caissier/:id/corriger', authorize('Caissier'), caisseController.corrigerRapport);
 
 
 // ==========================================
@@ -48,7 +63,16 @@ router.get('/rapports/:id/details', authorize('Admin', 'Gérant'), validateObjec
 
 
 // ==========================================
-// 2. ROUTES POUR LES ADMINS UNIQUEMENT (Audit et Décision)
+// 2. ROUTES POUR LES GÉRANTS (Validation rapports caissiers)
+// ==========================================
+
+router.get('/rapports/caissiers', authorize('Gérant'), caisseController.listerRapportsCaissiers);
+router.get('/rapports/caissiers/:id/details', authorize('Gérant'), validateObjectId('id'), caisseController.getReportDetails);
+router.put('/rapports/caissiers/:id/valider', authorize('Gérant'), validateObjectId('id'), caisseController.validerRapportCaissier);
+router.put('/rapports/caissiers/:id/rejeter', authorize('Gérant'), validateObjectId('id'), caisseController.rejeterRapportCaissier);
+
+// ==========================================
+// 3. ROUTES POUR LES ADMINS UNIQUEMENT (Audit et Décision)
 // ==========================================
 
 // Seul l'Admin voit la liste globale de TOUTES les boutiques

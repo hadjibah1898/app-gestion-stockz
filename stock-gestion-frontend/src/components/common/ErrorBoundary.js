@@ -1,3 +1,8 @@
+/**
+ * @file ErrorBoundary.js
+ * @description Composant React.
+ */
+
 import React from 'react';
 import { Alert, Button } from 'react-bootstrap';
 

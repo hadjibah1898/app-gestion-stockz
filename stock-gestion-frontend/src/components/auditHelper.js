@@ -1,3 +1,8 @@
+/**
+ * @file auditHelper.js
+ * @description Composant React.
+ */
+
 const { logAction } = require('../services/auditLogService');
 
 /**

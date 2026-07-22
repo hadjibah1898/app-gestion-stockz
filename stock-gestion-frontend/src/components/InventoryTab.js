@@ -1,3 +1,8 @@
+/**
+ * @file InventoryTab.js
+ * @description Onglet inventaire avec gestion des stocks et alertes.
+ */
+
 import React from 'react';
 import { Row, Col, Form, Button, Card, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
@@ -31,7 +36,7 @@ const InventoryTab = ({
                             }}
                         >
                             <option value="">Toutes les boutiques</option>
-                            {boutiques.map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
+                            {(boutiques || []).map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
                         </Form.Select>
                     </Col>
                 )}
@@ -46,7 +51,7 @@ const InventoryTab = ({
                             }}
                         >
                             <option value="">Tous les fournisseurs</option>
-                            {fournisseurs.map(f => <option key={f._id} value={f._id}>{f.nom}</option>)}
+                            {(fournisseurs || []).map(f => <option key={f._id} value={f._id}>{f.nom}</option>)}
                         </Form.Select>
                     </Col>
                 )}

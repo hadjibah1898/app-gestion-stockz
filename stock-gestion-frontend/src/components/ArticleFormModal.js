@@ -1,3 +1,8 @@
+/**
+ * @file ArticleFormModal.js
+ * @description Modale formulaire de création/édition d'article.
+ */
+
 import React, { useMemo } from 'react';
 import { Modal, Form, Row, Col, Button, InputGroup, Badge } from 'react-bootstrap';
 
@@ -28,13 +33,6 @@ const ArticleFormModal = ({
         const tva = parseFloat(currentArticle.tva) || 0;
         return ht * (1 + tva / 100);
     }, [currentArticle.prixVente, currentArticle.tva]);
-
-    // Déterminer le secteur de la boutique sélectionnée pour cet article
-    const selectedBoutiqueSecteur = useMemo(() => {
-        const bId = currentArticle.boutique?._id || currentArticle.boutique;
-        const boutique = boutiques.find(b => b._id === bId);
-        return boutique?.secteur || 'Général';
-    }, [currentArticle.boutique, boutiques]);
 
     return (
         <Modal show={show} onHide={onHide} size="lg" centered>
@@ -201,8 +199,11 @@ const ArticleFormModal = ({
                                     className="rounded-pill shadow-sm"
                                 >
                                     <option value="">Sélectionner une boutique</option>
-                                    {boutiques.map(boutique => (
+                                    {(boutiques || []).map(boutique => (
                                         <option key={boutique._id} value={boutique._id}>
+                                            {boutique.type === 'Bar' && 'BAR : '}
+                                            {boutique.type === 'Centrale' && 'CENTRALE : '}
+                                            {boutique.type === 'Secondaire' && 'BOUTIQUE : '}
                                             {boutique.nom}
                                         </option>
                                     ))}
@@ -223,7 +224,7 @@ const ArticleFormModal = ({
                                     className="rounded-pill shadow-sm"
                                 >
                                     <option value="">Sélectionner un fournisseur</option>
-                                    {fournisseurs.map(fournisseur => (
+                                    {(fournisseurs || []).map(fournisseur => (
                                         <option key={fournisseur._id} value={fournisseur._id}>
                                             {fournisseur.nom}
                                         </option>
@@ -340,44 +341,6 @@ const ArticleFormModal = ({
                         />
                         <Form.Text className="text-muted small ps-2">Quantité critique pour les alertes (Défaut: 10).</Form.Text>
                     </Form.Group>
-
-                    {/* Section Bar / Boîte de Nuit (Doses) */}
-                    {selectedBoutiqueSecteur === 'Boite de nuit' && (
-                        <div className="border-top pt-4 mt-4">
-                            <h6 className="text-info fw-bold mb-3 d-flex align-items-center">
-                                <iconify-icon icon="solar:wineglass-triangle-bold-duotone" className="me-2"></iconify-icon>
-                                Secteur Bar / Boîte de Nuit (Gestion des Doses)
-                            </h6>
-                            <Form.Group className="mb-3">
-                                <Form.Check 
-                                    type="switch"
-                                    id="dose-enabled-switch"
-                                    label="Activer la vente par dose (verre)"
-                                    name="isDoseEnabled"
-                                    checked={currentArticle.isDoseEnabled || false}
-                                    onChange={handleChange}
-                                    className="fw-bold text-muted small text-uppercase"
-                                />
-                            </Form.Group>
-                            
-                            {currentArticle.isDoseEnabled && (
-                                <Row className="g-3 animate__animated animate__fadeIn">
-                                    <Col md={6}>
-                                        <Form.Label className="fw-bold text-muted small text-uppercase">Nombre de doses par bouteille</Form.Label>
-                                        <Form.Control type="number" name="dosesPerBottle" value={currentArticle.dosesPerBottle || 10} onChange={handleChange} min="1" className="rounded-pill shadow-sm" />
-                                        <Form.Text className="text-muted small">Ex: 10 verres dans une bouteille de 1L.</Form.Text>
-                                    </Col>
-                                    <Col md={6}>
-                                        <Form.Label className="fw-bold text-muted small text-uppercase">Prix de vente par Dose (GNF)</Form.Label>
-                                        <InputGroup className="shadow-sm rounded-pill overflow-hidden">
-                                            <Form.Control type="number" name="prixDose" value={currentArticle.prixDose || 0} onChange={handleChange} min="0" />
-                                            <InputGroup.Text className="bg-light">GNF</InputGroup.Text>
-                                        </InputGroup>
-                                    </Col>
-                                </Row>
-                            )}
-                        </div>
-                    )}
 
                     <Form.Group className="mb-3">
                         <Form.Label className="fw-bold text-muted small text-uppercase">Notes Internes / Description</Form.Label>

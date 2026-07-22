@@ -1,3 +1,8 @@
+/**
+ * @file mouvementsRoute.js
+ * @description Routes de consultation et annulation des mouvements de stock.
+ */
+
 const express = require('express');
 const router = express.Router();
 const mouvementController = require('../controllers/mouvementController'); // Déclaration déplacée en haut

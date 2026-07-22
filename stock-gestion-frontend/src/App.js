@@ -1,20 +1,16 @@
-// src/App.js
-// Application principale de gestion de stock
-// Cette page sert de point d'entrée et de routeur pour toute l'application
-// Contient la structure de navigation et la gestion de l'authentification
-
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { Modal, Form, Button, Alert, Spinner, InputGroup, Toast, ToastContainer as BSToastContainer } from 'react-bootstrap';
 import { NotificationProvider, useNotifications } from './NotificationContext';
 import Sidebar from './components/common/Sidebar';
-import Header from './components/common/Header'; // Importer le Header
+import Header from './components/common/Header';
 import Auth from './components/Auth';
+import UsersView from './components/UsersView';
+import BarDashboard from './components/BarDashboard'; // Import du nouveau Dashboard
+import Register from './components/Register'; // Importation propre du composant d'inscription
 import Dashboard from './components/Dashboard';
 import { authAPI } from './services/api';
-import GerantDashboard from './components/GerantDashboard';
-import ServersView from './components/ServersView';
-import ManagersView from './components/ManagersView';
+import GerantDashboard from './components/GerantDashboard'; // Importation du composant GerantDashboard
 import ShopsView from './components/ShopsView';
 import ArticlesView from './components/ArticlesView';
 import VentesView from './components/VentesView';
@@ -26,33 +22,39 @@ import StockStatusView from './components/StockStatusView';
 import ClientsView from './components/ClientsView';
 import NotificationsHistoryView from './components/NotificationsHistoryView';
 import ProtectedRoute from './components/common/ProtectedRoute';
-import AuditLogView from './components/AuditLogView'; // Importer le nouveau composant
+import AuditLogView from './components/AuditLogView';
 import CaisseView from './components/CaisseView';
 import AdminCaisseView from './components/AdminCaisseView';
 import DebtManagementView from './components/DebtManagementView';
+import GerantCaisseValidation from './components/GerantCaisseValidation';
+import CashiersView from './components/CashiersView';
 import './App.css';
+import CaissierDashboard from './components/CaissierDashboard'; // Import du dashboard Caissier
+import CaissierCaisseView from './components/CaissierCaisseView'; // Import de la vue caisse caissier
 import setupAxiosInterceptors from './utils/axiosConfig';
 import ServeurDashboard from './components/ServeurDashboard';
-import socket, { initSocket } from './services/socket';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './assets/styles/global.css';
 import './assets/styles/themes.css';
+import ManagersView from './components/ManagersView'; // Importation du composant ManagersView
+import OnboardingSuccess from './components/OnboardingSuccess'; // Page de confirmation post-inscription
+import OnboardingTour from './components/OnboardingTour'; // Guide interactif première connexion
+import BarConfigView from './components/BarConfigView'; // Configuration QR codes Bar (Admin)
 
-// Le Layout principal qui inclut la Sidebar et la zone de contenu
 function MainLayout({ userName, userRole, handleLogout, theme, toggleTheme, isSidebarOpen, toggleSidebar }) {
   return (
     <>
-      <Sidebar userRole={userRole} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} userName={userName} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} /> {/* Sidebar receives toggleSidebar and other header props */}
-      <div className="page-wrapper"> {/* page-wrapper needs to be aware of sidebar state for margin-left on large screens */}
-        <Header userName={userName} userRole={userRole} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} toggleSidebar={toggleSidebar} /> {/* Header receives toggleSidebar */}
-        <Outlet context={{ theme }} /> {/* Les composants de route enfants s'afficheront ici */}
+      <Sidebar userRole={userRole} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} userName={userName} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+      <div className="page-wrapper">
+        <Header userName={userName} userRole={userRole} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} toggleSidebar={toggleSidebar} />
+        <Outlet context={{ theme }} />
+        <OnboardingTour userRole={userRole} userName={userName} />
       </div>
     </>
   );
 }
 
-// Composant pour gérer l'affichage des Toasts de notification
 const NotificationToasts = () => {
   const { toastQueue, removeToast, markAsRead } = useNotifications();
   const navigate = useNavigate();
@@ -61,12 +63,10 @@ const NotificationToasts = () => {
     if (!notification.read) {
       markAsRead(notification._id);
     }
-    
-    // Navigation vers le lien spécifique de la notification (ex: vers un article ou une vente)
+
     if (notification.link) {
       navigate(notification.link);
     } else {
-      // Si pas de lien spécifique, on redirige vers l'historique global selon le rôle
       const role = localStorage.getItem('userRole');
       const basePath = role === 'Admin' ? '/admin' : (role === 'Gérant' ? '/gerant' : (role === 'Serveur' ? '/serveur' : ''));
       if (basePath) {
@@ -89,14 +89,16 @@ const NotificationToasts = () => {
 };
 
 function App() {
-  // On récupère les infos utilisateur depuis le localStorage pour la persistance
-  const [userRole, setUserRole] = useState(localStorage.getItem('userRole'));
+  const [userRole, setUserRole] = useState(localStorage.getItem('token') ? localStorage.getItem('userRole') : null);
   const [userName, setUserName] = useState(localStorage.getItem('userName'));
+  const [businessType, setBusinessType] = useState(localStorage.getItem('businessType') || null);
   const [mustChangePassword, setMustChangePassword] = useState(localStorage.getItem('mustChangePassword') === 'true');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // New state for sidebar
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
-  
-  // États pour la modale de changement de mot de passe
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    const storedTheme = localStorage.getItem('theme');
+    return storedTheme || (localStorage.getItem('businessType') === 'Bar' ? 'dark' : 'light');
+  });
+
   const [pwdData, setPwdData] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [pwdError, setPwdError] = useState('');
   const [pwdSuccess, setPwdSuccess] = useState('');
@@ -104,28 +106,13 @@ function App() {
   const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
-  const [isApiLoading, setIsApiLoading] = useState(false); // Nouvel état pour le chargement API
+  const [isApiLoading, setIsApiLoading] = useState(false);
 
   useEffect(() => {
-    // Configure l'intercepteur Axios pour gérer les erreurs 401 (redirection auto) et le spinner de chargement
     setupAxiosInterceptors(setIsApiLoading);
-  }, []); // Exécuter une seule fois au montage
-
-  // Gestion de la connexion Socket.io selon l'état d'authentification
-  useEffect(() => {
-    if (userRole) {
-      initSocket({ role: userRole });
-      socket.connect();
-    }
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [userRole]);
-
+  }, []);
 
   useEffect(() => {
-    // Apply sidebar-open class to body for mobile overlay
     document.body.classList.toggle('sidebar-open', isSidebarOpen);
   }, [isSidebarOpen]);
 
@@ -133,19 +120,24 @@ function App() {
     setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
   };
 
-  const handleLogin = (newToken, id, role, name, boutique, mustChange) => {
+  const handleLogin = (newToken, id, role, name, boutique, mustChange, businessType) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('userRole', role);
-    localStorage.setItem('userId', id); // Sauvegarder l'ID de l'utilisateur
+    localStorage.setItem('userId', id);
     localStorage.setItem('userName', name);
     if (boutique) {
       localStorage.setItem('boutiqueId', typeof boutique === 'object' ? boutique._id : boutique);
     }
-    if (mustChange) localStorage.setItem('mustChangePassword', 'true');
-    
+    if (businessType) localStorage.setItem('businessType', businessType);
+    localStorage.setItem('mustChangePassword', mustChange ? 'true' : 'false');
+
     setUserRole(role);
     setUserName(name);
+    setBusinessType(businessType);
     setMustChangePassword(mustChange);
+
+    // Forcer le rechargement du thème si c'est un bar
+    if (businessType === 'Bar') setTheme('dark');
   };
 
   const toggleSidebar = () => {
@@ -158,8 +150,9 @@ function App() {
     localStorage.removeItem('userName');
     localStorage.removeItem('userId');
     localStorage.removeItem('boutiqueId');
+    localStorage.removeItem('businessType');
+    setBusinessType(null);
     localStorage.removeItem('mustChangePassword');
-    // Redirection forcée pour garantir un état propre et la redirection vers la page de connexion.
     window.location.href = '/login';
   };
 
@@ -171,14 +164,13 @@ function App() {
     setPwdLoading(true);
     setPwdError('');
     try {
-      await authAPI.changePassword({ 
-        currentPassword: pwdData.currentPassword, 
-        newPassword: pwdData.newPassword 
+      await authAPI.changePassword({
+        currentPassword: pwdData.currentPassword,
+        newPassword: pwdData.newPassword
       });
       localStorage.removeItem('mustChangePassword');
       setPwdSuccess("Mot de passe changé avec succès ! Vous pouvez maintenant utiliser l'application.");
-      
-      // Fermer la modale et réinitialiser l'état après un court délai
+
       setTimeout(() => {
         setMustChangePassword(false);
         setPwdSuccess('');
@@ -191,21 +183,44 @@ function App() {
     }
   };
 
+  // Petite fonction utilitaire pour rediriger dynamiquement selon le rôle
+  const getRedirectPath = (role) => {
+    const r = (role || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
+    if (r === 'ADMIN' || r === 'SUPERADMIN') return "/admin";
+    if (r === 'ADMINBAR') return "/admin-bar";
+    if (r === 'GERANTBAR') return "/gerant-bar";
+    if (r === 'SERVEURBAR') return "/serveur-bar";
+    if (r === 'SERVEUR') return "/serveur/dashboard";
+    if (r === 'CAISSIER') return "/caissier";
+    return "/gerant";
+  };
+
   return (
     <NotificationProvider>
       {isApiLoading && <div className="top-loading-bar"></div>}
-      <div id="main-wrapper" data-bs-theme={theme}>
+      <div id="main-wrapper" data-bs-theme={theme} className={businessType === 'Bar' ? 'bar-account-theme' : ''}>
         <Routes>
-          <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={userRole === 'Admin' ? "/admin" : (userRole === 'Serveur' ? "/serveur" : "/gerant")} />} />
+          {/* Route Connexion */}
+          <Route path="/login" element={!userRole ? <Auth onLogin={handleLogin} /> : <Navigate to={getRedirectPath(userRole)} />} />
+
+          {/* Route Inscription : redirige vers le dashboard si l'utilisateur est déjà connecté */}
+          <Route path="/register" element={!userRole ? <Register /> : <Navigate to={getRedirectPath(userRole)} />} />
+          {/* Page de succès post-inscription */}
+          <Route path="/register/success" element={<OnboardingSuccess />} />
 
           {/* Routes Protégées pour l'Admin */}
-          <Route path="/admin" element={!mustChangePassword ? (
+          <Route path="/admin" element={
             <ProtectedRoute userRole={userRole} requiredRole="Admin">
-              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
             </ProtectedRoute>
-          ) : <Navigate to="/" />} >
+          } >
             <Route index element={<Dashboard />} />
-            <Route path="managers" element={<ManagersView />} />
+            <Route path="users" element={<UsersView />} />
+            <Route path="managers" element={<ManagersView />} /> {/* Gestion dédiée des gérants (création/édition/assignation boutique) */}
             <Route path="shops" element={<ShopsView />} />
             <Route path="articles" element={<ArticlesView userRole="Admin" />} />
             <Route path="etat-stock" element={<StockStatusView />} />
@@ -217,55 +232,137 @@ function App() {
             <Route path="notifications" element={<NotificationsHistoryView />} />
             <Route path="caisse" element={<AdminCaisseView />} />
             <Route path="creances" element={<DebtManagementView />} />
-            <Route path="audit" element={<AuditLogView />} /> {/* Ajouter la nouvelle route */}
+            <Route path="audit" element={<AuditLogView />} />
+            <Route path="bar-config" element={<BarConfigView />} />
           </Route>
-          
 
           {/* Routes Protégées pour le Gérant */}
-          <Route path="/gerant" element={!mustChangePassword ? (
+          <Route path="/gerant" element={
             <ProtectedRoute userRole={userRole} requiredRole="Gérant">
-              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
             </ProtectedRoute>
-          ) : <Navigate to="/" />} >
-            <Route index element={<GerantDashboard />} />
+          } >
+            <Route index element={businessType === 'Bar' ? <BarDashboard /> : <GerantDashboard />} />
             <Route path="articles" element={<ArticlesView userRole="Gérant" />} />
             <Route path="ventes" element={<VentesView userRole="Gérant" initialTab="sale" key="sale" />} />
-            <Route path="equipe" element={<ServersView />} />
             <Route path="historique" element={<VentesView userRole="Gérant" initialTab="history" key="history" />} />
             <Route path="clients" element={<ClientsView userRole="Gérant" />} />
             <Route path="notifications" element={<NotificationsHistoryView />} />
             <Route path="creances" element={<DebtManagementView />} />
             <Route path="caisse" element={<CaisseView />} />
+            <Route path="validation-rapports" element={<GerantCaisseValidation />} />
+            <Route path="cashiers" element={<CashiersView />} />
+            <Route path="caisse/rapports-caissiers" element={<GerantCaisseValidation />} />
           </Route>
 
           {/* Routes Protégées pour le Serveur */}
-          <Route path="/serveur" element={!mustChangePassword ? (
+          <Route path="/serveur" element={
             <ProtectedRoute userRole={userRole} requiredRole="Serveur">
-              <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
             </ProtectedRoute>
-          ) : <Navigate to="/" />} >
+          } >
             <Route index element={<Navigate to="dashboard" />} />
             <Route path="dashboard" element={<ServeurDashboard />} />
             <Route path="ventes" element={<VentesView userRole="Serveur" initialTab="sale" key="sale" />} />
             <Route path="notifications" element={<NotificationsHistoryView />} />
           </Route>
 
+          {/* Routes Protégées pour le Caissier */}
+          <Route path="/caissier" element={
+            <ProtectedRoute userRole={userRole} requiredRole="Caissier">
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
+            </ProtectedRoute>
+          } >
+            <Route index element={<CaissierDashboard />} />
+            <Route path="pos" element={<VentesView userRole="Caissier" initialTab="sale" />} />
+            <Route path="ventes" element={<VentesView userRole="Caissier" initialTab="sale" />} />
+            <Route path="caisse" element={<CaissierCaisseView />} />
+            <Route path="creances" element={<DebtManagementView />} />
+          </Route>
+
+          {/* Routes Protégées pour l'Admin Bar */}
+          <Route path="/admin-bar" element={
+            <ProtectedRoute userRole={userRole} requiredRole="AdminBar">
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
+            </ProtectedRoute>
+          } >
+            <Route index element={<BarDashboard />} />
+            <Route path="users" element={<UsersView />} />
+            <Route path="managers" element={<ManagersView />} />
+            <Route path="articles" element={<ArticlesView userRole="AdminBar" />} />
+            <Route path="ventes" element={<VentesView userRole="AdminBar" />} />
+            <Route path="clients" element={<ClientsView />} />
+            <Route path="creances" element={<DebtManagementView />} />
+            <Route path="fournisseurs" element={<SuppliersView />} />
+            <Route path="mouvements" element={<StockMovementsView />} />
+            <Route path="notifications" element={<NotificationsHistoryView />} />
+            <Route path="audit" element={<AuditLogView />} />
+            <Route path="bar-config" element={<BarConfigView />} />
+          </Route>
+
+          {/* Routes Protégées pour le Gérant Bar */}
+          <Route path="/gerant-bar" element={
+            <ProtectedRoute userRole={userRole} requiredRole="GérantBar">
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
+            </ProtectedRoute>
+          } >
+            <Route index element={<BarDashboard />} />
+            <Route path="articles" element={<ArticlesView userRole="GérantBar" />} />
+            <Route path="ventes" element={<VentesView userRole="GérantBar" initialTab="sale" />} />
+            <Route path="historique" element={<VentesView userRole="GérantBar" initialTab="history" />} />
+            <Route path="clients" element={<ClientsView userRole="GérantBar" />} />
+            <Route path="bar-config" element={<BarConfigView />} />
+          </Route>
+
+          {/* Routes Protégées pour le Serveur Bar */}
+          <Route path="/serveur-bar" element={
+            <ProtectedRoute userRole={userRole} requiredRole="ServeurBar">
+              {!mustChangePassword ? (
+                <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+              ) : (
+                <div className="vh-100 d-flex align-items-center justify-content-center bg-light"><Spinner animation="border" variant="primary" /></div>
+              )}
+            </ProtectedRoute>
+          } >
+            <Route index element={<ServeurDashboard />} />
+            <Route path="ventes" element={<VentesView userRole="ServeurBar" initialTab="sale" />} />
+            <Route path="commandes" element={<VentesView userRole="ServeurBar" initialTab="pending" />} />
+          </Route>
+
           {/* Routes Partagées (Profil) */}
           <Route path="/profile" element={
-            <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant', 'Serveur']}>
+            <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'Gérant', 'Caissier', 'Serveur', 'AdminBar', 'GérantBar', 'ServeurBar']}>
               <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
             </ProtectedRoute>
           }>
             <Route index element={<ProfileView />} />
           </Route>
 
-          <Route path="/" element={<Navigate to={!userRole ? "/login" : (userRole === 'Admin' ? "/admin" : (userRole === 'Serveur' ? "/serveur" : "/gerant"))} />} />
+          <Route path="/" element={<Navigate to={!userRole ? "/login" : getRedirectPath(userRole)} />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
         {userRole && <NotificationToasts />}
-        {/* Conteneur global pour les alertes react-toastify (utilisé par l'intercepteur Axios) */}
         <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={true} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="colored" />
-      
       </div>
 
       {/* Modale de changement de mot de passe obligatoire */}
@@ -277,7 +374,7 @@ function App() {
           <Modal.Body>
             {pwdSuccess ? (
               <Alert variant="success" className="text-center">
-                <iconify-icon icon="solar:check-circle-bold" style={{fontSize: '48px'}} className="mb-2"></iconify-icon>
+                <iconify-icon icon="solar:check-circle-bold" style={{ fontSize: '48px' }} className="mb-2"></iconify-icon>
                 <h5 className="fw-bold">Succès !</h5>
                 <p>{pwdSuccess}</p>
               </Alert>
@@ -287,13 +384,13 @@ function App() {
                   Pour votre sécurité, vous devez changer votre mot de passe par défaut avant de continuer.
                 </Alert>
                 {pwdError && <Alert variant="danger">{pwdError}</Alert>}
-                
+
                 <Form.Group className="mb-3">
                   <Form.Label>Mot de passe actuel</Form.Label>
                   <InputGroup>
-                    <Form.Control type={showCurrentPwd ? "text" : "password"} required 
+                    <Form.Control type={showCurrentPwd ? "text" : "password"} required
                       value={pwdData.currentPassword}
-                      onChange={(e) => setPwdData({...pwdData, currentPassword: e.target.value})}
+                      onChange={(e) => setPwdData({ ...pwdData, currentPassword: e.target.value })}
                     />
                     <Button variant="outline-secondary" onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
                       <iconify-icon icon={showCurrentPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
@@ -305,7 +402,7 @@ function App() {
                   <InputGroup>
                     <Form.Control type={showNewPwd ? "text" : "password"} required minLength="6"
                       value={pwdData.newPassword}
-                      onChange={(e) => setPwdData({...pwdData, newPassword: e.target.value})}
+                      onChange={(e) => setPwdData({ ...pwdData, newPassword: e.target.value })}
                     />
                     <Button variant="outline-secondary" onClick={() => setShowNewPwd(!showNewPwd)}>
                       <iconify-icon icon={showNewPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
@@ -315,9 +412,9 @@ function App() {
                 <Form.Group className="mb-3">
                   <Form.Label>Confirmer le nouveau mot de passe</Form.Label>
                   <InputGroup>
-                    <Form.Control type={showConfirmPwd ? "text" : "password"} required 
+                    <Form.Control type={showConfirmPwd ? "text" : "password"} required
                       value={pwdData.confirmPassword}
-                      onChange={(e) => setPwdData({...pwdData, confirmPassword: e.target.value})}
+                      onChange={(e) => setPwdData({ ...pwdData, confirmPassword: e.target.value })}
                     />
                     <Button variant="outline-secondary" onClick={() => setShowConfirmPwd(!showConfirmPwd)}>
                       <iconify-icon icon={showConfirmPwd ? "solar:eye-bold" : "solar:eye-closed-bold"}></iconify-icon>
@@ -331,7 +428,7 @@ function App() {
             <Modal.Footer>
               <Button variant="secondary" onClick={handleLogout}>Se déconnecter</Button>
               <Button variant="primary" type="submit" disabled={pwdLoading}>
-                {pwdLoading ? <Spinner size="sm" animation="border"/> : 'Changer le mot de passe'}
+                {pwdLoading ? <Spinner size="sm" animation="border" /> : 'Changer le mot de passe'}
               </Button>
             </Modal.Footer>
           )}
@@ -340,7 +437,6 @@ function App() {
     </NotificationProvider>
   );
 }
-
 
 const AppWrapper = () => (
   <Router>

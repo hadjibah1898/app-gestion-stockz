@@ -1,32 +1,45 @@
+/**
+ * @file authRoutes.js
+ * @description Routes d'authentification : login, register, gestion utilisateurs, notifications.
+ */
+
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/authMiddleware');
-const { validateAuth } = require('../middleware/validators');
-const validateObjectId = require('../middleware/validateObjectId');
+const { checkMustChangePassword } = require('../middleware/passwordMiddleware');
 
-// Routes publiques
-router.post('/register', validateAuth, authController.register);
-router.post('/login', validateAuth, authController.login);
+// Public routes (no authentication required)
+router.post('/login', authController.login);
+router.post('/register', authController.register);
 router.post('/forgot-password', authController.forgotPassword);
 
-// Routes protégées
-router.post('/change-password', protect, authController.changePassword);
-router.get('/me', protect, authController.getCurrentUser);
-router.put('/profile', protect, authController.updateProfile);
-router.get('/notifications', protect, authController.getNotifications);
-router.put('/notifications/:id/read', protect, validateObjectId('id'), authController.markNotificationRead);
-router.put('/notifications/mark-all-read', protect, authController.markAllNotificationsRead);
+// All routes below this middleware require authentication
+router.use(protect);
 
-// --- Routes Admin ---
-router.post('/create-manager', protect, authorize('Admin'), validateAuth, authController.createManager);
-router.get('/users/trash', protect, authorize('Admin'), authController.getDeletedUsers);
-router.put('/managers/:id', protect, authorize('Admin'), validateObjectId('id'), authController.updateManager);
-router.put('/managers/:id/restore', protect, authorize('Admin'), validateObjectId('id'), authController.restoreManager);
-router.delete('/managers/:id', protect, authorize('SuperAdmin', 'Admin'), validateObjectId('id'), authController.deleteManager);
+// Autoriser le changement de mot de passe même si mustChangePassword est vrai
+router.put('/change-password', authController.changePassword);
 
-router.get('/admin/notifications', protect, authorize('Admin'), authController.getAllNotifications);
-router.get('/users', protect, authorize('Admin', 'Gérant'), authController.getUsers);
-router.post('/users', protect, authorize('Admin', 'Gérant'), authController.register);
+// All routes below this middleware also require password change check
+router.use(checkMustChangePassword);
+
+router.get('/me', authController.getCurrentUser);
+router.put('/profile', authController.updateProfile);
+router.get('/notifications', authController.getNotifications);
+router.put('/notifications/:id/read', authController.markNotificationRead);
+router.put('/notifications/read-all', authController.markAllNotificationsRead);
+router.get('/users', authorize('SuperAdmin', 'Admin', 'AdminBar', 'Gérant', 'GérantBar'), authController.getUsers);
+router.post('/users', authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), authController.register);
+router.put('/users/:id', authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), authController.updateManager);
+router.delete('/users/:id', authorize('Admin', 'AdminBar'), authController.deleteManager);
+router.get('/users/deleted', authorize('SuperAdmin', 'Admin', 'AdminBar'), authController.getDeletedUsers);
+router.put('/users/:id/restore', authorize('SuperAdmin', 'Admin', 'AdminBar'), authController.restoreManager);
+router.get('/all-notifications', authorize('SuperAdmin', 'Admin', 'AdminBar'), authController.getAllNotifications);
+router.post('/create-manager', authorize('Admin', 'AdminBar'), authController.createManager);
+router.post('/create-cashier', authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), authController.createManager);
+
+// Administrative routes for SuperAdmin
+router.put('/users/:id/validate', authorize('SuperAdmin'), authController.validateUser);
+router.delete('/users/:id/force', authorize('SuperAdmin'), authController.forceDeleteManager);
 
 module.exports = router;

@@ -97,7 +97,7 @@ const ProfileView = () => {
 
     const handleNewPasswordChange = (e) => {
         const newPassword = e.target.value;
-        setPwdData({...pwdData, newPassword});
+        setPwdData({ ...pwdData, newPassword });
         checkPasswordStrength(newPassword);
     };
 
@@ -118,6 +118,20 @@ const ProfileView = () => {
             });
             setPwdMessage({ type: 'success', text: "Mot de passe modifié avec succès." });
             setPwdData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+
+            // Supprimer le flag de changement obligatoire en local
+            localStorage.removeItem('mustChangePassword');
+
+            // Redirection automatique vers le bon dashboard après 2 secondes
+            setTimeout(() => {
+                const roleRaw = (localStorage.getItem('userRole') || '').trim();
+                const role = roleRaw.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
+                // Pour le SuperAdmin, on redirige vers la gestion des utilisateurs par défaut
+                const homePath = (role === 'SUPERADMIN') ? '/admin/users'
+                    : (role === 'ADMIN') ? '/admin'
+                        : (role === 'GERANT') ? '/gerant' : '/serveur/dashboard';
+                navigate(homePath);
+            }, 2000);
         } catch (err) {
             setPwdMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors du changement de mot de passe." });
         } finally {
@@ -132,9 +146,9 @@ const ProfileView = () => {
     return (
         <div className="p-4">
             <div className="d-flex align-items-center mb-4">
-                <Button 
-                    variant="light" 
-                    className="me-3 shadow-sm rounded-circle d-flex align-items-center justify-content-center p-0" 
+                <Button
+                    variant="light"
+                    className="me-3 shadow-sm rounded-circle d-flex align-items-center justify-content-center p-0"
                     style={{ width: '45px', height: '45px', backgroundColor: 'var(--bs-body-bg)' }}
                     onClick={() => navigate(-1)}
                     title="Retour"
@@ -148,10 +162,10 @@ const ProfileView = () => {
                     <Card className="border-0 shadow-sm rounded-4 text-center h-100">
                         <Card.Body className="p-4 d-flex flex-column align-items-center justify-content-center">
                             <div className="position-relative mb-3">
-                                <Image 
-                                    src={avatarUrl} 
-                                    alt="Profile" 
-                                    roundedCircle 
+                                <Image
+                                    src={avatarUrl}
+                                    alt="Profile"
+                                    roundedCircle
                                     className="border border-4 border-white shadow-sm"
                                     width={120}
                                     height={120}
@@ -176,12 +190,12 @@ const ProfileView = () => {
                     <Card className="border-0 shadow-sm rounded-4 mb-4">
                         <Card.Body className="p-4">
                             <div className="d-flex align-items-center mb-4">
-                                <div className="bg-primary-subtle text-primary rounded-circle d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}>
-                                    <iconify-icon icon="solar:user-id-bold" style={{fontSize: '20px'}}></iconify-icon>
+                                <div className="bg-primary-subtle text-primary rounded-circle d-flex align-items-center justify-content-center me-3" style={{ width: '40px', height: '40px' }}>
+                                    <iconify-icon icon="solar:user-id-bold" style={{ fontSize: '20px' }}></iconify-icon>
                                 </div>
                                 <h5 className="fw-bold mb-0">Informations personnelles</h5>
                             </div>
-                            
+
                             {message.text && <Alert variant={message.type}>{message.text}</Alert>}
                             <Form onSubmit={handleSubmit}>
                                 <Row>
@@ -192,12 +206,12 @@ const ProfileView = () => {
                                                 <InputGroup.Text className="bg-light border-end-0">
                                                     <iconify-icon icon="solar:user-linear"></iconify-icon>
                                                 </InputGroup.Text>
-                                                <Form.Control 
-                                                    type="text" 
-                                                    name="nom" 
-                                                    value={formData.nom} 
-                                                    onChange={handleChange} 
-                                                    required 
+                                                <Form.Control
+                                                    type="text"
+                                                    name="nom"
+                                                    value={formData.nom}
+                                                    onChange={handleChange}
+                                                    required
                                                     className="border-start-0 bg-light"
                                                 />
                                             </InputGroup>
@@ -210,12 +224,12 @@ const ProfileView = () => {
                                                 <InputGroup.Text className="bg-light border-end-0">
                                                     <iconify-icon icon="solar:letter-linear"></iconify-icon>
                                                 </InputGroup.Text>
-                                                <Form.Control 
-                                                    type="email" 
-                                                    name="email" 
-                                                    value={formData.email} 
-                                                    onChange={handleChange} 
-                                                    required 
+                                                <Form.Control
+                                                    type="email"
+                                                    name="email"
+                                                    value={formData.email}
+                                                    onChange={handleChange}
+                                                    required
                                                     className="border-start-0 bg-light"
                                                 />
                                             </InputGroup>
@@ -237,8 +251,8 @@ const ProfileView = () => {
                     <Card className="border-0 shadow-sm rounded-4">
                         <Card.Body className="p-4">
                             <div className="d-flex align-items-center mb-4">
-                                <div className="bg-warning-subtle text-warning rounded-circle d-flex align-items-center justify-content-center me-3" style={{width: '40px', height: '40px'}}>
-                                    <iconify-icon icon="solar:shield-keyhole-bold" style={{fontSize: '20px'}}></iconify-icon>
+                                <div className="bg-warning-subtle text-warning rounded-circle d-flex align-items-center justify-content-center me-3" style={{ width: '40px', height: '40px' }}>
+                                    <iconify-icon icon="solar:shield-keyhole-bold" style={{ fontSize: '20px' }}></iconify-icon>
                                 </div>
                                 <h5 className="fw-bold mb-0">Sécurité</h5>
                             </div>
@@ -253,11 +267,11 @@ const ProfileView = () => {
                                                 <InputGroup.Text className="bg-light border-end-0">
                                                     <iconify-icon icon="solar:key-linear"></iconify-icon>
                                                 </InputGroup.Text>
-                                                <Form.Control 
-                                                    type={showCurrentPwd ? "text" : "password"} 
-                                                    required 
+                                                <Form.Control
+                                                    type={showCurrentPwd ? "text" : "password"}
+                                                    required
                                                     value={pwdData.currentPassword}
-                                                    onChange={(e) => setPwdData({...pwdData, currentPassword: e.target.value})}
+                                                    onChange={(e) => setPwdData({ ...pwdData, currentPassword: e.target.value })}
                                                     className="border-start-0 bg-light"
                                                 />
                                                 <Button variant="outline-secondary" className="bg-light border-start-0" onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
@@ -273,9 +287,9 @@ const ProfileView = () => {
                                                 <InputGroup.Text className="bg-light border-end-0">
                                                     <iconify-icon icon="solar:lock-password-linear"></iconify-icon>
                                                 </InputGroup.Text>
-                                                <Form.Control 
-                                                    type={showNewPwd ? "text" : "password"} 
-                                                    required 
+                                                <Form.Control
+                                                    type={showNewPwd ? "text" : "password"}
+                                                    required
                                                     minLength="6"
                                                     value={pwdData.newPassword}
                                                     onChange={handleNewPasswordChange}
@@ -287,10 +301,10 @@ const ProfileView = () => {
                                             </InputGroup>
                                             {pwdData.newPassword && (
                                                 <div className="mt-2">
-                                                    <ProgressBar 
-                                                        now={strength.progress} 
-                                                        variant={strength.color} 
-                                                        style={{ height: '6px', borderRadius: '10px' }} 
+                                                    <ProgressBar
+                                                        now={strength.progress}
+                                                        variant={strength.color}
+                                                        style={{ height: '6px', borderRadius: '10px' }}
                                                     />
                                                     <small className={`text-${strength.color} fw-bold mt-1 d-block`}>{strength.label}</small>
                                                 </div>
@@ -304,11 +318,11 @@ const ProfileView = () => {
                                                 <InputGroup.Text className="bg-light border-end-0">
                                                     <iconify-icon icon="solar:check-circle-linear"></iconify-icon>
                                                 </InputGroup.Text>
-                                                <Form.Control 
-                                                    type={showConfirmPwd ? "text" : "password"} 
-                                                    required 
+                                                <Form.Control
+                                                    type={showConfirmPwd ? "text" : "password"}
+                                                    required
                                                     value={pwdData.confirmPassword}
-                                                    onChange={(e) => setPwdData({...pwdData, confirmPassword: e.target.value})}
+                                                    onChange={(e) => setPwdData({ ...pwdData, confirmPassword: e.target.value })}
                                                     className="border-start-0 bg-light"
                                                 />
                                                 <Button variant="outline-secondary" className="bg-light border-start-0" onClick={() => setShowConfirmPwd(!showConfirmPwd)}>

@@ -1,3 +1,8 @@
+/**
+ * @file IntelligentSupplyModal.js
+ * @description Composant React.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Row, Col, Table, Spinner, Card, InputGroup } from 'react-bootstrap';
 import { fournisseurAPI } from '../../services/api';
@@ -23,20 +28,19 @@ const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply, pre
     const [submitLoading, setSubmitLoading] = useState(false);
     const [movementData, setMovementData] = useState(null);
 
+    const prevShowRef = React.useRef(false);
     useEffect(() => {
-        if (show) {
+        if (show && !prevShowRef.current) {
             loadFournisseurs();
-            // Initialisation des items avec les données des articles à réapprovisionner
             const items = articlesToSupply.map(a => ({
                 articleId: a._id,
                 nom: a.nom,
-                quantite: 10, // Valeur suggérée par défaut
+                quantite: 10,
                 prixAchat: a.prixAchat || 0,
                 prixVente: a.prixVente || 0,
                 code: a.code || '',
                 categorie: a.categorie || 'Divers'
             }));
-            
             setSupplyData({ 
                 fournisseurId: preSelectedFournisseurId || '', 
                 items, 
@@ -46,12 +50,13 @@ const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply, pre
             });
             setMovementData(null);
         }
-    }, [show, articlesToSupply, preSelectedFournisseurId]);
+        prevShowRef.current = show;
+    }, [show]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadFournisseurs = async () => {
         try {
             const res = await fournisseurAPI.getAll();
-            setFournisseurs(res.data); // L'intercepteur gère l'erreur
+            setFournisseurs(Array.isArray(res) ? res : (res.data && Array.isArray(res.data) ? res.data : [])); // L'intercepteur gère l'erreur
         } catch (err) { /* Erreur gérée par l'intercepteur Axios */ }
     };
 
@@ -152,8 +157,10 @@ const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply, pre
         setSubmitLoading(true);
         try {
             const res = await fournisseurAPI.approvisionner(supplyData);
-            if (res.data.movement) {
-                setMovementData(res.data.movement);
+            // L'intercepteur Axios unwrap déjà : res contient directement movement
+            const movement = res.movement || (res.data && res.data.movement);
+            if (movement) {
+                setMovementData(movement);
             } else {
                 onSuccess();
                 onHide(); // L'intercepteur gère l'erreur

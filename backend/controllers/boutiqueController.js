@@ -1,3 +1,8 @@
+/**
+ * @file boutiqueController.js
+ * @description Contrôleur boutiques : CRUD et gestion des établissements.
+ */
+
 const mongoose = require('mongoose');
 const Boutique = require('../models/Boutique');
 const Article = require('../models/Article');
@@ -11,12 +16,13 @@ const asyncHandler = require('../middleware/asyncHandler');
  */
 exports.createBoutique = asyncHandler(async (req, res) => {
     let codeBoutique;
+    const currentUserId = req.user._id || req.user.id;
 
     // 1. Unicité de la Boutique Centrale
-    if (req.body.type === 'Centrale') {
-        const centraleExists = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
-        if (centraleExists) {
-            return res.status(400).json({ success: false, message: "Un Dépôt Principal existe déjà." });
+    if (req.body.type === 'Centrale') { // Seul 'Centrale' est unique comme type principal
+        const existingPrimaryShop = await Boutique.findOne({ type: req.body.type, createur: currentUserId });
+        if (existingPrimaryShop) {
+            return res.status(400).json({ success: false, message: `Un ${req.body.type === 'Centrale' ? 'Dépôt Principal' : 'Bar'} existe déjà.` });
         }
 
         if (req.body.codeBoutique) {
@@ -36,16 +42,16 @@ exports.createBoutique = asyncHandler(async (req, res) => {
             }
         }
     } else {
-        // Pour une boutique secondaire, on récupère le code du Dépôt Principal de cet Admin
-        const centralShop = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
-        if (!centralShop) {
-            return res.status(400).json({ success: false, message: "Veuillez d'abord créer votre Dépôt Principal (Boutique Centrale)." });
+        // Pour une boutique secondaire ou un Bar, on récupère le code de l'établissement principal
+        const primaryShop = await Boutique.findOne({ type: { $in: ['Centrale', 'Bar'] }, createur: currentUserId }).sort({ createdAt: 1 }); // Prend le plus ancien Bar si pas de Centrale
+        if (!primaryShop) {
+            return res.status(400).json({ success: false, message: "Veuillez d'abord configurer votre établissement principal (Dépôt ou Bar)." });
         }
-        codeBoutique = centralShop.codeBoutique;
+        codeBoutique = primaryShop.codeBoutique;
     }
 
-    const { nom, adresse, active, type, vendeurs, latitude, longitude, tipPercentage, tipsEnabled, orangeMoneyQrCode, orangeMoneyAccount, mobicashQrCode, mobicashAccount, paycardQrCode, paycardAccount } = req.body;
-    
+    const { nom, adresse, ville, active, type, vendeurs, latitude, longitude, tipPercentage, tipsEnabled, orangeMoneyQrCode, orangeMoneyAccount, mobicashQrCode, mobicashAccount, paycardQrCode, paycardAccount } = req.body;
+
     // 2. Préparation et filtrage des gérants
     let managersToCheck = Array.isArray(vendeurs) ? vendeurs : (vendeurs ? [vendeurs] : []);
     // Filtrer les IDs non valides avant de les utiliser
@@ -53,7 +59,7 @@ exports.createBoutique = asyncHandler(async (req, res) => {
 
     // Vérification que les utilisateurs sont bien des gérants
     // SÉCURITÉ MULTI-TENANT : Un Admin ne peut assigner que les gérants qu'il a créés
-    const managerFilter = req.user.role === 'Admin' ? { createur: req.user.id } : {};
+    const managerFilter = req.user.role === 'Admin' ? { createur: currentUserId } : {};
     const validManagers = await User.find({ _id: { $in: managersToCheck }, role: 'Gérant', ...managerFilter });
 
     if (validManagers.length !== managersToCheck.length) {
@@ -64,9 +70,9 @@ exports.createBoutique = asyncHandler(async (req, res) => {
     if (managersToCheck.length > 0) {
         const alreadyAssigned = await Boutique.findOne({ vendeurs: { $in: managersToCheck } });
         if (alreadyAssigned) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
-                message: `L'un des gérants sélectionnés est déjà assigné à : ${alreadyAssigned.nom}` 
+                message: `L'un des gérants sélectionnés est déjà assigné à : ${alreadyAssigned.nom}`
             });
         }
     }
@@ -74,6 +80,7 @@ exports.createBoutique = asyncHandler(async (req, res) => {
     const boutiqueData = {
         nom,
         adresse,
+        ville, // Ajout du champ ville
         active: active !== undefined ? active : true,
         type: type || 'Secondaire',
         codeBoutique, // On lie la boutique au code d'organisation
@@ -82,7 +89,7 @@ exports.createBoutique = asyncHandler(async (req, res) => {
         tipsEnabled: tipsEnabled !== undefined ? tipsEnabled : true,
         latitude: (latitude !== undefined && latitude !== "") ? Number(latitude) : 9.6412,
         longitude: (longitude !== undefined && longitude !== "") ? Number(longitude) : -13.5784,
-        createur: req.user.id,
+        createur: currentUserId,
         orangeMoneyQrCode: orangeMoneyQrCode || '',
         orangeMoneyAccount: orangeMoneyAccount || '',
         mobicashQrCode: mobicashQrCode || '',
@@ -111,19 +118,20 @@ exports.createBoutique = asyncHandler(async (req, res) => {
  */
 exports.updateBoutique = asyncHandler(async (req, res) => {
     const boutiqueId = req.params.id;
+    const currentUserId = req.user._id || req.user.id;
     const boutiqueToUpdate = await Boutique.findById(boutiqueId).lean();
-    
+
     if (!boutiqueToUpdate) return res.status(404).json({ success: false, message: "Boutique introuvable." });
 
     // SÉCURITÉ MULTI-TENANT : Un Admin ne peut modifier que ses propres boutiques
-    if (req.user.role === 'Admin' && boutiqueToUpdate.createur.toString() !== req.user.id.toString()) {
+    if (req.user.role === 'Admin' && boutiqueToUpdate.createur.toString() !== currentUserId.toString()) {
         return res.status(403).json({ success: false, message: "Accès refusé : Vous ne pouvez modifier que vos propres boutiques." });
     }
 
     // 1. Validation du type (Centrale)
     if (req.body.type) {
         if (req.body.type === 'Centrale' && boutiqueToUpdate.type !== 'Centrale') {
-            const centraleExists = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
+            const centraleExists = await Boutique.findOne({ type: 'Centrale', createur: currentUserId });
             if (centraleExists) return res.status(400).json({ success: false, message: "Un Dépôt Principal existe déjà." });
         }
         if (req.body.type !== 'Centrale' && boutiqueToUpdate.type === 'Centrale') {
@@ -136,7 +144,7 @@ exports.updateBoutique = asyncHandler(async (req, res) => {
     newManagers = newManagers.filter(id => id && id.length === 24);
 
     // SÉCURITÉ MULTI-TENANT : Vérifier que les nouveaux gérants appartiennent à l'Admin actuel
-    const managerFilter = req.user.role === 'Admin' ? { createur: req.user.id } : {};
+    const managerFilter = req.user.role === 'Admin' ? { createur: currentUserId } : {};
     const validNewManagers = await User.find({ _id: { $in: newManagers }, role: 'Gérant', ...managerFilter });
     if (validNewManagers.length !== newManagers.length) {
         return res.status(400).json({ success: false, message: "Certains gérants sélectionnés n'existent pas ou ne vous appartiennent pas." });
@@ -145,15 +153,15 @@ exports.updateBoutique = asyncHandler(async (req, res) => {
     // 3. CONTRAINTE : Un gérant ne gère qu'une seule boutique
     // On vérifie si les gérants choisis sont déjà dans une AUTRE boutique
     if (newManagers.length > 0) {
-        const alreadyAssigned = await Boutique.findOne({ 
-            _id: { $ne: boutiqueId }, 
-            vendeurs: { $in: newManagers } 
+        const alreadyAssigned = await Boutique.findOne({
+            _id: { $ne: boutiqueId },
+            vendeurs: { $in: newManagers }
         });
 
         if (alreadyAssigned) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
-                message: `L'un des gérants est déjà affecté à "${alreadyAssigned.nom}".` 
+                message: `L'un des gérants est déjà affecté à "${alreadyAssigned.nom}".`
             });
         }
     }
@@ -173,29 +181,30 @@ exports.updateBoutique = asyncHandler(async (req, res) => {
 
     // SÉCURITÉ : Bloquer le changement de taux si une caisse est ouverte dans cette boutique
     if (req.body.tipPercentage !== undefined && Number(req.body.tipPercentage) !== boutiqueToUpdate.tipPercentage) {
-        const sessionActive = await mongoose.model('OuvertureCaisse').findOne({ 
-            boutique: boutiqueId, 
-            statut: 'OUVERTE' 
+        const sessionActive = await mongoose.model('OuvertureCaisse').findOne({
+            boutique: boutiqueId,
+            statut: 'OUVERTE'
         });
         if (sessionActive) {
             return res.status(400).json({ success: false, message: "Action refusée : Une caisse est actuellement ouverte dans cette boutique. Clôturez la session avant de modifier le taux de pourboire." });
         }
     }
 
-    const { nom, adresse, active, type, latitude, longitude, tipPercentage, tipsEnabled, orangeMoneyQrCode, orangeMoneyAccount, mobicashQrCode, mobicashAccount, paycardQrCode, paycardAccount } = req.body;
+    const { nom, adresse, ville, active, type, latitude, longitude, tipPercentage, tipsEnabled, orangeMoneyQrCode, orangeMoneyAccount, mobicashQrCode, mobicashAccount, paycardQrCode, paycardAccount } = req.body;
 
     const updateObject = {
         $set: {
             nom: nom || boutiqueToUpdate.nom,
             adresse: adresse || boutiqueToUpdate.adresse,
             active: active !== undefined ? active : boutiqueToUpdate.active,
+            ville: ville || boutiqueToUpdate.ville, // Ajout du champ ville
             type: type || boutiqueToUpdate.type,
             tipPercentage: tipPercentage !== undefined ? Math.min(Math.max(Number(tipPercentage), 0), 100) : boutiqueToUpdate.tipPercentage,
             tipsEnabled: tipsEnabled !== undefined ? tipsEnabled : boutiqueToUpdate.tipsEnabled,
             vendeurs: newManagers,
             latitude: (latitude !== "" && !isNaN(Number(latitude))) ? Number(latitude) : boutiqueToUpdate.latitude,
             longitude: (longitude !== "" && !isNaN(Number(longitude))) ? Number(longitude) : boutiqueToUpdate.longitude,
-            dernierModificateur: req.user.id,
+            dernierModificateur: currentUserId,
             orangeMoneyQrCode: orangeMoneyQrCode !== undefined ? orangeMoneyQrCode : boutiqueToUpdate.orangeMoneyQrCode,
             orangeMoneyAccount: orangeMoneyAccount !== undefined ? orangeMoneyAccount : boutiqueToUpdate.orangeMoneyAccount,
             mobicashQrCode: mobicashQrCode !== undefined ? mobicashQrCode : boutiqueToUpdate.mobicashQrCode,
@@ -221,10 +230,11 @@ exports.updateBoutique = asyncHandler(async (req, res) => {
  */
 exports.getAllBoutiques = asyncHandler(async (req, res) => {
     let filterMatch = {};
+    const currentUserId = req.user._id || req.user.id;
 
     // SÉCURITÉ MULTI-TENANT
     if (req.user.role === 'Admin') {
-        filterMatch.createur = new mongoose.Types.ObjectId(req.user.id);
+        filterMatch.createur = new mongoose.Types.ObjectId(currentUserId);
     } else if (req.user.role === 'Serveur' || req.user.role === 'Gérant') {
         // Les gérants/serveurs ne voient que leur propre boutique
         if (req.user.boutique) {
@@ -233,7 +243,7 @@ exports.getAllBoutiques = asyncHandler(async (req, res) => {
             return res.status(200).json({ success: true, data: [] }); // Aucune boutique rattachée
         }
     }
-    
+
     const boutiques = await Boutique.aggregate([
         { $match: filterMatch },
         { $sort: { type: 1, nom: 1 } },
@@ -253,21 +263,23 @@ exports.getAllBoutiques = asyncHandler(async (req, res) => {
                         input: {
                             $setUnion: [
                                 { $cond: [{ $isArray: "$vendeurs" }, "$vendeurs", []] },
-                                { $cond: [
-                                    { $and: [{ $gt: ["$vendeur", null] }, { $ne: ["$vendeur", ""] }] },
-                                    ["$vendeur"],
-                                    []
-                                ]}
+                                {
+                                    $cond: [
+                                        { $and: [{ $gt: ["$vendeur", null] }, { $ne: ["$vendeur", ""] }] },
+                                        ["$vendeur"],
+                                        []
+                                    ]
+                                }
                             ]
                         },
                         as: "v",
-                        in: { 
-                            $convert: { 
-                                input: "$$v", 
-                                to: "objectId", 
+                        in: {
+                            $convert: {
+                                input: "$$v",
+                                to: "objectId",
                                 onError: null, // Gère les IDs malformés sans faire planter
-                                onNull: null 
-                            } 
+                                onNull: null
+                            }
                         }
                     }
                 }
@@ -301,8 +313,8 @@ exports.getAllBoutiques = asyncHandler(async (req, res) => {
                 as: 'openSession'
             }
         },
-        { 
-            $addFields: { 
+        {
+            $addFields: {
                 articleCount: { $size: '$articles' },
                 isSessionOpen: { $gt: [{ $size: '$openSession' }, 0] },
                 serverCount: {
@@ -314,7 +326,7 @@ exports.getAllBoutiques = asyncHandler(async (req, res) => {
                         }
                     }
                 }
-            } 
+            }
         },
         { $project: { articles: 0, allUsers: 0, openSession: 0 } }
     ]);
@@ -356,10 +368,11 @@ exports.getBoutiqueDetailsForServeur = asyncHandler(async (req, res) => {
  */
 exports.deleteBoutique = asyncHandler(async (req, res) => {
     const boutiqueToDelete = await Boutique.findById(req.params.id).lean();
+    const currentUserId = req.user._id || req.user.id;
     if (!boutiqueToDelete) return res.status(404).json({ success: false, message: "Boutique introuvable." });
 
     // SÉCURITÉ MULTI-TENANT : Un Admin ne peut supprimer que ses propres boutiques
-    if (req.user.role === 'Admin' && boutiqueToDelete.createur.toString() !== req.user.id.toString()) {
+    if (req.user.role === 'Admin' && boutiqueToDelete.createur.toString() !== currentUserId.toString()) {
         return res.status(403).json({ success: false, message: "Accès refusé : Vous ne pouvez supprimer que vos propres boutiques." });
     }
     if (boutiqueToDelete.type === 'Centrale') return res.status(400).json({ success: false, message: "Action interdite sur le Dépôt Principal." });
@@ -381,24 +394,26 @@ exports.deleteBoutique = asyncHandler(async (req, res) => {
  * @access  Private/Admin
  */
 exports.syncOrganizationCodes = asyncHandler(async (req, res) => {
-    // 1. Trouver la boutique centrale de l'admin
-    const centralShop = await Boutique.findOne({ type: 'Centrale', createur: req.user.id });
-    
+    const currentUserId = req.user._id || req.user.id;
+
+    // 1. Trouver l'établissement principal (Centrale ou Bar)
+    const centralShop = await Boutique.findOne({ type: { $in: ['Centrale', 'Bar'] }, createur: currentUserId });
+
     if (!centralShop || !centralShop.codeBoutique) {
-        return res.status(400).json({ success: false, message: "Dépôt Principal introuvable ou code d'organisation non généré." });
+        return res.status(400).json({ success: false, message: "Établissement principal introuvable. Veuillez d'abord créer votre Centrale ou votre Bar." });
     }
 
     const code = centralShop.codeBoutique;
 
     // 2. Faire hériter le code à toutes les boutiques secondaires de cet Admin
     await Boutique.updateMany(
-        { createur: req.user.id, type: 'Secondaire' },
+        { createur: currentUserId, type: 'Secondaire' },
         { $set: { codeBoutique: code } }
     );
 
     // 3. Faire hériter le code à tous les gérants et serveurs créés par cet Admin
     await User.updateMany(
-        { createur: req.user.id, role: { $in: ['Gérant', 'Serveur'] } },
+        { createur: currentUserId, role: { $in: ['Gérant', 'Serveur'] } },
         { $set: { codeBoutique: code } }
     );
 

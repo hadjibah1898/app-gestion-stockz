@@ -3,10 +3,11 @@ const mongoose = require('mongoose');
 const boutiqueSchema = new mongoose.Schema({
     nom: { type: String, required: [true, 'Le nom de la boutique est requis'], unique: true, trim: true },
     adresse: { type: String, required: [true, "L'adresse est requise"] },
+    ville: { type: String, required: [true, "La ville est requise"] }, // Nouveau champ ville
     active: { type: Boolean, default: true },
     type: {
         type: String,
-        enum: ['Centrale', 'Secondaire'],
+        enum: ['Centrale', 'Secondaire', 'Bar'], // Ajout du type 'Bar'
         default: 'Secondaire'
     },
     tipPercentage: { 

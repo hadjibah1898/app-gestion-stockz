@@ -1,3 +1,8 @@
+/**
+ * @file fournisseurController.js
+ * @description Contrôleur fournisseurs : CRUD et approvisionnement de la centrale.
+ */
+
 const Fournisseur = require('../models/Fournisseur');
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
@@ -171,6 +176,7 @@ exports.approvisionnerCentrale = asyncHandler(async (req, res) => {
         await fournisseur.save();
 
         // Enregistrer le mouvement de stock
+        const dateReceptionFormatted = dateReception ? new Date(dateReception).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR');
         const movement = await Mouvement.create({
             type: 'Approvisionnement',
             fournisseur: fournisseur._id,
@@ -184,7 +190,7 @@ exports.approvisionnerCentrale = asyncHandler(async (req, res) => {
                 prixVenteUnitaire: i.prixVente || (i.prixAchat * 1.2)
             })),
             operateur: req.user.id,
-            details: `Réception BL N°${referenceFournisseur} du ${new Date(dateReception).toLocaleDateString()}`
+            details: `Réception BL N°${referenceFournisseur || 'N/A'} du ${dateReceptionFormatted}`
         });
 
         const populatedMovement = await Mouvement.findById(movement._id).populate('fournisseur boutiqueDestination operateur');

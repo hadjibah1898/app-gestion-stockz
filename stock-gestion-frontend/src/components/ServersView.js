@@ -1,3 +1,8 @@
+/**
+ * @file ServersView.js
+ * @description Vue de gestion des serveurs par le Gérant.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, Table } from 'react-bootstrap';
 import { authAPI, serveurAPI } from '../services/api';

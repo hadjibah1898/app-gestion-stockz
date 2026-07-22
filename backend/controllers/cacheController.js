@@ -1,3 +1,8 @@
+/**
+ * @file cacheController.js
+ * @description Contrôleur pour l'invalidation manuelle du cache.
+ */
+
 const { flushBoutiqueCache } = require('../utils/cache');
 const auditHelper = require('../utils/auditHelper');
 const asyncHandler = require('../middleware/asyncHandler');

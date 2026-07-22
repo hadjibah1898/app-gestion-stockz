@@ -112,7 +112,8 @@ const AdminHistoryTab = ({
                         </tr>
                     </thead>
                     <tbody>
-                        {historique?.map(group => (
+                        {historique && historique.length > 0 ? (
+                            historique.map(group => (
                             <tr key={group.orderGroupId} className={group.isCancelled ? "bg-light opacity-50" : group.statut === 'finalisee' ? "bg-warning-subtle" : group.statut === 'commande' ? "bg-info-subtle" : ""}>
                                 <td className="ps-4">
                                     <Form.Check type="checkbox" checked={selectedIds.includes(group.orderGroupId)} onChange={() => handleSelectOne(group.orderGroupId)} />
@@ -156,7 +157,18 @@ const AdminHistoryTab = ({
                                     </div>
                                 </td>
                             </tr>
-                        ))}
+                            ))
+                        ) : (
+                            <tr>
+                                <td colSpan="6" className="text-center py-5 text-muted">
+                                    <div className="d-flex flex-column align-items-center">
+                                        <iconify-icon icon="solar:history-bold-duotone" style={{ fontSize: '64px', opacity: '0.3' }}></iconify-icon>
+                                        <h5 className="mt-3 fw-bold">Aucun historique de vente</h5>
+                                        <p className="small mb-0">Il n'y a aucune vente à afficher pour cette période.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
                     </tbody>
                 </Table>
             </Card.Body>

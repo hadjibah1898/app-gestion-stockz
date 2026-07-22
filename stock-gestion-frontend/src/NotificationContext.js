@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useContext, useCallback, useRef } from 'react';
 import { authAPI } from './services/api';
-import socket, { initSocket } from './services/socket';
+
 const NotificationContext = createContext();
 
 export const useNotifications = () => useContext(NotificationContext);
@@ -11,8 +11,6 @@ export const NotificationProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
     const [toastQueue, setToastQueue] = useState([]);
     
-    // Utilisation d'une ref pour stocker les notifications actuelles
-    // Cela permet d'y accéder dans fetchNotifications sans l'ajouter aux dépendances (ce qui causerait une boucle infinie)
     const notificationsRef = useRef(notifications);
 
     useEffect(() => {
@@ -28,15 +26,16 @@ export const NotificationProvider = ({ children }) => {
             return;
         }
         try {
-            const res = userRole === 'Admin' 
+            // L'intercepteur extrait déjà l'enveloppe .data, res contient directement le tableau
+            const fetchedNotifications = userRole === 'Admin' 
                 ? await authAPI.getAllNotifications() 
                 : await authAPI.getNotifications();
             
-            const fetchedNotifications = res.data || []; 
+            const cleanNotifications = Array.isArray(fetchedNotifications) ? fetchedNotifications : [];
 
             if (!isInitialFetch) {
                 const currentNotifications = notificationsRef.current;
-                const newNotifications = fetchedNotifications.filter(
+                const newNotifications = cleanNotifications.filter(
                     fetchedNotif => !currentNotifications.some(existingNotif => existingNotif._id === fetchedNotif._id)
                 );
 
@@ -45,46 +44,36 @@ export const NotificationProvider = ({ children }) => {
                 }
             }
 
-            // Comparaison pour éviter les mises à jour d'état inutiles (qui causent des boucles)
             setNotifications(prev => {
-                if (JSON.stringify(prev) === JSON.stringify(fetchedNotifications)) return prev;
-                return fetchedNotifications;
+                if (JSON.stringify(prev) === JSON.stringify(cleanNotifications)) return prev;
+                return cleanNotifications;
             });
             
-            setUnreadCount(fetchedNotifications.filter(n => !n.read).length);
+            setUnreadCount(cleanNotifications.filter(n => !n.read).length);
         } catch (error) {
             console.error("Failed to fetch notifications", error);
         } finally {
             setLoading(false);
         }
-    }, []); // Dépendances vides : la fonction est stable et ne change jamais
+    }, []);
 
+    // Gestion du rafraîchissement par Polling (Vérification toutes les 60 secondes)
     useEffect(() => {
-        // Gérer la connexion et les écouteurs Socket.io
         const token = localStorage.getItem('token');
         if (token) {
-            fetchNotifications(true); // Premier chargement au montage
+            fetchNotifications(true); // Chargement immédiat au montage
 
-            // Initialisation de secours au cas où l'App n'aurait pas encore fini
-            const userRole = localStorage.getItem('userRole');
-            if (userRole) initSocket({ role: userRole });
+            const interval = setInterval(() => {
+                fetchNotifications(false); // Lance le calcul des différences pour afficher les Toasts
+            }, 60000); 
 
-            const handleNewNotification = () => {
-                console.log('Socket.io: Nouvelle notification reçue, rafraîchissement...');
-                fetchNotifications(true); // Rafraîchir toutes les notifications
-            };
-
-            if (socket) socket.on('new_notification', handleNewNotification);
-
-            return () => {
-                if (socket) socket.off('new_notification', handleNewNotification); // Nettoyage de l'écouteur
-            };
+            return () => clearInterval(interval);
         } else {
             setNotifications([]);
             setUnreadCount(0);
             setLoading(false);
         }
-    }, [fetchNotifications]); // Dépend de fetchNotifications (qui est useCallback)
+    }, [fetchNotifications]);
 
     const markAsRead = useCallback(async (id) => {
         const notification = notifications.find(n => n._id === id);
@@ -95,7 +84,7 @@ export const NotificationProvider = ({ children }) => {
                 await authAPI.markNotificationRead(id);
             } catch (error) {
                 console.error("Failed to mark notification as read", error);
-                fetchNotifications(true); // Revert on error
+                fetchNotifications(true); 
             }
         }
     }, [notifications, fetchNotifications]);

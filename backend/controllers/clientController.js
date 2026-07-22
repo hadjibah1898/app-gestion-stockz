@@ -1,3 +1,8 @@
+/**
+ * @file clientController.js
+ * @description Contrôleur clients : CRUD, dettes, commissions, historique.
+ */
+
 const Client = require('../models/Client');
 const DebtMovement = require('../models/DebtMovement');
 const DebtPayment = require('../models/DebtPayment');
@@ -56,7 +61,14 @@ exports.payDette = asyncHandler(async (req, res) => {
             boutique: req.user.boutique || client.boutique
         });
 
-        res.status(200).json({ success: true, nouveauSolde: client.dette, paiement: newPayment });
+        res.status(200).json({ 
+            success: true, 
+            data: { 
+                nouveauSolde: client.dette, 
+                paiement: newPayment, 
+                soldeAnterieur 
+            } 
+        });
 });
 
 // @desc    Historique global des paiements
@@ -99,7 +111,9 @@ exports.getDebts = asyncHandler(async (req, res) => {
         let query = { dette: { $gt: 0 } };
         // SÉCURITÉ MULTI-TENANT
         if (req.user.role === 'Admin') {
-            query.createur = req.user.id;
+            // L'Admin voit les dettes des clients de toutes ses boutiques
+            const myBoutiques = await Boutique.find({ createur: req.user.id }).select('_id');
+            query.boutique = { $in: myBoutiques.map(b => b._id) };
         } else if (req.user.role !== 'SuperAdmin' && req.user.boutique) {
             query.boutique = req.user.boutique;
         }

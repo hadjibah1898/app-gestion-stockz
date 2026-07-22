@@ -1,3 +1,8 @@
+/**
+ * @file mouvementController.js
+ * @description Contrôleur des mouvements de stock : consultation, annulation, pertes.
+ */
+
 const Mouvement = require('../models/Mouvement');
 const articleService = require('../services/articleService');
 const mouvementService = require('../services/mouvementService');

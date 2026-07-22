@@ -1,3 +1,8 @@
+/**
+ * @file caisseMiddleware.js
+ * @description Middleware de vérification de l'état d'ouverture de la caisse.
+ */
+
 const mongoose = require('mongoose');
 const OuvertureCaisse = require('../models/OuvertureCaisse');
 const RapportCaisse = require('../models/RapportCaisse');
@@ -34,9 +39,19 @@ const checkCaisseOuverte = asyncHandler(async (req, res, next) => {
         statut: 'OUVERTE' 
     };
 
-    // SÉCURITÉ SÉPARÉE : Si c'est un gérant, il doit être le créateur de cette ouverture active
+    // SÉCURITÉ SÉPARÉE selon le rôle :
+    // - Gérant : sa propre caisse (type GERANT)
+    // - Caissier : sa propre caisse (type CAISSIER)
+    // - Serveur : la caisse du gérant de la boutique (type GERANT)
     if (req.user.role === 'Gérant') {
         query.gerant = userId;
+        query.type = 'GERANT';
+    } else if (req.user.role === 'Caissier') {
+        query.gerant = userId;
+        query.type = 'CAISSIER';
+    } else {
+        // Serveur : caisse du gérant de la boutique
+        query.type = 'GERANT';
     }
 
     // Récupération de la session avec .lean() pour de meilleures performances (lecture seule)

@@ -1,3 +1,8 @@
+/**
+ * @file authMiddleware.js
+ * @description Middleware d'authentification JWT et d'autorisation par rôle.
+ */
+
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
@@ -41,9 +46,9 @@ exports.protect = async (req, res, next) => {
             });
         }
         
-        // SÉCURITÉ C : Un Gérant ou un Serveur doit obligatoirement être rattaché à une boutique
-        // (Nettoyage de la condition redondante SuperAdmin)
-        if (['Gérant', 'Serveur'].includes(req.user.role) && !req.user.boutique) {
+        // SÉCURITÉ C : Les rôles ayant besoin d'une boutique (Marchand et Bar confondus)
+        const rolesBoutiqueRequis = ['Gérant', 'Caissier', 'GérantBar', 'ServeurBar'];
+        if (rolesBoutiqueRequis.includes(req.user.role) && !req.user.boutique) {
             console.warn(`[SECURITY WARN] ${req.user.role} bloqué (ID: ${req.user.id}) : Pas de boutique assignée.`);
             return res.status(403).json({ 
                 message: `Accès refusé : Votre compte ${req.user.role.toLowerCase()} n'est pas rattaché à une boutique.`, 

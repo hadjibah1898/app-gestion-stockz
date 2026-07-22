@@ -1,3 +1,8 @@
+/**
+ * @file AdjustmentModals.js
+ * @description Modales de gestion des ajustements de stock (pertes, casses).
+ */
+
 import React from 'react';
 import { Modal, Form, Row, Col, Button, Spinner, Alert } from 'react-bootstrap';
 
@@ -118,5 +123,6 @@ const AdjustmentModals = ({
         </>
     );
 };
+
 
 export default AdjustmentModals;

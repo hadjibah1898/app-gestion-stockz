@@ -4,12 +4,12 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const compression = require('compression');
-const http = require('http');
-const { Server } = require('socket.io');
 const connectDB = require('./config/db'); 
 const errorHandler = require('./middleware/errorMiddleware');
 const initReminderService = require('./services/reminderService'); 
-const { initSyncService } = require('./services/syncService');
+
+// --- DÉSACTIVÉ POUR TRAVAIL DIRECT À DISTANCE ---
+// const { initSyncService } = require('./services/syncService');
 
 // --- IMPORTATION DES ROUTES ---
 const authRoutes = require('./routes/authRoutes');
@@ -26,7 +26,6 @@ const cacheRoutes = require('./routes/cacheRoutes');
 const serveurRoutes = require('./routes/serveurRoutes');
 
 const app = express();
-const server = http.createServer(app);
 
 // --- CONFIGURATION DE BASE DU SERVEUR ---
 app.set('trust proxy', 1); // Détection HTTPS derrière IIS ARR
@@ -56,7 +55,6 @@ app.use((req, res, next) => {
 // --- CORS Configuration (Partagée) ---
 const corsOptions = {
     origin: (origin, callback) => {
-        // En développement, on autorise toutes les origines pour faciliter l'accès via le réseau local/mobile
         if (!origin || origin === "null" || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
             callback(null, true);
         } else {
@@ -72,36 +70,17 @@ const corsOptions = {
 // Application des CORS juste après les en-têtes de base
 app.use(cors(corsOptions)); 
 
-// CORRECTION DU CRASH : Utilisation d'une RegExp native (.*) pour intercepter tous les Preflights OPTIONS
-// Cette syntaxe contourne totalement le parseur de chaînes de caractères de path-to-regexp
+// CORRECTION DU CRASH Preflights OPTIONS
 app.options(/(.*)/, cors(corsOptions)); 
-
-// --- Socket.io ---
-const io = new Server(server, { 
-    allowEIO3: true,
-    pingTimeout: 60000,
-    pingInterval: 25000,
-    cors: corsOptions,
-    transports: ['websocket', 'polling'], // Priorité au WebSocket pour la performance
-    connectTimeout: 45000
-});
-global.io = io;
 
 // --- Connexion DB ---
 connectDB();
 
-// --- Gestion des salons Socket.io ---
-io.on('connection', (socket) => {
-    console.log(`⚡ Client connecté : ${socket.id}`);
-    socket.on('join_boutique_room', (boutiqueId) => socket.join(`boutique_${boutiqueId}`));
-    socket.on('join_user_room', (userId) => socket.join(`user_${userId}`));
-    socket.on('join_admin_room', () => socket.join('admin_room'));
-    socket.on('disconnect', () => console.log('🔥 Client déconnecté'));
-});
-
 // --- Services ---
 initReminderService();
-initSyncService();
+
+// --- DESACTIVATION DU SERVICE DE SYNCHRONISATION ---
+// initSyncService(); // Commenté pour éviter de tourner dans le vide sans les variables du .env
 
 // --- Middlewares Standards de Restructuration des Requêtes ---
 app.use(compression()); 
@@ -130,6 +109,6 @@ app.get('/api/health', (req, res) => res.status(200).json({ status: "ok", messag
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`✅ Serveur démarré en mode ${process.env.NODE_ENV} sur : http://localhost:${PORT}`);
 });

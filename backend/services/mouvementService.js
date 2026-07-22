@@ -1,3 +1,8 @@
+/**
+ * @file mouvementService.js
+ * @description Service de gestion des mouvements de stock.
+ */
+
 const Mouvement = require('../models/Mouvement');
 const Boutique = require('../models/Boutique');
 const Article = require('../models/Article');
@@ -37,7 +42,7 @@ exports.listerMouvements = async (filter = {}, user = null) => {
                 if (boutiqueSource && boutiqueSource !== '') query.boutiqueSource = boutiqueSource;
                 if (boutiqueDestination && boutiqueDestination !== '') query.boutiqueDestination = boutiqueDestination;
             }
-        } else if (['Gérant', 'Serveur'].includes(user.role)) {
+        } else if (['Gérant', 'Serveur', 'Caissier'].includes(user.role)) {
             // Gérants/Serveurs only see movements related to their assigned boutique
             const userBoutiqueId = user.boutique?._id || user.boutique;
             if (!userBoutiqueId) {
@@ -68,7 +73,8 @@ exports.listerMouvements = async (filter = {}, user = null) => {
     if (type) query.type = type; // Add this filter to handle the 'type' parameter
 
     // Handle boutiqueDestinationType filter (requires population)
-    if (boutiqueDestinationType) {
+    // Only apply if boutiqueDestination is not already set (to avoid overwriting specific boutique filter)
+    if (boutiqueDestinationType && !boutiqueDestination) {
         let destinationBoutiquesQuery = { type: boutiqueDestinationType };
         // If user is Admin, ensure destination boutiques belong to them
         if (user && user.role === 'Admin') {

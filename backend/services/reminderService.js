@@ -1,3 +1,8 @@
+/**
+ * @file reminderService.js
+ * @description Service de rappels automatiques (échéances, transferts en attente).
+ */
+
 const cron = require('node-cron');
 const Client = require('../models/Client');
 const articleService = require('./articleService');

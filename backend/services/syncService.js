@@ -1,3 +1,8 @@
+/**
+ * @file syncService.js
+ * @description Service de synchronisation des données locales vers le cloud.
+ */
+
 const cron = require('node-cron');
 const mongoose = require('mongoose');
 const Vente = require('../models/Vente');

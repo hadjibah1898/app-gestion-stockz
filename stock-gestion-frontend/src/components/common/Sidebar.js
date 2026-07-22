@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Nav, NavDropdown, Badge, Button } from 'react-bootstrap'; // Import Bootstrap Nav components
-import { authAPI, venteAPI } from '../../services/api';
+import { authAPI } from '../../services/api';
 import { useNotifications } from '../../NotificationContext'; // Import notifications context
 import './Sidebar.css';
 
@@ -10,7 +10,6 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
     const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
     // Le menu s'adapte en fonction du rôle de l'utilisateur
     const [boutiqueName, setBoutiqueName] = useState('');
-    const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
 
     useEffect(() => {
         if (userRole === 'Gérant') {
@@ -25,18 +24,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                 }
             };
 
-            const fetchPendingOrders = async () => {
-                try {
-                    const res = await venteAPI.getHistorique({ limit: 0, statut: 'commande' });
-                    const data = res.data?.data || res.data;
-                    setPendingOrdersCount(data?.ventes?.length || 0);
-                } catch (e) { /* ignore */ }
-            };
-
             fetchUserBoutique();
-            fetchPendingOrders();
-            const interval = setInterval(fetchPendingOrders, 60000); // Check every minute
-            return () => clearInterval(interval);
         }
     }, [userRole]);
 
@@ -94,7 +82,7 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     <iconify-icon icon="solar:widget-5-bold-duotone" className="me-2 text-primary" style={{ fontSize: '28px' }}></iconify-icon>
                     <div>
                         <h3 className="m-0 text-primary fw-bold lh-1" style={{ fontSize: '1.2rem' }}>
-                            {userRole === 'SuperAdmin' ? 'SuperAdmin' : (userRole === 'Admin' ? 'Admin' : (userRole === 'Serveur' ? 'Serveur' : 'Gérant'))}
+                            {userRole === 'SuperAdmin' ? 'SuperAdmin' : (userRole === 'Admin' ? 'Admin' : (userRole === 'AdminBar' ? 'Admin Bar' : (userRole === 'GérantBar' ? 'Gérant Bar' : (userRole === 'ServeurBar' ? 'Serveur Bar' : (userRole === 'Serveur' ? 'Serveur' : 'Gérant')))))}
                         </h3>
                         {userRole === 'Gérant' && boutiqueName && (
                             <small className="text-muted fw-bold d-block mt-1" style={{ fontSize: '0.85rem' }}>
@@ -142,89 +130,119 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
 
             {/* Navigation Section */}
             <nav className="sidebar-nav scroll-sidebar">
-                {(userRole === 'Admin' || userRole === 'SuperAdmin') ? (
+                {['Admin', 'AdminBar'].includes(userRole) ? (
                     <ul id="sidebarnav">
                         <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin" end onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar" : "/admin"} end onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:home-smile-angle-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Dashboard</span>
                             </NavLink>
                         </li>
 
                         <li className="nav-small-cap"><span className="hide-menu">Gestion</span></li>
+                        {userRole === 'Admin' && (
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/managers" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:users-group-rounded-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Gérants</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/shops" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:shop-2-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Boutiques</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/articles" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Articles</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/etat-stock" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">État des stocks</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/fournisseurs" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Fournisseurs</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/centrale" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Dépôt Principal</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/caisse" onClick={handleNavLinkClick}> {/* Added onClick */}
-                                <iconify-icon icon="solar:wallet-money-bold-duotone"></iconify-icon>
+                            <NavLink className="sidebar-link" to="/admin/caisse" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cash-out-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Finances & Caisse</span>
                             </NavLink>
                         </li>
+                        )}
+                        {userRole === 'Admin' && (
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/creances" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to="/admin/creances" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Créances</span>
                             </NavLink>
                         </li>
-
+                        )}
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/articles" : "/admin/articles"} onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Articles</span>
+                            </NavLink>
+                        </li>
+                        {userRole === 'Admin' && (
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/etat-stock" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">État des stocks</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        {userRole === 'Admin' && (
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/fournisseurs" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Fournisseurs</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        {userRole === 'Admin' && (
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/centrale" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Dépôt Principal</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        {userRole === 'Admin' && (
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/shops" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:shop-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Boutiques</span>
+                            </NavLink>
+                        </li>
+                        )}
 
                         <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        {userRole === 'Admin' && (
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/mouvements" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to="/admin/mouvements" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:graph-up-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Mouvements Stock</span>
                             </NavLink>
                         </li>
+                        )}
+                        {userRole === 'AdminBar' && (
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/ventes" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to="/admin-bar/creances" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Créances</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        {userRole === 'AdminBar' && (
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin-bar/fournisseurs" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Fournisseurs</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/ventes" : "/admin/ventes"} onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Historique Ventes</span>
                             </NavLink>
                         </li>
-                        
+                        {userRole === 'AdminBar' && (
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/clients" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to="/admin-bar/mouvements" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:graph-up-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Mouvements Stock</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/clients" : "/admin/clients"} onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Clients & Ouvriers</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/notifications" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/notifications" : "/admin/notifications"} onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:bell-bing-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Notifications</span>
                             </NavLink>
@@ -232,7 +250,122 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
 
                         <li className="nav-small-cap"><span className="hide-menu">Administration</span></li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/audit" onClick={handleNavLinkClick}> {/* Added onClick */}
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/managers" : "/admin/managers"} onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:user-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">{userRole === 'AdminBar' ? 'Équipe Bar' : 'Gérants'}</span>
+                            </NavLink>
+                        </li>
+                        {userRole === 'Admin' && (
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/audit" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:shield-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Journal d'Audit</span>
+                            </NavLink>
+                        </li>
+                        )}
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/bar-config" : "/admin/bar-config"} onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:settings-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Configuration Bar</span>
+                            </NavLink>
+                        </li>
+
+                        <li className="sidebar-item mt-3 border-top pt-3 d-none d-lg-block">
+                            <div className="sidebar-link text-danger" onClick={handleLogout} style={{ cursor: 'pointer' }}>
+                                <iconify-icon icon="solar:logout-3-linear"></iconify-icon>
+                                <span className="hide-menu fw-bold">Déconnexion</span>
+                            </div>
+                        </li>
+                    </ul>
+                ) : userRole === 'SuperAdmin' ? (
+                    <ul id="sidebarnav">
+                        <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin" end onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:home-smile-angle-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Dashboard</span>
+                            </NavLink>
+                        </li>
+
+                        <li className="nav-small-cap"><span className="hide-menu">Gestion</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/caisse" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cash-out-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Finances & Caisse</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/creances" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Créances</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/articles" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Articles</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/etat-stock" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">État des stocks</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/fournisseurs" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Fournisseurs</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/centrale" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Dépôt Principal</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/shops" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:shop-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Boutiques</span>
+                            </NavLink>
+                        </li>
+
+                        <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/mouvements" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:graph-up-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Mouvements Stock</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/ventes" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Historique Ventes</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/clients" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Clients & Ouvriers</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/notifications" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:bell-bing-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Notifications</span>
+                            </NavLink>
+                        </li>
+
+                        <li className="nav-small-cap"><span className="hide-menu">Administration</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/managers" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:user-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Gérants</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/admin/audit" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:shield-check-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Journal d'Audit</span>
                             </NavLink>
@@ -256,20 +389,21 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                         </li>
                         <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
                         <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant/cashiers" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:user-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Caissiers</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/gerant/ventes" onClick={handleNavLinkClick}> {/* Added onClick */}
                                 <iconify-icon icon="solar:cart-4-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Effectuer une Vente</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/gerant/historique?tab=history&filter=pending" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:cup-hot-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Commandes Serveurs</span>
-                                {pendingOrdersCount > 0 && (
-                                    <Badge pill bg="danger" className="ms-auto blink-animation">
-                                        {pendingOrdersCount}
-                                    </Badge>
-                                )}
+                            <NavLink className="sidebar-link" to="/gerant/caisse/rapports-caissiers" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:clipboard-list-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Rapports Caissiers</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
@@ -311,7 +445,124 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                         </li>
 
                     </ul>
-                ) : ( // Vue pour le Serveur
+                ) : userRole === 'Caissier' ? ( // Vue pour le Caissier
+                    <ul id="sidebarnav">
+                        <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/caissier" end onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:home-smile-angle-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Dashboard</span>
+                            </NavLink>
+                        </li>
+                        <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/caissier/pos" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cart-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Point de Vente</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/caissier/caisse" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:wallet-money-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Ma Caisse</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/caissier/creances" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Créances</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item mt-3 border-top pt-3 d-none d-lg-block">
+                            <div className="sidebar-link text-danger" onClick={handleLogout} style={{ cursor: 'pointer' }}>
+                                <iconify-icon icon="solar:logout-3-linear"></iconify-icon>
+                                <span className="hide-menu fw-bold">Déconnexion</span>
+                            </div>
+                        </li>
+                    </ul>
+                ) : userRole === 'GérantBar' ? (
+                    <ul id="sidebarnav">
+                        <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar" end onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:home-smile-angle-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Dashboard Bar</span>
+                            </NavLink>
+                        </li>
+                        <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar/ventes" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cart-4-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Effectuer une Vente</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar/historique" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Historique Ventes</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar/articles" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Stock Bar</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar/clients" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Clients</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar/equipe" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:user-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Mon Équipe</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/gerant-bar/bar-config" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:settings-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Config Bar</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item mt-3 border-top pt-3 d-none d-lg-block">
+                            <div className="sidebar-link text-danger" onClick={handleLogout} style={{ cursor: 'pointer' }}>
+                                <iconify-icon icon="solar:logout-3-linear"></iconify-icon>
+                                <span className="hide-menu fw-bold">Déconnexion</span>
+                            </div>
+                        </li>
+                    </ul>
+                ) : userRole === 'ServeurBar' ? (
+                    <ul id="sidebarnav">
+                        <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/serveur-bar" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:widget-3-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Tableau de Bord</span>
+                            </NavLink>
+                        </li>
+                        <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/serveur-bar/ventes" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cart-plus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Prendre Commande</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item">
+                            <NavLink className="sidebar-link" to="/serveur-bar/commandes" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:cup-hot-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Commandes en cours</span>
+                            </NavLink>
+                        </li>
+                        <li className="sidebar-item mt-3 border-top pt-3 d-none d-lg-block">
+                            <div className="sidebar-link text-danger" onClick={handleLogout} style={{ cursor: 'pointer' }}>
+                                <iconify-icon icon="solar:logout-3-linear"></iconify-icon>
+                                <span className="hide-menu fw-bold">Déconnexion</span>
+                            </div>
+                        </li>
+                    </ul>
+                ) : ( // Vue pour le Serveur (Marchand)
                     <ul id="sidebarnav">
                         <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
                         <li className="sidebar-item">

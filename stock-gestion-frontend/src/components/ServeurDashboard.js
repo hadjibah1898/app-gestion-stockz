@@ -1,10 +1,14 @@
+/**
+ * @file ServeurDashboard.js
+ * @description Tableau de bord Serveur : commandes en cours, tables, pourboires.
+ */
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Row, Col, Card, Badge, Table, Spinner, Alert, Button, Modal, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { generateReceiptPDF } from '../utils/pdfUtils'; // Import de la fonction de génération de PDF
 import { venteAPI, boutiqueAPI, serveurAPI } from '../services/api';
-import ReceiptModal from './ReceiptModal'; // Import de la modale de reçu
-import socket from '../services/socket';
+import ReceiptModal from './ReceiptModal';
 import NotificationPopover from './NotificationPopover'; // Import NotificationPopover
 
 const ServeurDashboard = () => {
@@ -46,7 +50,7 @@ const ServeurDashboard = () => {
         try {
             if (!isSilent) setLoading(true);
             else setRefreshing(true);
-            
+
             const userId = localStorage.getItem('userId');
             const boutiqueId = localStorage.getItem('boutiqueId');
 
@@ -67,15 +71,16 @@ const ServeurDashboard = () => {
             const endDate = todayEnd.toISOString();
 
             const [ventesRes, boutiqueRes, statsRes] = await Promise.allSettled([
-                venteAPI.getHistorique({ limit: 20, gerantId: userId, startDate, endDate, groupBy: 'table' }), 
+                venteAPI.getHistorique({ limit: 20, gerantId: userId, startDate, endDate, groupBy: 'table' }),
                 boutiqueAPI.getDetailsForServeur(boutiqueId),
                 serveurAPI.getStatsMe() // Appel au nouveau contrôleur backend
             ]);
 
             if (ventesRes.status === 'fulfilled') {
-                setHistorique(ventesRes.value.data.ventes || []);
+                const allSales = (ventesRes.value.data && ventesRes.value.data.ventes) ? ventesRes.value.data.ventes : (ventesRes.value.ventes || ventesRes.value.data || []);
+                setHistorique(allSales);
             } else { console.error("Failed to fetch sales history:", ventesRes.reason); }
-            
+
             if (statsRes.status === 'fulfilled') {
                 setServerStats(statsRes.value.data);
             }
@@ -97,42 +102,13 @@ const ServeurDashboard = () => {
         fetchData();
     }, [fetchData]);
 
-    // Gestion des mises à jour temps réel (remplace le polling 30s)
-    useEffect(() => {
-        const userId = localStorage.getItem('userId');
-        const boutiqueId = localStorage.getItem('boutiqueId');
-        
-        if (userId) {
-            socket.emit('join_user_room', userId);
-        }
-        if (boutiqueId) {
-            socket.emit('join_boutique_room', boutiqueId);
-        }
-
-        const handleOrderUpdate = () => {
-            fetchData(true); // Rafraîchissement silencieux (sans spinner global)
-        };
-
-        socket.on('nouvelle_commande', handleOrderUpdate);
-        socket.on('new_notification', handleOrderUpdate); // Rafraîchir les stats sur alerte bar/cuisine
-        socket.on('group_finalized', handleOrderUpdate); // Écoute l'événement de mise à jour de groupe
-        socket.on('commande_annulee', handleOrderUpdate);
-
-        return () => {
-            socket.off('nouvelle_commande', handleOrderUpdate);
-            socket.off('statut_commande_mis_a_jour', handleOrderUpdate);
-            socket.off('commande_prete', handleOrderUpdate);
-            socket.off('commande_annulee', handleOrderUpdate);
-        };
-    }, [fetchData]);
-
     const handleFinalizePayment = async () => {
         if (!selectedOrder) return;
-        
+
         if (!paymentMode) return;
 
         const digitalModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
-        
+
         // UX Validation : Empêcher l'envoi si la référence est vide pour un paiement digital
         if (digitalModes.includes(paymentMode) && !transactionRef.trim()) {
             setError(`Veuillez saisir la référence de transaction pour le paiement ${paymentMode}.`);
@@ -140,7 +116,7 @@ const ServeurDashboard = () => {
         }
 
         try {
-            const payload = { 
+            const payload = {
                 status: 'finalisee',
                 modePaiement: paymentMode,
                 transactionRef: digitalModes.includes(paymentMode) ? transactionRef : undefined
@@ -247,18 +223,18 @@ const ServeurDashboard = () => {
     if (loading) return <div className="d-flex justify-content-center align-items-center vh-100"><Spinner animation="border" role="status"><span className="visually-hidden">Chargement...</span></Spinner></div>;
 
     return (
-        <div className="p-4" data-secteur={boutiqueConfig?.secteur}>
+        <div className="p-4">
             <div className="d-flex justify-content-between align-items-center mb-4">
-                <div className="d-flex align-items-center gap-3">
+                <div className={`d-flex align-items-center gap-3 ${boutiqueConfig?.type === 'Bar' ? 'bar-theme' : ''}`}>
                     <div className="d-md-none"><NotificationPopover /></div>
                     <h3 className="fw-bold mb-0">Mon Tableau de Bord</h3>
                     {refreshing && <Spinner animation="border" size="sm" className="text-primary" />}
                     <div className="d-none d-md-block"><NotificationPopover /></div>
                 </div>
                 <div className="d-flex gap-2 flex-wrap justify-content-end">
-                    <Button 
-                        variant={ecoMode ? "success" : "outline-success"} 
-                        size="sm" 
+                    <Button
+                        variant={ecoMode ? "success" : "outline-success"}
+                        size="sm"
                         className="rounded-pill px-3 d-flex align-items-center"
                         onClick={() => {
                             const newMode = !ecoMode;
@@ -280,7 +256,7 @@ const ServeurDashboard = () => {
             </div>
 
             {error && <Alert variant="danger">{error}</Alert>}
-            
+
             <Row className="g-4 mb-4">
                 <Col md={3} xs={6}>
                     <Card className="border-0 shadow-sm bg-primary text-white rounded-4">
@@ -329,19 +305,19 @@ const ServeurDashboard = () => {
                     <tbody>
                         {groupedActivity.slice(0, 8).map(group => (
                             <tr key={group.orderGroupId} className={
-                                group.isCancelled ? "bg-light text-muted" : 
-                                group.statut === 'finalisee' ? "bg-warning-subtle" : 
-                                ""
+                                group.isCancelled ? "bg-light text-muted" :
+                                    group.statut === 'finalisee' ? "bg-warning-subtle" :
+                                        ""
                             }>
-                                <td className="text-center">{new Date(group.createdAt).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})}</td>
+                                <td className="text-center">{new Date(group.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
                                 <td className="text-center"><Badge bg="dark" className="px-3">{group.numeroTable || 'N/A'}</Badge></td>
                                 <td>
                                     <ul className="list-unstyled mb-0 small">
                                         {group.items.map((item, idx) => (
                                             <li key={idx} className={item.isCancelled ? "text-decoration-line-through" : ""}>
                                                 {item.article?.image && !ecoMode && (
-                                                    <img src={item.article.image} alt="" className="rounded shadow-sm me-1" 
-                                                         style={{ width: '22px', height: '22px', objectFit: 'cover', verticalAlign: 'middle' }} 
+                                                    <img src={item.article.image} alt="" className="rounded shadow-sm me-1"
+                                                        style={{ width: '22px', height: '22px', objectFit: 'cover', verticalAlign: 'middle' }}
                                                     />
                                                 )}
                                                 <iconify-icon icon="solar:dot-bold" className="me-1 text-muted"></iconify-icon>
@@ -392,7 +368,7 @@ const ServeurDashboard = () => {
                                     <Button
                                         key={mode}
                                         variant={paymentMode === mode ? (mode === 'Cash' ? 'success' : 'primary') : 'outline-secondary'}
-                                        size="sm"
+                                        size="sm" // Correction: Utiliser size="sm" pour les boutons
                                         className="rounded-pill px-3 fw-bold"
                                         onClick={() => setPaymentMode(mode)}
                                     >
@@ -406,11 +382,11 @@ const ServeurDashboard = () => {
                             <div className="text-center my-3 p-3 bg-light rounded-4 animate__animated animate__zoomIn">
                                 <h6 className="fw-bold text-dark mb-2">Scanner pour payer via {paymentMode}</h6>
                                 {activeAccount && <p className="small text-muted mb-2">Compte: <span className="fw-bold text-primary">{activeAccount}</span></p>}
-                                <img 
-                                    src={activeQrCode} 
-                                    alt={`QR Code ${paymentMode}`} 
-                                    className="img-fluid rounded shadow-sm border bg-white" 
-                                    style={{ maxHeight: '200px' }} 
+                                <img
+                                    src={activeQrCode}
+                                    alt={`QR Code ${paymentMode}`}
+                                    className="img-fluid rounded shadow-sm border bg-white"
+                                    style={{ maxHeight: '200px' }}
                                     onClick={() => {
                                         setFullscreenQrCode(activeQrCode);
                                         setShowQrCodeFullscreenModal(true);
@@ -440,9 +416,9 @@ const ServeurDashboard = () => {
                 </Modal.Body>
                 <Modal.Footer className="border-0 justify-content-center pb-4">
                     <Button variant="light" onClick={() => setShowPayModal(false)} className="rounded-pill px-4 fw-bold">Annuler</Button>
-                    <Button 
-                        variant="success" 
-                        onClick={handleFinalizePayment} 
+                    <Button
+                        variant="success"
+                        onClick={handleFinalizePayment}
                         className="rounded-pill px-4 shadow-sm fw-bold"
                         disabled={!paymentMode || (['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(paymentMode) && !transactionRef.trim())}
                     >
@@ -458,13 +434,13 @@ const ServeurDashboard = () => {
                 onPrint={handlePrintReceipt}
                 canPrint={true} // Toujours vrai ici car la modale ne s'affiche qu'après encaissement réussi
             />
-        {/* Modale d'aperçu d'image pour le QR Code */}
-        <Modal show={showQrCodeFullscreenModal} onHide={() => setShowQrCodeFullscreenModal(false)} centered size="lg">
-            <Modal.Header closeButton>
-                <Modal.Title>QR Code {paymentMode}</Modal.Title>
-            </Modal.Header>
-            <Modal.Body className="text-center bg-light p-4"><img src={fullscreenQrCode} alt="QR Code en plein écran" className="img-fluid rounded shadow" style={{ maxHeight: '80vh' }} /></Modal.Body>
-        </Modal>
+            {/* Modale d'aperçu d'image pour le QR Code */}
+            <Modal show={showQrCodeFullscreenModal} onHide={() => setShowQrCodeFullscreenModal(false)} centered size="lg">
+                <Modal.Header closeButton>
+                    <Modal.Title>QR Code {paymentMode}</Modal.Title>
+                </Modal.Header>
+                <Modal.Body className="text-center bg-light p-4"><img src={fullscreenQrCode} alt="QR Code en plein écran" className="img-fluid rounded shadow" style={{ maxHeight: '80vh' }} /></Modal.Body>
+            </Modal>
         </div>
     );
 };

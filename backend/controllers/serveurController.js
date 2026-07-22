@@ -1,3 +1,8 @@
+/**
+ * @file serveurController.js
+ * @description Contrôleur spécifique au rôle Serveur.
+ */
+
 const User = require('../models/User');
 const Vente = require('../models/Vente');
 const mongoose = require('mongoose');

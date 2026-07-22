@@ -1,3 +1,8 @@
+/**
+ * @file auditController.js
+ * @description auditController - controllers
+ */
+
 const AuditLog = require('../models/AuditLog');
 const User = require('../models/User');
 

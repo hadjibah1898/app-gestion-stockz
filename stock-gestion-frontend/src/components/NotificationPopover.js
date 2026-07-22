@@ -1,8 +1,12 @@
-import React, { useEffect } from 'react';
+/**
+ * @file NotificationPopover.js
+ * @description Composant React.
+ */
+
+import React from 'react';
 import { Dropdown, Badge, Spinner, ListGroup, Button } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '../NotificationContext';
-import socket from '../services/socket';
 
 /**
  * Composant NotificationPopover
@@ -11,26 +15,7 @@ import socket from '../services/socket';
  */
 const NotificationPopover = () => {
     const navigate = useNavigate();
-    const { notifications, loading, markAsRead, markAllAsRead, fetchNotifications } = useNotifications();
-
-    // Mise à jour en temps réel via Socket.io
-    useEffect(() => {
-        if (socket) {
-            const handleUpdate = () => {
-                if (fetchNotifications) fetchNotifications();
-            };
-            // Écoute des événements qui génèrent des notifications pour le gérant
-            socket.on('new_notification', handleUpdate);
-            socket.on('remise_demandee', handleUpdate);
-            socket.on('stock_alerte', handleUpdate);
-            
-            return () => {
-                socket.off('new_notification', handleUpdate);
-                socket.off('remise_demandee', handleUpdate);
-                socket.off('stock_alerte', handleUpdate);
-            };
-        }
-    }, [fetchNotifications]);
+    const { notifications, loading, markAsRead, markAllAsRead } = useNotifications();
 
     const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -46,9 +31,9 @@ const NotificationPopover = () => {
     return (
         <Dropdown align="end" className="notification-dropdown">
             <Dropdown.Toggle as="div" className="position-relative p-2" style={{ cursor: 'pointer' }}>
-                <iconify-icon 
-                    icon={unreadCount > 0 ? "solar:bell-bing-bold-duotone" : "solar:bell-linear"} 
-                    style={{ fontSize: '24px' }} 
+                <iconify-icon
+                    icon={unreadCount > 0 ? "solar:bell-bing-bold-duotone" : "solar:bell-linear"}
+                    style={{ fontSize: '24px' }}
                     className={unreadCount > 0 ? "text-primary" : "text-secondary"}
                 ></iconify-icon>
                 {unreadCount > 0 && (
@@ -74,9 +59,9 @@ const NotificationPopover = () => {
                     ) : notifications.length > 0 ? (
                         <ListGroup variant="flush">
                             {notifications.slice(0, 8).map((n) => (
-                                <ListGroup.Item 
-                                    key={n._id} 
-                                    action 
+                                <ListGroup.Item
+                                    key={n._id}
+                                    action
                                     onClick={() => handleNotificationClick(n)}
                                     className={`border-bottom py-3 px-3 border-0 ${!n.read ? 'bg-primary-subtle' : ''}`}
                                 >
@@ -99,8 +84,8 @@ const NotificationPopover = () => {
                     )}
                 </div>
 
-                <Dropdown.Item 
-                    className="text-center py-2 border-top bg-light fw-bold small text-primary" 
+                <Dropdown.Item
+                    className="text-center py-2 border-top bg-light fw-bold small text-primary"
                     onClick={() => navigate('/notifications')}
                 >
                     Voir tout l'historique

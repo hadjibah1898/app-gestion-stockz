@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/static/css/main.6887d506.css",
+    "main.js": "/static/js/main.fbb1cac7.js",
+    "static/js/52.0d519761.chunk.js": "/static/js/52.0d519761.chunk.js",
+    "static/js/82.09648747.chunk.js": "/static/js/82.09648747.chunk.js",
+    "static/js/239.ef2d6928.chunk.js": "/static/js/239.ef2d6928.chunk.js",
+    "static/media/auth-bg.png": "/static/media/auth-bg.ddee25fe83bc7201839e.png",
+    "index.html": "/index.html"
+  },
+  "entrypoints": [
+    "static/css/main.6887d506.css",
+    "static/js/main.fbb1cac7.js"
+  ]
+}

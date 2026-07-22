@@ -1,3 +1,8 @@
+/**
+ * @file SupplyModal.js
+ * @description Modale d'approvisionnement/reapprovisionnement de stock.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Row, Col, Table, Alert, InputGroup, Spinner, Badge, Card } from 'react-bootstrap';
 import { fournisseurAPI, articleAPI } from '../services/api';
@@ -31,8 +36,8 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                 fournisseurAPI.getAll(),
                 articleAPI.getAll()
             ]);
-            setFournisseurs(fournisseursRes.data);
-            setArticles(articlesRes.data.data || []);
+            setFournisseurs(Array.isArray(fournisseursRes) ? fournisseursRes : (fournisseursRes.data && Array.isArray(fournisseursRes.data) ? fournisseursRes.data : []));
+            setArticles((Array.isArray(articlesRes.data) ? articlesRes.data : []) || []);
         } catch (err) {
             setError("Erreur lors du chargement des données.");
         }
@@ -314,6 +319,7 @@ const SupplyModal = ({ show, onHide, onSuccess }) => {
                                     <Col md={4}>
                                         <Form.Label className="fw-bold small text-uppercase text-muted">Fournisseur</Form.Label>
                                         <Form.Select 
+                                        className="rounded-pill border-0 shadow-sm" // Correction: Ajouter la classe rounded-pill
                                             value={supplyData.fournisseurId}
                                             onChange={(e) => setSupplyData({ ...supplyData, fournisseurId: e.target.value, items: [] })}
                                             className="rounded-pill border-0 shadow-sm"

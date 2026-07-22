@@ -25,8 +25,8 @@ const CentraleStockView = () => {
     useEffect(() => {
         const findCentralShop = async () => {
             try {
-                const res = await boutiqueAPI.getAll();
-                const centrale = res.data.find(b => b.type === 'Centrale');
+                const boutiques = await boutiqueAPI.getAll();
+                const centrale = boutiques.find(b => b.type === 'Centrale' || b.type === 'Bar'); // Correction: Inclure le type 'Bar'
                 if (centrale) {
                     setCentralShop(centrale);
                 } else {
@@ -54,7 +54,7 @@ const CentraleStockView = () => {
         <>
             <Button variant="outline-success" onClick={() => setShowSupplyModal(true)} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:box-up-bold" className="me-2 align-middle"></iconify-icon>
-                Recevoir du Fournisseur
+                Receptionner des Articles
             </Button>
             <Button variant="outline-primary" onClick={() => setShowRestockModal(true)} className="rounded-pill px-4 shadow-sm">
                 <iconify-icon icon="solar:box-minimalistic-bold" className="me-2 align-middle"></iconify-icon>

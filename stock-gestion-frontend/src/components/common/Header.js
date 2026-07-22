@@ -1,3 +1,8 @@
+/**
+ * @file Header.js
+ * @description Composant React.
+ */
+
 import React from 'react';
 import { Navbar, Nav, NavDropdown, Badge, Button } from 'react-bootstrap';
 import { Link, useNavigate } from 'react-router-dom';

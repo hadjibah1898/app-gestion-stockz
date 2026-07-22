@@ -1,3 +1,8 @@
+/**
+ * @file serveurRoutes.js
+ * @description Routes spécifiques au rôle Serveur.
+ */
+
 const express = require('express');
 const router = express.Router();
 const serveurController = require('../controllers/serveurController');
