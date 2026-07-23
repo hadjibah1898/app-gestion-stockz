@@ -137,34 +137,14 @@ const ArticleFormModal = ({
                     <Row className="g-3">
                         <Col md={4}>
                             <Form.Group className="mb-3">
-                                <Form.Label className="fw-bold text-muted small text-uppercase">Type d'article</Form.Label>
-                                <Form.Select name="type" value={currentArticle.type || 'Stockable'} onChange={handleChange} className="rounded-pill shadow-sm">
-                                    <option value="Stockable">📦 Stockable</option>
-                                    <option value="Consommable">🔄 Consommable</option>
-                                    <option value="Service">🛠️ Service</option>
-                                </Form.Select>
+                               
                             </Form.Group>
                         </Col>
                         <Col md={4}>
-                            <Form.Group className="mb-3">
-                                <Form.Label className="fw-bold text-muted small text-uppercase">Unité de mesure</Form.Label>
-                                <Form.Select name="uniteMesure" value={currentArticle.uniteMesure || 'Unités'} onChange={handleChange} className="rounded-pill shadow-sm">
-                                    <option value="Unités">Unités</option>
-                                    <option value="Cartons">Cartons</option>
-                                    <option value="Litres">Litres</option>
-                                    <option value="Kg">Kilogrammes</option>
-                                    <option value="Paquets">Paquets</option>
-                                </Form.Select>
-                            </Form.Group>
+                           
                         </Col>
                         <Col md={4}>
-                            <Form.Group className="mb-3">
-                                <Form.Label className="fw-bold text-muted small text-uppercase">TVA (%)</Form.Label>
-                                <InputGroup className="shadow-sm rounded-pill overflow-hidden">
-                                    <Form.Control type="number" name="tva" value={currentArticle.tva || 0} onChange={handleChange} min="0" max="100" />
-                                    <InputGroup.Text>%</InputGroup.Text>
-                                </InputGroup>
-                            </Form.Group>
+                           
                         </Col>
                     </Row>
 
