@@ -74,6 +74,17 @@ const SaleTab = ({
     const [modalRemiseType, setModalRemiseType] = useState('montant');
     const [showNextItemDiscountModal, setShowNextItemDiscountModal] = useState(false);
 
+    // Effet pour pré-remplir le numéro de téléphone pour les paiements Fintech
+    useEffect(() => {
+        const fintechModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
+        if (fintechModes.includes(modePaiement) && selectedClientId && clients) {
+            const client = clients.find(c => c._id === selectedClientId);
+            if (client?.telephone) {
+                setTransactionRef(client.telephone);
+            }
+        }
+    }, [modePaiement, selectedClientId, clients]);
+
     // Regroupement de l'historique par transaction (basé sur le timestamp et le client)
     const groupedTickets = useMemo(() => {
         const groups = {};
@@ -83,7 +94,7 @@ const SaleTab = ({
             const dateObj = new Date(vente.createdAt);
             const timeKey = Math.floor(dateObj.getTime() / 1000); // timestamp en secondes
             const key = `${timeKey}-${vente.client?._id || 'passage'}`;
-            
+
             if (!groups[key]) {
                 groups[key] = {
                     id: key,
@@ -198,15 +209,15 @@ const SaleTab = ({
                                                 <PlusIcon size={18} color={item.quantite < item.article.quantite ? '#fff' : '#6c757d'} />
                                             </Button>
                                             {userRole !== 'Serveur' && (
-                                            <Button 
-                                                variant={item.remiseTemp > 0 ? "warning" : "outline-secondary"} 
-                                                size="sm" 
-                                                className="rounded-pill d-flex align-items-center px-3"
-                                                onClick={(e) => openItemDiscountModal(e, item)}
-                                            >
-                                                <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
-                                                {item.remiseTemp > 0 ? `${parseFloat(item.remiseTemp).toLocaleString()} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
-                                            </Button>
+                                                <Button
+                                                    variant={item.remiseTemp > 0 ? "warning" : "outline-secondary"}
+                                                    size="sm"
+                                                    className="rounded-pill d-flex align-items-center px-3"
+                                                    onClick={(e) => openItemDiscountModal(e, item)}
+                                                >
+                                                    <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
+                                                    {item.remiseTemp > 0 ? `${parseFloat(item.remiseTemp).toLocaleString()} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
+                                                </Button>
                                             )}
                                         </div>
                                     </div>
@@ -232,7 +243,8 @@ const SaleTab = ({
                                 </div>
                             )}
 
-                            {/* Numéro de Table */}
+                            {/* Numéro de Table - Visible uniquement pour le Serveur */}
+                            {userRole === 'Serveur' && (
                             <div className="mb-3">
                                 <label className="small fw-bold text-muted">Numéro de Table / Emplacement</label>
                                 <InputGroup size="sm">
@@ -248,13 +260,14 @@ const SaleTab = ({
                                     />
                                 </InputGroup>
                             </div>
+                            )}
 
                             {/* Mode de Paiement */}
                             <div className="mb-3">
                                 <label className="small fw-bold text-muted">Mode de paiement</label>
-                                <Form.Select 
-                                    size="sm" 
-                                    value={modePaiement} 
+                                <Form.Select
+                                    size="sm"
+                                    value={modePaiement}
                                     onChange={(e) => {
                                         const val = e.target.value;
                                         setModePaiement(val);
@@ -277,12 +290,12 @@ const SaleTab = ({
                             {/* Référence Transactionnelle (pour paiements numériques) */}
                             {['Orange Money', 'MobiCash', 'PayCard', 'Virement'].includes(modePaiement) && (
                                 <Form.Group className="mb-3">
-                                    <Form.Label className="small fw-bold text-muted">Réf. Transaction <span className="text-danger">*</span></Form.Label>
+                                    <Form.Label className="small fw-bold text-muted">numero de telephone<span className="text-danger">*</span></Form.Label>
                                     <Form.Control
                                         type="text"
                                         value={transactionRef}
                                         onChange={e => setTransactionRef(e.target.value)}
-                                        placeholder={`Ex: ID transaction ${modePaiement}`}
+                                        placeholder={`Ex: numro telephone ou carte visa ${modePaiement}`}
                                         required
                                         className="rounded-pill"
                                     />
@@ -300,15 +313,15 @@ const SaleTab = ({
                                         <div className="d-flex gap-2">
                                             <Form.Control size="sm" type="number" value={quantite} onChange={e => setQuantite(e.target.value)} className="rounded-pill" />
                                             {userRole !== 'Serveur' && (
-                                            <Button 
-                                                variant={itemRemiseInput > 0 ? "warning" : "outline-secondary"} 
-                                                size="sm" 
-                                                className="rounded-pill px-3"
-                                                onClick={() => setShowNextItemDiscountModal(true)}
-                                            >
-                                                <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
-                                                {itemRemiseInput > 0 ? `${itemRemiseInput}${itemRemiseType === 'pourcentage' ? '%' : ' GNF'}` : 'Remise'}
-                                            </Button>
+                                                <Button
+                                                    variant={itemRemiseInput > 0 ? "warning" : "outline-secondary"}
+                                                    size="sm"
+                                                    className="rounded-pill px-3"
+                                                    onClick={() => setShowNextItemDiscountModal(true)}
+                                                >
+                                                    <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
+                                                    {itemRemiseInput > 0 ? `${itemRemiseInput}${itemRemiseType === 'pourcentage' ? '%' : ' GNF'}` : 'Remise'}
+                                                </Button>
                                             )}
                                             <Button variant="primary" size="sm" className="rounded-pill px-3" onClick={() => {
                                                 setCartAnimationTrigger(true); // Déclenche l'animation
@@ -326,15 +339,15 @@ const SaleTab = ({
                                 <InputGroup><Form.Control type="number" placeholder={`Total : ${calculerTotal().toLocaleString()} GNF`} value={montantPaye} onChange={e => setMontantPaye(e.target.value)} className="rounded-pill" /><InputGroup.Text>GNF</InputGroup.Text></InputGroup>
                             </Form.Group>
                         )}
-                        
+
                         {montantPaye !== '' && parseFloat(montantPaye) < calculerTotal() && (
                             <Form.Group className="mt-2">
                                 <Form.Label className="fw-bold text-danger">Échéance dette</Form.Label>
-                                <Form.Control 
-                                    type="date" 
-                                    value={echeanceDette} 
-                                    onChange={e => setEcheanceDette(e.target.value)} 
-                                    required 
+                                <Form.Control
+                                    type="date"
+                                    value={echeanceDette}
+                                    onChange={e => setEcheanceDette(e.target.value)}
+                                    required
                                     className="rounded-pill"
                                     min={new Date().toISOString().split('T')[0]} // Définit la date minimale à aujourd'hui
                                 />
@@ -344,17 +357,19 @@ const SaleTab = ({
                         <div className="border-top pt-3 mt-3">
                             <div className="d-flex justify-content-between mb-1">
                                 <span className="text-muted small">Sous-total (Hors remise)</span>
-                                <span className="small">{panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0).toLocaleString()} GNF</span>
+                                <span className="small">
+                                    {panier.reduce((acc, item) => acc + ((item.article?.prixVente || 0) * (item.quantite || 0)), 0).toLocaleString()} GNF
+                                </span>
                             </div>
                             {panier.some(item => item.remiseTemp > 0) && (
                                 <div className="d-flex justify-content-between mb-1">
                                     <span className="text-muted small">Total des remises</span>
                                     <span className="text-danger small fw-bold">
-                                        -{(panier.reduce((acc, item) => acc + (item.article.prixVente * item.quantite), 0) - calculerTotal()).toLocaleString()} GNF
+                                        -{(panier.reduce((acc, item) => acc + ((item.article?.prixVente || 0) * item.quantite), 0) - calculerTotal()).toLocaleString()} GNF
                                     </span>
                                 </div>
                             )}
-                            <div className="d-flex justify-content-between align-items-center mt-2"> 
+                            <div className="d-flex justify-content-between align-items-center mt-2">
                                 <span className="fw-bold fs-5">Total TTC</span>
                                 <span className="fw-bold fs-4 text-success">{calculerTotal().toLocaleString()} GNF</span>
                             </div>
@@ -378,7 +393,7 @@ const SaleTab = ({
 
                         <div className="d-flex gap-2 mt-3">
                             <Button variant="outline-warning" className="rounded-pill flex-fill" onClick={mettreEnBrouillon} disabled={panier.length === 0}>Brouillon</Button>
-                            <Button variant="success" className="rounded-pill flex-fill" onClick={() => { effectuerVente(); if(isMobile) setShowMobilePanier(false); }} disabled={isSubmitting}>
+                            <Button variant="success" className="rounded-pill flex-fill" onClick={() => { effectuerVente(); if (isMobile) setShowMobilePanier(false); }} disabled={isSubmitting}>
                                 {isSubmitting ? <Spinner as="span" animation="border" size="sm" /> : 'Valider la Vente'}
                             </Button>
                         </div>
@@ -396,52 +411,52 @@ const SaleTab = ({
             <Col lg={8} md={7} xs={12}>
                 {/* Filtres et recherche */}
                 <div className="mb-3 d-flex flex-column flex-sm-row flex-wrap gap-2 align-items-sm-center">
-                {/* Bouton "Tous" pour afficher tous les articles */}
-                <Button
-                    key="all"
-                    variant={activeCategory === 'all' ? 'primary' : 'outline-primary'}
-                    className="rounded-pill px-3 d-flex align-items-center gap-2"
-                    onClick={() => setActiveCategory('all')}
-                >
-                    Tous
-                    <Badge bg={activeCategory === 'all' ? 'light' : 'primary'} text={activeCategory === 'all' ? 'dark' : 'white'} pill>
-                        {articles.length}
-                    </Badge>
-                </Button>
-                {/* Boutons pour les catégories dynamiques */}
-                {availableCategories
-                    .sort((a, b) => a.label.localeCompare(b.label)) // Tri alphabétique
-                    .map(cat => {
-                        const count = articles.filter(a => a.categorie === cat.key).length;
-                        const totalStockValue = articles
-                            .filter(a => a.categorie === cat.key)
-                            .reduce((sum, a) => sum + (a.prixAchat * a.quantite), 0);
+                    {/* Bouton "Tous" pour afficher tous les articles */}
+                    <Button
+                        key="all"
+                        variant={activeCategory === 'all' ? 'primary' : 'outline-primary'}
+                        className="rounded-pill px-3 d-flex align-items-center gap-2"
+                        onClick={() => setActiveCategory('all')}
+                    >
+                        Tous
+                        <Badge bg={activeCategory === 'all' ? 'light' : 'primary'} text={activeCategory === 'all' ? 'dark' : 'white'} pill>
+                            {articles.length}
+                        </Badge>
+                    </Button>
+                    {/* Boutons pour les catégories dynamiques */}
+                    {availableCategories
+                        .sort((a, b) => a.label.localeCompare(b.label)) // Tri alphabétique
+                        .map(cat => {
+                            const count = articles.filter(a => a.categorie === cat.key).length;
+                            const totalStockValue = articles
+                                .filter(a => a.categorie === cat.key)
+                                .reduce((sum, a) => sum + (a.prixAchat * a.quantite), 0);
 
-                        return (
-                            <Button
-                                key={cat.key}
-                                variant={activeCategory === cat.key ? 'primary' : 'outline-primary'}
-                                className="rounded-pill px-3 d-flex align-items-center gap-2"
-                                onClick={() => setActiveCategory(cat.key)}
-                            >
-                                {cat.label}
-                                {userRole !== 'Serveur' ? (
-                                    <OverlayTrigger
-                                        placement="top"
-                                        overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {totalStockValue.toLocaleString()} GNF</Tooltip>}
-                                    >
+                            return (
+                                <Button
+                                    key={cat.key}
+                                    variant={activeCategory === cat.key ? 'primary' : 'outline-primary'}
+                                    className="rounded-pill px-3 d-flex align-items-center gap-2"
+                                    onClick={() => setActiveCategory(cat.key)}
+                                >
+                                    {cat.label}
+                                    {userRole !== 'Serveur' ? (
+                                        <OverlayTrigger
+                                            placement="top"
+                                            overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {totalStockValue.toLocaleString()} GNF</Tooltip>}
+                                        >
+                                            <Badge bg={activeCategory === cat.key ? 'light' : 'primary'} text={activeCategory === cat.key ? 'dark' : 'white'} pill>
+                                                {count}
+                                            </Badge>
+                                        </OverlayTrigger>
+                                    ) : (
                                         <Badge bg={activeCategory === cat.key ? 'light' : 'primary'} text={activeCategory === cat.key ? 'dark' : 'white'} pill>
                                             {count}
                                         </Badge>
-                                    </OverlayTrigger>
-                                ) : (
-                                    <Badge bg={activeCategory === cat.key ? 'light' : 'primary'} text={activeCategory === cat.key ? 'dark' : 'white'} pill>
-                                        {count}
-                                    </Badge>
-                                )}
-                            </Button>
-                        );
-                    })}
+                                    )}
+                                </Button>
+                            );
+                        })}
                     <Form.Control
                         type="search"
                         placeholder="Rechercher un article..."
@@ -453,82 +468,82 @@ const SaleTab = ({
                 </div>
 
                 {/* Grille catalogue agrandie */}
-                <div 
-                    className="pe-2" 
+                <div
+                    className="pe-2"
                     style={{ maxHeight: 'calc(100vh - 180px)', minHeight: '400px', overflowY: 'auto', overflowX: 'hidden' }}
                 >
                     <Row className="g-2 g-md-3">
-                    {filteredArticles.length === 0 && (
-                        <Col xs={12}><Alert variant="info">Aucun article trouvé</Alert></Col>
-                    )}
-                    {filteredArticles.map(article => (
-                        <Col xs={6} md={4} lg={3} key={article._id}>
-                            <Card className="h-100 shadow-sm border-0">
-                                <div style={{ position: 'relative' }}>
-                                    {article.image ? (
-                                        <Card.Img
-                                            src={article.image}
-                                            alt={article.nom}
-                                            style={{ height: 90, objectFit: 'cover', cursor: 'pointer', borderTopLeftRadius: '1rem', borderTopRightRadius: '1rem' }}
-                                            onClick={() => handleImageClick(article.image)}
-                                        />
-                                    ) : (
-                                        <div className="bg-light d-flex align-items-center justify-content-center" style={{ height: 90, borderTopLeftRadius: '1rem', borderTopRightRadius: '1rem' }}>
-                                            <iconify-icon icon="solar:box-bold" className="text-muted" style={{ fontSize: 32 }}></iconify-icon>
-                                        </div>
-                                    )}
-                                    {article.quantite <= 0 && (
-                                        <Badge bg="danger" style={{ position: 'absolute', top: 8, right: 8 }}>Rupture</Badge>
-                                    )}
-                                </div>
-                                <Card.Body className="py-2 px-2">
-                                    <div className="fw-bold small mb-1">{article.nom}</div>
-                                    <div className="text-muted small mb-1">{article.code}</div>
-                                    <div className="mb-2">
-                                        {getEffectivePrice(article) < article.prixVente ? (
-                                            <>
-                                                <span className="text-decoration-line-through text-muted me-1 small">{article.prixVente.toLocaleString()}</span>
-                                                <span className="text-danger fw-bold">{getEffectivePrice(article).toLocaleString()} GNF</span>
-                                            </>
+                        {filteredArticles.length === 0 && (
+                            <Col xs={12}><Alert variant="info">Aucun article trouvé</Alert></Col>
+                        )}
+                        {filteredArticles.map(article => (
+                            <Col xs={6} md={4} lg={3} key={article._id}>
+                                <Card className="h-100 shadow-sm border-0">
+                                    <div style={{ position: 'relative' }}>
+                                        {article.image ? (
+                                            <Card.Img
+                                                src={article.image}
+                                                alt={article.nom}
+                                                style={{ height: 90, objectFit: 'cover', cursor: 'pointer', borderTopLeftRadius: '1rem', borderTopRightRadius: '1rem' }}
+                                                onClick={() => handleImageClick(article.image)}
+                                            />
                                         ) : (
-                                            <span className="fw-bold text-primary">{article.prixVente.toLocaleString()} GNF</span>
+                                            <div className="bg-light d-flex align-items-center justify-content-center" style={{ height: 90, borderTopLeftRadius: '1rem', borderTopRightRadius: '1rem' }}>
+                                                <iconify-icon icon="solar:box-bold" className="text-muted" style={{ fontSize: 32 }}></iconify-icon>
+                                            </div>
+                                        )}
+                                        {article.quantite <= 0 && (
+                                            <Badge bg="danger" style={{ position: 'absolute', top: 8, right: 8 }}>Rupture</Badge>
                                         )}
                                     </div>
-                                    <InputGroup size="sm" className="mb-2">
-                                        <Form.Control
-                                            type="number"
-                                            min={1}
-                                            max={article.quantite}
-                                            value={quickQty[article._id] || 1}
-                                            onChange={e => setQuickQty(q => ({ ...q, [article._id]: e.target.value }))}
-                                            style={{ width: 60 }}
-                                            disabled={article.quantite <= 0}
-                                        />
-                                        <Button
-                                            variant="success"
-                                            size="sm"
-                                            className="rounded-pill ms-2"
-                                            disabled={article.quantite <= 0}
-                                            onClick={() => {
-                                                setSelectedArticle(article._id);
-                                                setQuantite(quickQty[article._id] ? parseInt(quickQty[article._id]) : 1);
-                                                setItemRemiseInput(''); // Reset item discount input
-                                                setCartAnimationTrigger(true); // Déclenche l'animation
-                                                ajouterAuPanier();
-                                            }}
-                                        >
-                                            <iconify-icon icon="solar:cart-plus-bold" className="me-1"></iconify-icon>
-                                            Ajouter
-                                        </Button>
-                                    </InputGroup>
-                                    <div className="d-flex justify-content-between align-items-center">
-                                        <Badge bg="secondary" pill>{article.categorie}</Badge>
-                                        <Badge bg={article.quantite > (article.seuilAlerte || 10) ? "success-subtle" : "danger-subtle"} text={article.quantite > (article.seuilAlerte || 10) ? "success" : "danger"} className="border">Stock: {article.quantite}</Badge>
-                                    </div>
-                                </Card.Body>
-                            </Card>
-                        </Col>
-                    ))}
+                                    <Card.Body className="py-2 px-2">
+                                        <div className="fw-bold small mb-1">{article.nom}</div>
+                                        <div className="text-muted small mb-1">{article.code}</div>
+                                        <div className="mb-2">
+                                            {getEffectivePrice(article) < article.prixVente ? (
+                                                <>
+                                                    <span className="text-decoration-line-through text-muted me-1 small">{article.prixVente.toLocaleString()}</span>
+                                                    <span className="text-danger fw-bold">{getEffectivePrice(article).toLocaleString()} GNF</span>
+                                                </>
+                                            ) : (
+                                                <span className="fw-bold text-primary">{article.prixVente.toLocaleString()} GNF</span>
+                                            )}
+                                        </div>
+                                        <InputGroup size="sm" className="mb-2">
+                                            <Form.Control
+                                                type="number"
+                                                min={1}
+                                                max={article.quantite}
+                                                value={quickQty[article._id] || 1}
+                                                onChange={e => setQuickQty(q => ({ ...q, [article._id]: e.target.value }))}
+                                                style={{ width: 60 }}
+                                                disabled={article.quantite <= 0}
+                                            />
+                                            <Button
+                                                variant="success"
+                                                size="sm"
+                                                className="rounded-pill ms-2"
+                                                disabled={article.quantite <= 0}
+                                                onClick={() => {
+                                                    setSelectedArticle(article._id);
+                                                    setQuantite(quickQty[article._id] ? parseInt(quickQty[article._id]) : 1);
+                                                    setItemRemiseInput(''); // Reset item discount input
+                                                    setCartAnimationTrigger(true); // Déclenche l'animation
+                                                    ajouterAuPanier();
+                                                }}
+                                            >
+                                                <iconify-icon icon="solar:cart-plus-bold" className="me-1"></iconify-icon>
+                                                Ajouter
+                                            </Button>
+                                        </InputGroup>
+                                        <div className="d-flex justify-content-between align-items-center">
+                                            <Badge bg="secondary" pill>{article.categorie}</Badge>
+                                            <Badge bg={article.quantite > (article.seuilAlerte || 10) ? "success-subtle" : "danger-subtle"} text={article.quantite > (article.seuilAlerte || 10) ? "success" : "danger"} className="border">Stock: {article.quantite}</Badge>
+                                        </div>
+                                    </Card.Body>
+                                </Card>
+                            </Col>
+                        ))}
                     </Row>
                 </div>
             </Col>
@@ -556,8 +571,8 @@ const SaleTab = ({
                 <Modal.Body className="pt-3">
                     {groupedTickets.length > 0 ? (
                         groupedTickets.slice(0, 10).map(ticket => (
-                            <div 
-                                key={ticket.id} 
+                            <div
+                                key={ticket.id}
                                 className={`mb-3 p-3 rounded-4 border-start border-4 border-success shadow-sm transition-all ${expandedTicket === ticket.id ? 'bg-white border-success' : 'bg-light border-light'}`}
                                 style={{ cursor: 'pointer' }}
                                 onClick={() => setExpandedTicket(expandedTicket === ticket.id ? null : ticket.id)}
@@ -583,8 +598,8 @@ const SaleTab = ({
                                         </div>
                                         <div className="mt-2 text-primary small fw-bold d-flex align-items-center justify-content-end">
                                             {expandedTicket === ticket.id ? 'Masquer' : 'Détails'}
-                                            <iconify-icon 
-                                                icon={expandedTicket === ticket.id ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} 
+                                            <iconify-icon
+                                                icon={expandedTicket === ticket.id ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
                                                 className="ms-1"
                                             ></iconify-icon>
                                         </div>
@@ -600,7 +615,7 @@ const SaleTab = ({
                                                     <li key={item._id} className="d-flex justify-content-between py-1 border-bottom border-light last-child-0">
                                                         <span>
                                                             <iconify-icon icon="solar:dot-bold" className="me-1 text-muted"></iconify-icon>
-                                                            {item.article?.nom || 'Article supprimé'} 
+                                                            {item.article?.nom || 'Article supprimé'}
                                                             <Badge bg="light" text="dark" className="ms-2">x{item.quantite}</Badge>
                                                         </span>
                                                         <span className="fw-bold">{item.prixTotal.toLocaleString()} GNF</span>
@@ -683,9 +698,9 @@ const SaleTab = ({
                     <Button variant="light" onClick={() => setShowViderModal(false)} className="rounded-pill px-3 fw-bold btn-sm">
                         Annuler
                     </Button>
-                    <Button variant="danger" onClick={() => { 
-                        setPanier([]); 
-                        setShowViderModal(false); 
+                    <Button variant="danger" onClick={() => {
+                        setPanier([]);
+                        setShowViderModal(false);
                     }} className="rounded-pill px-3 fw-bold shadow-sm btn-sm">
                         Oui, vider
                     </Button>
@@ -707,9 +722,9 @@ const SaleTab = ({
                     <Form.Group className="mb-3">
                         <Form.Label className="small fw-bold">Valeur de la remise</Form.Label>
                         <InputGroup>
-                            <Form.Control 
-                                type="number" 
-                                value={modalRemiseValue} 
+                            <Form.Control
+                                type="number"
+                                value={modalRemiseValue}
                                 onChange={(e) => setModalRemiseValue(e.target.value)}
                                 placeholder="0"
                                 isInvalid={
@@ -719,8 +734,8 @@ const SaleTab = ({
                                 }
                                 autoFocus
                             />
-                            <Form.Select 
-                                value={modalRemiseType} 
+                            <Form.Select
+                                value={modalRemiseType}
                                 onChange={(e) => setModalRemiseType(e.target.value)}
                                 style={{ maxWidth: '85px' }}
                             >
@@ -730,16 +745,16 @@ const SaleTab = ({
                             <Form.Control.Feedback type="invalid">
                                 {
                                     modalRemiseType === 'montant' && parseFloat(modalRemiseValue) > discountModalItem?.article.prixVente ? 'Montant supérieur au prix de vente' :
-                                    modalRemiseType === 'pourcentage' && parseFloat(modalRemiseValue) > 100 ? 'Le pourcentage max est 100%' :
-                                    parseFloat(modalRemiseValue) > 0 && getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType) < discountModalItem?.article.prixAchat ?
-                                        `Prix final (${getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${discountModalItem?.article.prixAchat.toLocaleString()} GNF)` : ''
+                                        modalRemiseType === 'pourcentage' && parseFloat(modalRemiseValue) > 100 ? 'Le pourcentage max est 100%' :
+                                            parseFloat(modalRemiseValue) > 0 && getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType) < discountModalItem?.article.prixAchat ?
+                                                `Prix final (${getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${discountModalItem?.article.prixAchat.toLocaleString()} GNF)` : ''
                                 }
                             </Form.Control.Feedback>
                         </InputGroup>
                     </Form.Group>
-                    <Button 
-                        variant="primary" 
-                        onClick={applyItemDiscount} 
+                    <Button
+                        variant="primary"
+                        onClick={applyItemDiscount}
                         className="rounded-pill px-3 fw-bold shadow-sm w-100"
                         disabled={
                             (modalRemiseType === 'montant' && parseFloat(modalRemiseValue) > discountModalItem?.article.prixVente) ||
@@ -772,9 +787,9 @@ const SaleTab = ({
                     <Form.Group className="mb-3">
                         <Form.Label className="small fw-bold">Valeur de la remise</Form.Label>
                         <InputGroup>
-                            <Form.Control 
-                                type="number" 
-                                value={itemRemiseInput} 
+                            <Form.Control
+                                type="number"
+                                value={itemRemiseInput}
                                 onChange={(e) => setItemRemiseInput(e.target.value)}
                                 placeholder="0"
                                 isInvalid={
@@ -784,8 +799,8 @@ const SaleTab = ({
                                 }
                                 autoFocus
                             />
-                            <Form.Select 
-                                value={itemRemiseType} 
+                            <Form.Select
+                                value={itemRemiseType}
                                 onChange={(e) => setItemRemiseType(e.target.value)}
                                 style={{ maxWidth: '85px' }}
                             >
@@ -795,16 +810,16 @@ const SaleTab = ({
                             <Form.Control.Feedback type="invalid">
                                 {
                                     itemRemiseType === 'montant' && parseFloat(itemRemiseInput) > articles.find(a => a._id === selectedArticle)?.prixVente ? 'Montant supérieur au prix de vente' :
-                                    itemRemiseType === 'pourcentage' && parseFloat(itemRemiseInput) > 100 ? 'Le pourcentage max est 100%' :
-                                    parseFloat(itemRemiseInput) > 0 && getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType) < articles.find(a => a._id === selectedArticle)?.prixAchat ?
-                                        `Prix final (${getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${articles.find(a => a._id === selectedArticle)?.prixAchat.toLocaleString()} GNF)` : ''
+                                        itemRemiseType === 'pourcentage' && parseFloat(itemRemiseInput) > 100 ? 'Le pourcentage max est 100%' :
+                                            parseFloat(itemRemiseInput) > 0 && getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType) < articles.find(a => a._id === selectedArticle)?.prixAchat ?
+                                                `Prix final (${getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${articles.find(a => a._id === selectedArticle)?.prixAchat.toLocaleString()} GNF)` : ''
                                 }
                             </Form.Control.Feedback>
                         </InputGroup>
                     </Form.Group>
-                    <Button 
-                        variant="primary" 
-                        onClick={() => setShowNextItemDiscountModal(false)} 
+                    <Button
+                        variant="primary"
+                        onClick={() => setShowNextItemDiscountModal(false)}
                         className="rounded-pill px-3 fw-bold shadow-sm w-100"
                         disabled={
                             (itemRemiseType === 'montant' && parseFloat(itemRemiseInput) > articles.find(a => a._id === selectedArticle)?.prixVente) ||

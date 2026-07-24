@@ -1,3 +1,8 @@
+/**
+ * @file ClientModal.js
+ * @description Composant React.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Form, Alert, Row, Col, Spinner } from 'react-bootstrap';
 import { clientAPI } from '../../services/api';

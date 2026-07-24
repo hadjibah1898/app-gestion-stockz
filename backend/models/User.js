@@ -4,11 +4,23 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
     nom: { type: String, required: true },
     email: { type: String, required: true, unique: true },
+    telephone: { type: String, required: false }, // Nouveau champ téléphone
+    businessType: { // Pour stocker le type de compte choisi à l'inscription
+        type: String,
+        enum: ['Marchand', 'Bar'],
+    },
     password: { type: String, required: true },
     role: { 
         type: String, 
-        enum: ['Admin', 'Gérant', 'Serveur', 'SuperAdmin'], 
-        default: 'Gérant' // Par défaut, un nouvel inscrit est gérant [cite: 22]
+        enum: ['Admin', 'Gérant', 'Caissier',               // Type Marchand
+               'AdminBar', 'GérantBar', 'ServeurBar',        // Type Bar
+               'SuperAdmin'], 
+        default: 'Gérant'
+    },
+    typeCompte: { // Nouveau champ : Marchand ou Bar
+        type: String,
+        enum: ['Marchand', 'Bar'],
+        default: 'Marchand'
     },
     boutique: { 
         type: mongoose.Schema.Types.ObjectId, 
@@ -20,7 +32,7 @@ const userSchema = new mongoose.Schema({
     },
     active: {
         type: Boolean,
-        default: true
+        default: false // Par défaut, le compte est inactif en attente de validation SuperAdmin
     },
     deleted: {
         type: Boolean,
@@ -31,6 +43,14 @@ const userSchema = new mongoose.Schema({
         default: false
     },
     lastLogin: {
+        type: Date,
+        default: null
+    },
+    isSynced: {
+        type: Boolean,
+        default: false
+    },
+    syncedAt: {
         type: Date,
         default: null
     },

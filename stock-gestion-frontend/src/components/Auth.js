@@ -4,8 +4,9 @@
 // Permet aux utilisateurs de se connecter avec email et mot de passe
 // Gère la validation des champs et l'affichage des messages d'erreur
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // Import useEffect
 import { Container, Row, Col, Card, Form, Button, Alert, Spinner, Modal } from 'react-bootstrap';
+import { Link, useLocation } from 'react-router-dom'; // Importez Link et useLocation
 import { authAPI } from '../services/api';
 import './Auth.css'; // Importation du nouveau CSS
 
@@ -14,10 +15,11 @@ const Auth = ({ onLogin }) => {
     email: '',
     password: '',
   });
+  const location = useLocation();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  
+
   // États pour le mot de passe oublié
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
@@ -52,18 +54,18 @@ const Auth = ({ onLogin }) => {
     setForgotLoading(true);
     setForgotMessage({ type: '', text: '' });
     try {
-        await authAPI.forgotPassword(forgotEmail);
-        setForgotMessage({ type: 'success', text: 'Email envoyé avec succès ! Vérifiez votre boîte de réception.' });
-        // Fermer la modale après 3 secondes
-        setTimeout(() => {
-            setShowForgotModal(false);
-            setForgotEmail('');
-            setForgotMessage({ type: '', text: '' });
-        }, 3000);
+      await authAPI.forgotPassword(forgotEmail);
+      setForgotMessage({ type: 'success', text: 'Email envoyé avec succès ! Vérifiez votre boîte de réception.' });
+      // Fermer la modale après 3 secondes
+      setTimeout(() => {
+        setShowForgotModal(false);
+        setForgotEmail('');
+        setForgotMessage({ type: '', text: '' });
+      }, 3000);
     } catch (err) {
-        setForgotMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors de la demande." });
+      setForgotMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors de la demande." });
     } finally {
-        setForgotLoading(false);
+      setForgotLoading(false);
     }
   };
 
@@ -93,8 +95,9 @@ const Auth = ({ onLogin }) => {
                       <p className="text-muted">Accédez à votre espace de gestion.</p>
                     </div>
 
+                    {location.state?.message && <Alert variant="success" className="mb-4">{location.state.message}</Alert>}
                     {error && <Alert variant="danger" className="mt-4">{error}</Alert>}
-                    
+
                     <Form onSubmit={handleLogin} className="mt-4">
                       <Form.Group className="mb-3 input-group-icon">
                         <iconify-icon icon="solar:letter-linear" className="form-icon"></iconify-icon>
@@ -102,16 +105,16 @@ const Auth = ({ onLogin }) => {
                       </Form.Group>
                       <Form.Group className="mb-3 input-group-icon position-relative">
                         <iconify-icon icon="solar:lock-password-linear" className="form-icon"></iconify-icon>
-                        <Form.Control 
-                          type={showPassword ? "text" : "password"} 
-                          name="password" 
-                          value={formData.password} 
-                          onChange={handleChange} 
-                          placeholder="Mot de passe" 
-                          required 
+                        <Form.Control
+                          type={showPassword ? "text" : "password"}
+                          name="password"
+                          value={formData.password}
+                          onChange={handleChange}
+                          placeholder="Mot de passe"
+                          required
                           style={{ paddingRight: '2.5rem' }}
                         />
-                        <span 
+                        <span
                           onClick={() => setShowPassword(!showPassword)}
                           style={{ position: 'absolute', right: '15px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#adb5bd', zIndex: 5, display: 'flex' }}
                           title={showPassword ? "Masquer" : "Afficher"}
@@ -119,7 +122,7 @@ const Auth = ({ onLogin }) => {
                           <iconify-icon icon={showPassword ? "solar:eye-bold" : "solar:eye-closed-bold"} style={{ fontSize: '1.2rem' }}></iconify-icon>
                         </span>
                       </Form.Group>
-                      
+
                       <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
                         <Form.Check type="checkbox" label="Se souvenir de moi" id="remember-me" className="small text-muted" />
                         <button
@@ -141,8 +144,22 @@ const Auth = ({ onLogin }) => {
                       </div>
                     </Form>
 
+                    {/* NOUVEAU BOUTON D'INSCRIPTION */}
+                    <div className="text-center mt-4">
+                      <p className="mb-2 text-muted">Pas encore de compte ?</p>
+                      <Button
+                        as={Link} // Utilise Link pour la navigation interne à React Router
+                        to="/register" // Assurez-vous que cette route est définie dans votre App.js
+                        variant="outline-primary"
+                        className="w-100 py-2 fw-bold"
+                      >
+                        S'inscrire
+                      </Button>
+                    </div>
+                    {/* FIN DU NOUVEAU BOUTON */}
+
                     <div className="text-center mt-4 pt-3 border-top">
-                        <small className="text-muted">© {new Date().getFullYear()} StockDash. Tous droits réservés.</small>
+                      <small className="text-muted">© {new Date().getFullYear()} StockDash. Tous droits réservés.</small>
                     </div>
                   </Card.Body>
                 </Col>
@@ -163,9 +180,9 @@ const Auth = ({ onLogin }) => {
             {forgotMessage.text && <Alert variant={forgotMessage.type}>{forgotMessage.text}</Alert>}
             <Form.Group className="mb-3">
               <Form.Label>Adresse Email</Form.Label>
-              <Form.Control 
-                type="email" 
-                required 
+              <Form.Control
+                type="email"
+                required
                 value={forgotEmail}
                 onChange={(e) => setForgotEmail(e.target.value)}
                 placeholder="exemple@email.com"

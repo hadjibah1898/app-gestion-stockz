@@ -1,3 +1,8 @@
+/**
+ * @file articleService.js
+ * @description Service métier articles : listing, modification, transferts, ajustements, promotions.
+ */
+
 const articleRepository = require('../repositories/articleRepository');
 const Article = require('../models/Article');
 const Mouvement = require('../models/Mouvement');
@@ -16,12 +21,18 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
     const { sort, order, search, status, ...restFilters } = filter;
     const dbFilters = { ...restFilters };
 
+    // Optimisation : On retire les infos fournisseurs pour le serveur.
+    // L'image est conservée pour l'UX mais sera compressée à l'upload.
+    const projection = (user && user.role === 'Serveur') 
+        ? { fournisseur: 0, __v: 0 } 
+        : { __v: 0 };
+
     // SÉCURITÉ MULTI-TENANT (Isolation Entreprise)
     if (user) {
         if (user.role === 'SuperAdmin') {
             // Accès total : on ne modifie pas les dbFilters, 
             // le SuperAdmin voit toutes les boutiques de tous les Admins.
-        } else if (user.role === 'Admin') {
+        } else if (['Admin', 'AdminBar'].includes(user.role)) {
             const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
             const myBoutiqueIds = myBoutiques.map(b => b._id.toString());
 
@@ -34,7 +45,7 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
                 // Sinon, on restreint automatiquement aux siennes
                 dbFilters.boutique = { $in: myBoutiques.map(b => b._id) };
             }
-        } else if (['Gérant', 'Serveur'].includes(user.role)) {
+        } else if (['Gérant', 'Serveur', 'Caissier'].includes(user.role)) {
             // SÉCURITÉ STRICTE : Restriction à la boutique assignée
             const gerantBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
             if (!gerantBoutiqueId) {
@@ -84,10 +95,11 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
     const limitNum = parseInt(limit) || parseInt(filter.limit) || 0;
     const pageNum = parseInt(page) || parseInt(filter.page) || 1;
 
-    let query = Article.find(dbFilters)
+    let query = Article.find(dbFilters, projection)
         .populate('boutique')
         .populate('fournisseur')
-        .populate('remiseEnAttente.gerant', 'nom');
+        .populate('remiseEnAttente.gerant', 'nom')
+        .lean(); // Performance boost
 
     // Tri
     const sortOrder = order === 'desc' ? -1 : 1;
@@ -106,6 +118,22 @@ exports.listerArticles = async (filter = {}, page = 1, limit = 0, user = null) =
         totalPages: limitNum > 0 ? Math.ceil(totalCount / limitNum) : 1,
         currentPage: pageNum
     };
+};
+
+/**
+ * Vérifie si un code ressemble à un code boutique existant
+ * (Utile pour la visibilité du bouton génération automatique héritage)
+ */
+exports.verifierRessemblanceCode = async (code, boutiqueId) => {
+    const boutique = await Boutique.findById(boutiqueId);
+    if (!boutique || !boutique.codeBoutique) return false;
+
+    // On cherche s'il existe des articles dont le code contient ou commence par le code boutique
+    const similarExists = await Article.exists({ 
+        boutique: boutiqueId, 
+        code: { $regex: new RegExp(`^${boutique.codeBoutique}`, 'i') } 
+    });
+    return !!similarExists;
 };
 
 /**
@@ -130,7 +158,8 @@ exports.modifierArticle = async (id, inputData, user, req) => {
         'nom', 'prixAchat', 'prixVente', 'boutique', 'categorie', 'code', 
         'image', 'promo', 'promoActive', 'dateDebutPromo', 'dateFinPromo', 
         'remise', 'datePeremption', 'fournisseur', 'remiseEnAttente',
-        'seuilAlerte', 'type', 'uniteMesure', 'tva', 'description'
+        'seuilAlerte', 'type', 'uniteMesure', 'tva', 'description',
+        'isDoseEnabled', 'dosesPerBottle', 'prixDose'
     ];
     
     const data = {};
@@ -326,14 +355,24 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
         const qtyToTransfer = parseInt(item.quantite);
         if (isNaN(qtyToTransfer) || qtyToTransfer <= 0) continue;
 
-        // 1. Décrémenter Source
+        // 1. Vérifier d'abord que l'article existe dans la boutique source
+        const article = await Article.findOne({ _id: item.articleId, boutique: sourceId });
+        if (!article) {
+            throw new Error(`Article ID: ${item.articleId} introuvable dans la boutique source (${sourceBoutique.nom}).`);
+        }
+
+        if (article.quantite < qtyToTransfer) {
+            throw new Error(`Stock insuffisant pour "${article.nom}": ${article.quantite} disponible, ${qtyToTransfer} demandé.`);
+        }
+
+        // 2. Décrémenter Source
         const sourceArticle = await Article.findOneAndUpdate(
-            { _id: item.articleId, boutique: sourceId, quantite: { $gte: qtyToTransfer } },
+            { _id: item.articleId, boutique: sourceId },
             { $inc: { quantite: -qtyToTransfer } },
             { new: true }
         );
 
-        if (!sourceArticle) throw new Error(`Stock insuffisant pour l'article ID: ${item.articleId}`);
+        if (!sourceArticle) throw new Error(`Erreur lors de la mise à jour du stock pour l'article ID: ${item.articleId}`);
 
         articlesPourMouvement.push({ 
             articleId: sourceArticle._id, 
@@ -352,6 +391,12 @@ const performStockTransfer = async (sourceId, targetId, items, user, details = '
         nomTransporteur,
         operateur: operateurId,
         details: details || `Transfert de ${sourceBoutique.nom} vers ${targetBoutique.nom}`
+    }).then(mvt => {
+        // Signaler à la boutique de destination qu'un nouveau colis arrive
+        if (global.io) {
+            global.io.to(`boutique_${targetId}`).emit('nouveau_transfert', { mvtId: mvt._id });
+        }
+        return mvt;
     });
 };
 
@@ -371,9 +416,13 @@ exports.effectuerReapprovisionnement = async (targetBoutiqueId, articles, user, 
         const targetArticle = await Article.findById(item.articleId);
         if (!targetArticle) throw new Error(`Article ${item.articleId} introuvable.`);
 
+        // Chercher l'article par nom dans la centrale
         const sourceArticle = await Article.findOne({ nom: targetArticle.nom, boutique: centrale._id });
-        if (!sourceArticle || sourceArticle.quantite < item.quantite) {
-            throw new Error(`Stock insuffisant en Centrale pour "${targetArticle.nom}".`);
+        if (!sourceArticle) {
+            throw new Error(`Article "${targetArticle.nom}" introuvable dans le Dépôt Principal. Assurez-vous que cet article existe en centrale.`);
+        }
+        if (sourceArticle.quantite < item.quantite) {
+            throw new Error(`Stock insuffisant en Centrale pour "${targetArticle.nom}": ${sourceArticle.quantite} disponible, ${item.quantite} demandé.`);
         }
         itemsToTransfer.push({ articleId: sourceArticle._id, quantite: item.quantite });
     }
@@ -537,6 +586,96 @@ exports.relancerGerantTransfert = async (mouvementId, user) => {
 };
 
 /**
+ * Permet à l'Admin de corriger un transfert (articles/quantités) et de le relancer
+ * @param {String} mouvementId - ID du mouvement à corriger
+ * @param {Array} articles - Liste des articles corrigés [{articleId, nomArticle, quantite}]
+ * @param {Object} user - L'admin qui corrige
+ */
+exports.corrigerTransfert = async (mouvementId, articles, user) => {
+    const mouvement = await Mouvement.findById(mouvementId).populate('boutiqueSource boutiqueDestination');
+    
+    if (!mouvement || mouvement.type !== 'Transfert') {
+        throw new Error("Transfert introuvable.");
+    }
+
+    // SÉCURITÉ : Seul l'Admin peut corriger
+    if (user.role !== 'Admin') {
+        throw new Error("Accès refusé : Seul l'administrateur peut corriger un transfert.");
+    }
+
+    // SÉCURITÉ MULTI-TENANT : L'Admin ne peut corriger que ses propres transferts
+    if (mouvement.boutiqueSource?.createur?.toString() !== user.id.toString()) {
+        throw new Error("Accès refusé : Ce transfert ne vous appartient pas.");
+    }
+
+    if (!articles || !Array.isArray(articles) || articles.length === 0) {
+        throw new Error("Liste d'articles requise pour la correction.");
+    }
+
+    // SÉCURITÉ : Vérifier le stock disponible dans la boutique source pour chaque article
+    const sourceBoutiqueId = mouvement.boutiqueSource?._id || mouvement.boutiqueSource;
+    const articlesMisAJour = [];
+    
+    for (const item of articles) {
+        const qtyRequested = parseInt(item.quantite) || 0;
+        
+        // Vérifier le stock disponible dans la boutique source
+        const articleSource = await Article.findOne({
+            nom: item.nomArticle,
+            boutique: sourceBoutiqueId
+        });
+        
+        if (!articleSource) {
+            throw new Error(`Article "${item.nomArticle}" introuvable dans la boutique source (${mouvement.boutiqueSource?.nom || 'Dépôt'}).`);
+        }
+        
+        if (qtyRequested > articleSource.quantite) {
+            throw new Error(`Stock insuffisant pour "${item.nomArticle}" : ${qtyRequested} demandé, ${articleSource.quantite} disponible dans ${mouvement.boutiqueSource?.nom || 'le dépôt'}.`);
+        }
+        
+        const existingArticle = mouvement.articles.find(
+            a => (a.articleId?.toString() || a._id?.toString()) === (item.articleId?.toString() || '')
+        );
+        
+        const prixAchat = articleSource.prixAchat || item.prixAchatUnitaire || 0;
+        
+        if (existingArticle) {
+            existingArticle.quantite = qtyRequested;
+            existingArticle.prixAchatUnitaire = prixAchat;
+            articlesMisAJour.push(existingArticle);
+        } else {
+            articlesMisAJour.push({
+                articleId: articleSource._id,
+                nomArticle: articleSource.nom,
+                quantite: qtyRequested,
+                prixAchatUnitaire: prixAchat
+            });
+        }
+    }
+
+    mouvement.articles = articlesMisAJour;
+    mouvement.statutTransfert = 'EXPEDIE'; // Reset pour notifier à nouveau le gérant
+    mouvement.details = (mouvement.details || '') + ` | Corrigé par ${user.nom} le ${new Date().toLocaleDateString('fr-FR')}`;
+    await mouvement.save();
+
+    console.log(`[TRANSFERT] Correction - ${mouvement._id} - ${articles.length} articles mis à jour par ${user.nom}`);
+
+    // Relancer le gérant
+    const boutiqueDest = await Boutique.findById(mouvement.boutiqueDestination).populate('vendeurs');
+    if (boutiqueDest && boutiqueDest.vendeurs.length) {
+        for (const gerant of boutiqueDest.vendeurs) {
+            await Notification.create({
+                recipient: gerant._id,
+                message: `🔔 Correction : Un colis corrigé (${mouvement.articles.length} articles) est en attente de réception pour votre boutique "${boutiqueDest.nom}". Merci de vérifier et valider le stock.`,
+                type: 'info'
+            });
+        }
+    }
+
+    return { success: true, message: "Transfert corrigé et relancé avec succès.", data: mouvement };
+};
+
+/**
  * Rejette la réception d'un transfert par le gérant de la boutique cible.
  * Le stock est alors retourné à la boutique source (Dépôt Principal).
  */
@@ -637,12 +776,26 @@ exports.annulerTransfert = async (mouvementId, user) => {
  * Workflow Ajustement Stock (Inspiration Odoo/SYSCOHADA)
  */
 exports.listerAjustements = async (filters = {}, user = null) => {
-    const query = { ...filters };
+    const { boutique, ...restFilters } = filters;
+    const query = { ...restFilters };
+
     if (user && user.role === 'Admin') {
         const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
-        query.boutique = { $in: myBoutiques.map(b => b._id) };
+        const myBoutiqueIds = myBoutiques.map(b => b._id.toString());
+
+        // Si l'Admin demande une boutique spécifique, vérifier qu'elle lui appartient
+        if (boutique && boutique !== '') {
+            if (!myBoutiqueIds.includes(boutique.toString())) {
+                throw new Error("Accès refusé : Cette boutique ne vous appartient pas.");
+            }
+            query.boutique = boutique;
+        } else {
+            // Sinon, restreindre à toutes ses boutiques
+            query.boutique = { $in: myBoutiques.map(b => b._id) };
+        }
     } else if (user && user.role === 'Gérant') {
-        query.boutique = user.boutique;
+        // Le Gérant ne voit que les ajustements de sa propre boutique
+        query.boutique = user.boutique?._id || user.boutique;
     }
     return await AjustementStock.find(query)
         .populate('article', 'nom code image')
@@ -653,9 +806,20 @@ exports.listerAjustements = async (filters = {}, user = null) => {
 };
 
 exports.demanderAjustement = async (data, user) => {
+    console.log('[DEBUG AJUSTEMENT SERVICE] demanderAjustement appelé - articleId:', data.article, '- quantite:', data.quantite, '- user._id:', user._id, '- boutique:', user.boutique);
     // 1. Vérification de l'existence de l'article et du stock disponible
     const article = await Article.findById(data.article);
-    if (!article) throw new Error("Article introuvable.");
+    if (!article) {
+        console.log('[DEBUG AJUSTEMENT SERVICE] Article introuvable:', data.article);
+        throw new Error("Article introuvable.");
+    }
+    console.log('[DEBUG AJUSTEMENT SERVICE] Article trouvé:', article.nom, '- boutique article:', article.boutique);
+
+    // SÉCURITÉ MULTI-TENANT : L'article doit appartenir à la boutique du Gérant
+    const userBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
+    if (article.boutique?.toString() !== userBoutiqueId) {
+        throw new Error("Accès refusé : Vous ne pouvez déclarer une perte que sur les articles de votre propre boutique.");
+    }
 
     if (article.quantite < data.quantite) {
         throw new Error(`Quantité insuffisante : vous essayez de déclarer une perte de ${data.quantite} unités, mais il n'en reste que ${article.quantite} en stock.`);
@@ -663,13 +827,17 @@ exports.demanderAjustement = async (data, user) => {
 
     const ajustement = await AjustementStock.create({
         ...data,
-        gerant: user.id,
-        boutique: user.boutique,
+        gerant: user._id || user.id,
+        boutique: userBoutiqueId,
         statut: 'EN_ATTENTE'
     });
 
-    // Notification pour l'Admin
-    await notificationService.sendAjustementRequestAlert(ajustement, article, user);
+    // Notification pour l'Admin (bloquante pour garantir l'envoi)
+    try {
+        await notificationService.sendAjustementRequestAlert(ajustement, article, user);
+    } catch (err) {
+        console.error("Erreur notification ajustement:", err.message);
+    }
     
     return ajustement;
 };
@@ -677,6 +845,12 @@ exports.demanderAjustement = async (data, user) => {
 exports.validerAjustement = async (ajustementId, decision, commentaire, adminId) => {
     const ajst = await AjustementStock.findById(ajustementId).populate('article boutique gerant');
     if (!ajst || ajst.statut !== 'EN_ATTENTE') throw new Error("Demande invalide ou déjà traitée.");
+
+    // SÉCURITÉ MULTI-TENANT : L'Admin ne peut valider que les ajustements de ses propres boutiques
+    const ajustementBoutique = await Boutique.findById(ajst.boutique._id || ajst.boutique);
+    if (ajustementBoutique && ajustementBoutique.createur?.toString() !== adminId.toString()) {
+        throw new Error("Accès refusé : Vous ne pouvez valider que les ajustements de vos propres boutiques.");
+    }
 
     if (decision === 'VALIDE') {
         const article = await Article.findById(ajst.article._id);

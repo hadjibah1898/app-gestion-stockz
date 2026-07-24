@@ -1,3 +1,8 @@
+/**
+ * @file DemandeRemiseButton.js
+ * @description Composant React.
+ */
+
 import React, { useState } from 'react';
 import { Button, Modal, Form, Alert } from 'react-bootstrap';
 import { articleAPI } from '../services/api';

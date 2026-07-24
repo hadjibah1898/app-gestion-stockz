@@ -7,8 +7,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Form, Modal, Alert, Spinner, Badge, Card, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap';
 import TableComponent from './common/Table';
+import { toast } from 'react-toastify';
 import ErrorBoundary from './common/ErrorBoundary';
-import { boutiqueAPI, articleAPI, userAPI } from '../services/api'; 
+import { boutiqueAPI, articleAPI, userAPI } from '../services/api';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Circle } from 'react-leaflet';
 import RestockModal from './RestockModal'; // Importer la nouvelle modale
 import 'leaflet/dist/leaflet.css';
@@ -20,11 +21,11 @@ import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
 // Icône par défaut (bleue)
 const blueIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
 });
 
 // Icône pour la boutique sélectionnée (verte)
@@ -56,11 +57,12 @@ const ShopsView = () => {
     _id: '',
     nom: '',
     adresse: '',
+    ville: '', // Nouveau champ ville
     active: true,
     type: 'Secondaire',
     vendeurs: [],
     tipPercentage: 5,
-    tipsEnabled: true,
+    tipsEnabled: true, // Par défaut, les pourboires sont activés
     orangeMoneyQrCode: '',
     orangeMoneyAccount: '',
     mobicashQrCode: '',
@@ -110,10 +112,10 @@ const ShopsView = () => {
   const fetchBoutiques = async () => {
     try {
       setLoading(true);
-      const response = await boutiqueAPI.getAll();
-      setBoutiques(response.data);
-      // Identifier la boutique centrale pour le réapprovisionnement
-      const centrale = response.data.find(b => b.type === 'Centrale');
+      const boutiques = await boutiqueAPI.getAll();
+      setBoutiques(boutiques);
+      // Identifier l'établissement principal (Centrale ou Bar)
+      const centrale = boutiques.find(b => b.type === 'Centrale' || b.type === 'Bar');
       setCentralShop(centrale);
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur de chargement');
@@ -127,9 +129,21 @@ const ShopsView = () => {
       const res = await userAPI.getAll();
       // On gère le cas où les données sont enveloppées dans un objet .data
       const users = Array.isArray(res.data) ? res.data : (res.data.data || []);
-      setAllGerants(users.filter(u => u.role === 'Gérant'));
+      setAllGerants((users || []).filter(u => u.role === 'Gérant'));
     } catch (err) {
       console.error("Erreur lors de la récupération des gérants", err);
+    }
+  };
+
+  const handleSyncCodes = async () => {
+    if (window.confirm("Voulez-vous vraiment forcer l'héritage du code d'organisation sur toutes vos boutiques et employés ?")) {
+      try {
+        const res = await boutiqueAPI.syncCodes();
+        toast.success(res.data.message || "Synchronisation effectuée avec succès !");
+        fetchBoutiques(); // Rafraîchir les données
+      } catch (err) {
+        // L'erreur est gérée par l'intercepteur Axios
+      }
     }
   };
 
@@ -146,19 +160,19 @@ const ShopsView = () => {
   // Charger les articles quand la boutique source change
   useEffect(() => {
     if (transferData.sourceId) {
-        setLoadingArticles(true);
-        articleAPI.getAll().then(res => {
-            // Filtrer les articles de la boutique source
-            const articlesData = res.data.data || [];
-            const shopArticles = articlesData.filter(a => (a.boutique?._id || a.boutique) === transferData.sourceId);
-            setSourceArticles(shopArticles);
-            setSelectedArticles([]); // Réinitialiser la sélection
-            setTransferQuantities({});
-        }).catch(err => console.error(err)).finally(() => setLoadingArticles(false));
-    } else {
-        setSourceArticles([]);
-        setSelectedArticles([]);
+      setLoadingArticles(true);
+      articleAPI.getAll().then(res => {
+        // Filtrer les articles de la boutique source
+        const articlesData = (Array.isArray(res.data) ? res.data : []);
+        const shopArticles = articlesData.filter(a => (a.boutique?._id || a.boutique) === transferData.sourceId);
+        setSourceArticles(shopArticles);
+        setSelectedArticles([]); // Réinitialiser la sélection
         setTransferQuantities({});
+      }).catch(err => console.error(err)).finally(() => setLoadingArticles(false));
+    } else {
+      setSourceArticles([]);
+      setSelectedArticles([]);
+      setTransferQuantities({});
     }
   }, [transferData.sourceId]);
 
@@ -175,9 +189,10 @@ const ShopsView = () => {
         vendeursIds = [typeof boutique.vendeur === 'object' ? boutique.vendeur._id : boutique.vendeur];
       }
 
-      setCurrentBoutique({ 
-        ...boutique, 
-        vendeurs: vendeursIds, 
+      setCurrentBoutique({
+        ...boutique,
+        vendeurs: vendeursIds,
+        ville: boutique.ville || '', // Assurez-vous que ville est toujours une chaîne
         orangeMoneyQrCode: boutique.orangeMoneyQrCode || '',
         orangeMoneyAccount: boutique.orangeMoneyAccount || '',
         mobicashQrCode: boutique.mobicashQrCode || '',
@@ -187,11 +202,12 @@ const ShopsView = () => {
       });
       setEditMode(true);
     } else {
-      setCurrentBoutique({ 
-        nom: '', 
-        adresse: '', 
-        active: true, 
-        type: 'Secondaire', 
+      setCurrentBoutique({
+        nom: '',
+        adresse: '',
+        ville: '', // Initialisation du champ ville
+        active: true,
+        type: 'Secondaire',
         vendeurs: [],
         tipPercentage: 5,
         tipsEnabled: true,
@@ -201,32 +217,33 @@ const ShopsView = () => {
         mobicashAccount: '',
         paycardQrCode: '',
         paycardAccount: '',
-        latitude: 9.6412, 
-        longitude: -13.5784 
+        latitude: 9.6412,
+        longitude: -13.5784
       });
       setEditMode(false);
     }
     setShowModal(true);
   };
-  
+
   // Fonction pour ouvrir la modale de création d'un Dépôt Principal
   const handleShowCreateCentralModal = () => {
-    setCurrentBoutique({ 
+    setCurrentBoutique({
       nom: 'Dépôt Principal', // Nom par défaut
       adresse: 'Adresse du Dépôt Principal', // Adresse par défaut
-      active: true, 
+      ville: '', // Laisser vide pour que l'utilisateur le remplisse
+      active: true,
       type: 'Centrale', // Forcer le type à Centrale
       vendeurs: [],
       tipPercentage: 5,
-      tipsEnabled: true,
+      tipsEnabled: true, // Par défaut, les pourboires sont activés
       orangeMoneyQrCode: '',
       orangeMoneyAccount: '',
       mobicashQrCode: '',
       mobicashAccount: '',
       paycardQrCode: '',
       paycardAccount: '',
-      latitude: 9.6412, 
-      longitude: -13.5784 
+      latitude: 9.6412,
+      longitude: -13.5784
     });
     setEditMode(false); // Toujours en mode création
     setShowModal(true);
@@ -261,8 +278,8 @@ const ShopsView = () => {
 
   // Vérifie si un gérant est déjà assigné à une autre boutique
   const isGerantTaken = (gerantId) => {
-    return boutiques.some(b => 
-      b._id !== currentBoutique._id && 
+    return boutiques.some(b =>
+      b._id !== currentBoutique._id &&
       (b.vendeurs?.some(v => (v._id || v) === gerantId))
     );
   };
@@ -272,9 +289,9 @@ const ShopsView = () => {
     const currentVendeurs = Array.isArray(currentBoutique.vendeurs) ? [...currentBoutique.vendeurs] : [];
     const index = currentVendeurs.indexOf(gerantId);
     if (index > -1) {
-        currentVendeurs.splice(index, 1);
+      currentVendeurs.splice(index, 1);
     } else {
-        currentVendeurs.push(gerantId);
+      currentVendeurs.push(gerantId);
     }
     setCurrentBoutique({ ...currentBoutique, vendeurs: currentVendeurs });
   };
@@ -287,9 +304,9 @@ const ShopsView = () => {
       // Nettoyage final avant envoi : on retire l'ID et on s'assure que les vendeurs sont un tableau propre
       const boutiquePayload = {
         ...currentBoutique,
-        vendeurs: currentBoutique.vendeurs.filter(id => id !== '')
+        vendeurs: (currentBoutique.vendeurs || []).filter(id => id !== '')
       };
-      
+
       // Empêcher la création de plusieurs boutiques de type 'Centrale' par le même administrateur
       if (boutiquePayload.type === 'Centrale') {
         const existingCentrale = boutiques.find(b => b.type === 'Centrale' && b._id !== boutiquePayload._id);
@@ -335,32 +352,32 @@ const ShopsView = () => {
     setTransferLoading(true);
     setTransferMessage({ type: '', text: '' });
     if (transferData.sourceId === transferData.targetId) {
-        setTransferLoading(false);
-        return setTransferMessage({ type: 'danger', text: "La boutique source et destination doivent être différentes." });
+      setTransferLoading(false);
+      return setTransferMessage({ type: 'danger', text: "La boutique source et destination doivent être différentes." });
     }
-    
+
     if (selectedArticles.length === 0) {
-        setTransferLoading(false);
-        return setTransferMessage({ type: 'warning', text: "Veuillez sélectionner au moins un article (ou tout sélectionner)." });
+      setTransferLoading(false);
+      return setTransferMessage({ type: 'warning', text: "Veuillez sélectionner au moins un article (ou tout sélectionner)." });
     }
 
     // Préparer les données avec quantités
     const articlesPayload = selectedArticles.map(id => ({
-        articleId: id,
-        quantite: transferQuantities[id] || sourceArticles.find(a => a._id === id)?.quantite || 1
+      articleId: id,
+      quantite: transferQuantities[id] || sourceArticles.find(a => a._id === id)?.quantite || 1
     }));
 
     try {
-        const res = await articleAPI.transferStock({ ...transferData, articles: articlesPayload });
-        setShowTransferModal(false);
-        setSuccessMessage(res.data.message);
-        setTransferData({ sourceId: '', targetId: '' });
-        setTransferMessage({ type: '', text: '' });
-        setTimeout(() => setSuccessMessage(''), 3000);
+      const res = await articleAPI.transferStock({ ...transferData, articles: articlesPayload });
+      setShowTransferModal(false);
+      setSuccessMessage(res.data.message);
+      setTransferData({ sourceId: '', targetId: '' });
+      setTransferMessage({ type: '', text: '' });
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
-        setTransferMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors du transfert." });
+      setTransferMessage({ type: 'danger', text: err.response?.data?.message || "Erreur lors du transfert." });
     } finally {
-        setTransferLoading(false);
+      setTransferLoading(false);
     }
   };
 
@@ -396,17 +413,17 @@ const ShopsView = () => {
   };
 
   const columns = [
-    { 
-      key: 'nom', 
+    {
+      key: 'nom',
       label: 'Nom',
       render: (nom, boutique) => (
         <div className="d-flex align-items-center flex-wrap gap-2">
           <div className="d-flex align-items-center">
-            <iconify-icon 
-              icon={boutique.type === 'Centrale' ? "solar:home-2-bold" : "solar:shop-2-linear"} 
-              className={`me-2 fs-5 ${boutique.type === 'Centrale' ? 'text-primary' : 'text-muted'}`}
+            <iconify-icon
+              icon={boutique.type === 'Centrale' ? "solar:home-2-bold" : (boutique.type === 'Bar' ? "solar:wine-glass-bold-duotone" : "solar:shop-2-linear")}
+              className={`me-2 fs-5 ${boutique.type === 'Centrale' || boutique.type === 'Bar' ? 'text-primary' : 'text-muted'}`}
             ></iconify-icon>
-            <span className={boutique.type === 'Centrale' ? 'fw-bold text-primary' : ''}>{nom}</span>
+            <span className={boutique.type === 'Centrale' || boutique.type === 'Bar' ? 'fw-bold text-primary' : ''}>{nom}</span>
           </div>
           {boutique.isSessionOpen && (
             <Badge bg="success" pill className="small shadow-sm d-flex align-items-center gap-1 py-1 px-2" style={{ fontSize: '0.7rem' }}>
@@ -427,8 +444,8 @@ const ShopsView = () => {
         </Badge>
       )
     },
-    { 
-      key: 'active', 
+    {
+      key: 'active',
       label: 'Statut',
       render: (value) => (
         <Badge pill bg={value ? 'success' : 'danger'}>
@@ -437,31 +454,12 @@ const ShopsView = () => {
       )
     },
     {
-      key: 'tipPercentage',
-      label: 'Pourboire (%)',
-      render: (val, boutique) => (
-        !boutique.tipsEnabled ? (
-            <Badge bg="secondary" pill className="fw-normal px-3">
-                🚫 Désactivé (Manuel)
-            </Badge>
-        ) : (
-            boutique.serverCount > 0 ? (
-                <Badge bg="info-subtle" text="info" pill className="fw-bold px-3">
-                    {val !== undefined ? val : 5}%
-                </Badge>
-            ) : (
-                <span className="text-muted small italic">Inactif (Pas de serveur)</span>
-            )
-        )
-      )
-    },
-    { 
       key: 'vendeurs',
       label: 'Gérants Assignés',
       render: (vendeurs, boutique) => {
         // Si vendeurs est vide, on utilise l'ancien champ 'vendeur' comme fallback
-        const displayList = (vendeurs && vendeurs.length > 0) 
-          ? vendeurs 
+        const displayList = (vendeurs && vendeurs.length > 0)
+          ? vendeurs
           : (boutique.vendeur ? [boutique.vendeur] : []);
 
         return (
@@ -478,7 +476,7 @@ const ShopsView = () => {
         );
       }
     },
-    { 
+    {
       key: 'actions',
       label: 'Actions',
       render: (_, boutique) => (
@@ -516,7 +514,7 @@ const ShopsView = () => {
   ];
 
   // Logique de filtrage et pagination
-  const filteredBoutiques = boutiques.filter(boutique => 
+  const filteredBoutiques = (boutiques || []).filter(boutique =>
     boutique.nom.toLowerCase().includes(searchTerm.toLowerCase())
   );
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -532,18 +530,18 @@ const ShopsView = () => {
       return []; // Pas de source, pas de destination
     }
     // Retourne toutes les boutiques sauf la source
-    return boutiques.filter(b => b._id !== transferData.sourceId);
+    return (boutiques || []).filter(b => b._id !== transferData.sourceId);
   };
 
   // Calcul du centre de la carte (Centrale ou défaut)
-  const defaultCenter = centralShop 
-    ? [centralShop.latitude || 9.6412, centralShop.longitude || -13.5784] 
+  const defaultCenter = centralShop
+    ? [centralShop.latitude || 9.6412, centralShop.longitude || -13.5784]
     : [9.6412, -13.5784];
-  
+
   const mapCenter = forcedCenter || defaultCenter;
 
   // Logique de filtrage pour la modale de transfert
-  const filteredSourceArticles = sourceArticles.filter(article =>
+  const filteredSourceArticles = (sourceArticles || []).filter(article =>
     article.nom.toLowerCase().includes(transferSearchTerm.toLowerCase()) ||
     (article.code && article.code.toLowerCase().includes(transferSearchTerm.toLowerCase()))
   );
@@ -552,508 +550,492 @@ const ShopsView = () => {
   // Calcul de la valeur totale du stock à transférer
   const totalTransferValue = useMemo(() => {
     return selectedArticles.reduce((total, articleId) => {
-        const article = sourceArticles.find(a => a._id === articleId);
-        const quantity = transferQuantities[articleId] || 0;
-        if (article) {
-            // S'assurer que la quantité est un nombre
-            return total + (article.prixAchat * parseInt(quantity, 10));
-        }
-        return total;
+      const article = sourceArticles.find(a => a._id === articleId);
+      const quantity = transferQuantities[articleId] || 0;
+      if (article) {
+        // S'assurer que la quantité est un nombre
+        return total + (article.prixAchat * parseInt(quantity, 10));
+      }
+      return total;
     }, 0);
   }, [selectedArticles, transferQuantities, sourceArticles]);
 
   // Préparation des lignes de flux (Centrale -> Secondaires)
-  const flowLines = centralShop ? boutiques.filter(b => b.type === 'Secondaire' && b.latitude && b.longitude).map(b => [[centralShop.latitude, centralShop.longitude], [b.latitude, b.longitude]]) : [];
+  const flowLines = centralShop ? (boutiques || []).filter(b => b.type === 'Secondaire' && b.latitude && b.longitude).map(b => [[centralShop.latitude, centralShop.longitude], [b.latitude, b.longitude]]) : [];
 
   if (loading) return <Spinner animation="border" />;
 
   return (
     <ErrorBoundary>
-    <div className="p-4">
-      <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
-        <h3 className="fw-bold mb-0 text-body">Gestion des Boutiques</h3>
-        <div className="d-flex flex-wrap gap-2">
+      <div className="p-4">
+        <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
+          <h3 className="fw-bold mb-0 text-body">Gestion des Boutiques</h3>
+          <div className="d-flex flex-wrap gap-2">
             {/* Boutons de bascule Vue Liste / Vue Carte */}
             <div className="btn-group me-2" role="group">
-                <Button variant={viewMode === 'list' ? 'primary' : 'outline-primary'} onClick={() => { setViewMode('list'); setSelectedBoutiqueId(null); }}>
-                    <iconify-icon icon="solar:list-bold" className="me-1 align-middle"></iconify-icon> Liste
-                </Button>
-                <Button variant={viewMode === 'map' ? 'primary' : 'outline-primary'} onClick={() => setViewMode('map')}>
-                    <iconify-icon icon="solar:map-point-bold" className="me-1 align-middle"></iconify-icon> Carte
-                </Button>
+              <Button variant={viewMode === 'list' ? 'primary' : 'outline-primary'} onClick={() => { setViewMode('list'); setSelectedBoutiqueId(null); }}>
+                <iconify-icon icon="solar:list-bold" className="me-1 align-middle"></iconify-icon> Liste
+              </Button>
+              <Button variant={viewMode === 'map' ? 'primary' : 'outline-primary'} onClick={() => setViewMode('map')}>
+                <iconify-icon icon="solar:map-point-bold" className="me-1 align-middle"></iconify-icon> Carte
+              </Button>
             </div>
             <Button variant="outline-primary" onClick={() => setShowTransferModal(true)} className="rounded-pill px-4 shadow-sm">
-                <iconify-icon icon="solar:box-minimalistic-bold" className="me-2 align-middle"></iconify-icon>
-                Transférer Stock
+              <iconify-icon icon="solar:box-minimalistic-bold" className="me-2 align-middle"></iconify-icon>
+              Expédier vers une Boutique
             </Button>
             <Button variant="primary" onClick={() => handleShowModal()} className="rounded-pill px-4 shadow-sm">
-                <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
-                Ajouter une Boutique
+              <iconify-icon icon="solar:add-circle-bold" className="me-2 align-middle"></iconify-icon>
+              Ajouter une Boutique
             </Button>
-        </div>
-      </div>
-
-      {/* Barre de recherche */}
-      <div className="mb-4">
-        <Form.Control
-          type="text"
-          placeholder="Rechercher une boutique par nom..."
-          value={searchTerm}
-          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-          style={{ maxWidth: '300px' }}
-          className="shadow-sm"
-        />
-      </div>
-
-      {/* Alerte si aucune boutique centrale n'est configurée */}
-      {!centralShop && !loading && (
-        <Alert variant="warning" className="shadow-sm mt-3 d-flex justify-content-between align-items-center">
-          <div className="d-flex align-items-center">
-            <iconify-icon icon="solar:info-circle-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
-            <span><strong>Information :</strong> Aucun "Dépôt Principal" (type "Centrale") n'est configuré.</span>
           </div>
-          <Button variant="warning" onClick={handleShowCreateCentralModal} className="rounded-pill px-3 fw-bold">
-            <iconify-icon icon="solar:add-circle-bold" className="me-2"></iconify-icon> Créer un Dépôt Principal
-          </Button>
-        </Alert>
-      )}
+        </div>
 
-      {successMessage && <Alert variant="success">{successMessage}</Alert>}
-      {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
+        {/* Barre de recherche */}
+        <div className="mb-4">
+          <Form.Control
+            type="text"
+            placeholder="Rechercher une boutique par nom..."
+            value={searchTerm}
+            onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+            style={{ maxWidth: '300px' }}
+            className="shadow-sm"
+          />
+        </div>
 
-      {viewMode === 'list' ? (
-        <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
+        {/* Alerte si aucune boutique centrale n'est configurée */}
+        {!centralShop && !loading && (
+          <Alert variant="warning" className="shadow-sm mt-3 d-flex justify-content-between align-items-center">
+            <div className="d-flex align-items-center">
+              <iconify-icon icon="solar:info-circle-bold" className="me-2" style={{ fontSize: '20px' }}></iconify-icon>
+              <span><strong>Information :</strong> Aucun établissement principal (Dépôt ou Bar) n'est configuré.</span>
+            </div>
+            <Button variant="warning" onClick={handleShowCreateCentralModal} className="rounded-pill px-3 fw-bold">
+              <iconify-icon icon="solar:add-circle-bold" className="me-2"></iconify-icon> Créer un Établissement Principal
+            </Button>
+          </Alert>
+        )}
+
+        {successMessage && <Alert variant="success">{successMessage}</Alert>}
+        {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
+
+        {viewMode === 'list' ? (
+          <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
             <Card.Body className="p-0">
-            <TableComponent 
+              <TableComponent
                 columns={columns}
                 data={currentBoutiques}
                 emptyMessage="Aucune boutique trouvée"
-            />
-            {totalPages > 1 && (
+              />
+              {totalPages > 1 && (
                 <div className="d-flex justify-content-center p-3 border-top">
-                <Pagination className="mb-0">
+                  <Pagination className="mb-0">
                     <Pagination.Prev onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1} />
                     {[...Array(totalPages)].map((_, idx) => (
-                    <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
+                      <Pagination.Item key={idx + 1} active={idx + 1 === currentPage} onClick={() => setCurrentPage(idx + 1)}>
                         {idx + 1}
-                    </Pagination.Item>
+                      </Pagination.Item>
                     ))}
                     <Pagination.Next onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage === totalPages} />
-                </Pagination>
+                  </Pagination>
                 </div>
-            )}
+              )}
             </Card.Body>
-        </Card>
-      ) : (
-        <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
+          </Card>
+        ) : (
+          <Card className="border-0 shadow-sm rounded-4 overflow-hidden">
             <Card.Header className="d-flex flex-wrap justify-content-between align-items-center py-3 gap-2">
-                <h5 className="fw-bold mb-0">Carte des Boutiques</h5>
-                <div className="d-flex align-items-center gap-2">
-                    <Form.Label className="mb-0 small text-nowrap">Rayon (m):</Form.Label>
-                    <Form.Control 
-                        type="number" 
-                        size="sm" 
-                        value={radius} 
-                        onChange={e => setRadius(Number(e.target.value))}
-                        step="100"
-                        min="100"
-                    />
-                </div>
+              <h5 className="fw-bold mb-0">Carte des Boutiques</h5>
+              <div className="d-flex align-items-center gap-2">
+                <Form.Label className="mb-0 small text-nowrap">Rayon (m):</Form.Label>
+                <Form.Control
+                  type="number"
+                  size="sm"
+                  value={radius}
+                  onChange={e => setRadius(Number(e.target.value))}
+                  step="100"
+                  min="100"
+                />
+              </div>
             </Card.Header>
             <Card.Body className="p-0">
-                <div style={{ height: '600px', width: '100%' }}>
-                    <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%' }}>
-                        <RecenterMap center={mapCenter} />
-                        <TileLayer
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                        />
-                        {/* Lignes de flux (Réseau) */}
-                        {flowLines.map((line, idx) => (
-                            <Polyline key={idx} positions={line} color="blue" dashArray="5, 10" weight={2} opacity={0.5} />
-                        ))}
+              <div style={{ height: '600px', width: '100%' }}>
+                <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%' }}>
+                  <RecenterMap center={mapCenter} />
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  />
+                  {/* Lignes de flux (Réseau) */}
+                  {flowLines.map((line, idx) => (
+                    <Polyline key={idx} positions={line} color="blue" dashArray="5, 10" weight={2} opacity={0.5} />
+                  ))}
 
-                        {/* Cercle de rayon autour de la boutique sélectionnée */}
-                        {selectedBoutique && selectedBoutique.latitude && selectedBoutique.longitude && (
-                            <Circle
-                                center={[selectedBoutique.latitude, selectedBoutique.longitude]}
-                                radius={radius}
-                                pathOptions={{ color: '#198754', fillColor: '#198754', fillOpacity: 0.1 }}
-                            />
-                        )}
+                  {/* Cercle de rayon autour de la boutique sélectionnée */}
+                  {selectedBoutique && selectedBoutique.latitude && selectedBoutique.longitude && (
+                    <Circle
+                      center={[selectedBoutique.latitude, selectedBoutique.longitude]}
+                      radius={radius}
+                      pathOptions={{ color: '#198754', fillColor: '#198754', fillOpacity: 0.1 }}
+                    />
+                  )}
 
-                        {/* Marqueurs des boutiques */}
-                        {boutiques.map(boutique => (
-                            boutique.latitude && boutique.longitude && (
-                                <Marker 
-                                    key={boutique._id} 
-                                    position={[boutique.latitude, boutique.longitude]}
-                                    ref={(el) => (markerRefs.current[boutique._id] = el)}
-                                    icon={boutique._id === selectedBoutiqueId ? greenIcon : blueIcon}
-                                    eventHandlers={{
-                                        click: () => {
-                                            setSelectedBoutiqueId(boutique._id);
-                                        },
-                                    }}
-                                >
-                                    <Popup>
-                                        <div className="text-center">
-                                            <h6 className="fw-bold mb-1">{boutique.nom}</h6>
-                                            <Badge bg={boutique.type === 'Centrale' ? 'primary' : 'secondary'} className="mb-2">{boutique.type === 'Centrale' ? 'Dépôt Principal' : boutique.type}</Badge>                                            <p className="mb-0 small">{boutique.adresse}</p>
-                                        </div>
-                                    </Popup>
-                                </Marker>
-                            )
-                        ))}
-                    </MapContainer>
-                </div>
+                  {/* Marqueurs des boutiques */}
+                  {boutiques.map(boutique => (
+                    boutique.latitude && boutique.longitude && (
+                      <Marker
+                        key={boutique._id}
+                        position={[boutique.latitude, boutique.longitude]}
+                        ref={(el) => (markerRefs.current[boutique._id] = el)}
+                        icon={boutique._id === selectedBoutiqueId ? greenIcon : blueIcon}
+                        eventHandlers={{
+                          click: () => {
+                            setSelectedBoutiqueId(boutique._id);
+                          },
+                        }}
+                      >
+                        <Popup>
+                          <div className="text-center">
+                            <h6 className="fw-bold mb-1">{boutique.nom}</h6>
+                            <Badge bg={boutique.type === 'Centrale' ? 'primary' : 'secondary'} className="mb-2">{boutique.type === 'Centrale' ? 'Dépôt Principal' : boutique.type}</Badge>                                            <p className="mb-0 small">{boutique.adresse}</p>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    )
+                  ))}
+                </MapContainer>
+              </div>
             </Card.Body>
-        </Card>
-      )}
+          </Card>
+        )}
 
-      <Modal show={showModal} onHide={handleCloseModal}>
-        <Modal.Header closeButton>
-          <Modal.Title>
-            {editMode ? 'Modifier la Boutique' : 'Nouvelle Boutique'}
-          </Modal.Title>
-        </Modal.Header>
-        <Form onSubmit={handleSubmit}>
-          <Modal.Body>
-            <Form.Group className="mb-3">
-              <Form.Label>Nom de la boutique</Form.Label>
-              <Form.Control
-                type="text"
-                name="nom"
-                value={currentBoutique.nom}
-                onChange={handleChange}
-                required
-              />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Adresse</Form.Label>
-              <Form.Control
-                as="textarea"
-                rows={3}
-                name="adresse"
-                value={currentBoutique.adresse}
-                onChange={handleChange}
-                required
-              />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Label>Type de boutique</Form.Label>
-              <Form.Select
-                name="type"
-                value={currentBoutique.type || 'Secondaire'}
-                onChange={handleChange}
-                required
-              >
-                <option value="Secondaire">Secondaire</option>
-                <option value="Centrale">Dépôt Principal</option>
-              </Form.Select>
-            </Form.Group>
-
-            <Form.Group className="mb-3">
-              <Form.Check
-                type="switch"
-                id="tips-enabled-switch"
-                label="Autoriser les pourboires pour cette boutique"
-                name="tipsEnabled"
-                checked={currentBoutique.tipsEnabled}
-                onChange={handleChange}
-              />
-              <Form.Text className="text-muted">Si désactivé, aucun pourboire ne sera calculé, même si des serveurs sont créés.</Form.Text>
-            </Form.Group>
-
-            <Form.Group className="mb-3">
-              <Form.Label className="fw-bold">Pourcentage Pourboire (%)</Form.Label>
-              <Form.Control
-                type="number"
-                name="tipPercentage"
-                value={currentBoutique.tipPercentage}
-                onChange={handleChange}
-                min="0"
-                max="100"
-                required
-              />
-              <Form.Text className="text-muted">Définit le taux de pourboire automatique pour les serveurs de cette boutique.</Form.Text>
-            </Form.Group>
-
-            <div className="border rounded p-3 mb-3 bg-light">
+        <Modal show={showModal} onHide={handleCloseModal}>
+          <Modal.Header closeButton>
+            <Modal.Title>
+              {editMode ? 'Modifier la Boutique' : 'Nouvelle Boutique'}
+            </Modal.Title>
+          </Modal.Header>
+          <Form onSubmit={handleSubmit}>
+            <Modal.Body>
+              <Form.Group className="mb-3">
+                <Form.Label>Nom de la boutique</Form.Label>
+                <Form.Control
+                  type="text"
+                  name="nom"
+                  value={currentBoutique.nom}
+                  onChange={handleChange}
+                  required
+                />
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label>Adresse</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={3}
+                  name="adresse"
+                  value={currentBoutique.adresse}
+                  onChange={handleChange}
+                  required
+                />
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label>Ville</Form.Label>
+                <Form.Control
+                  type="text"
+                  name="ville"
+                  value={currentBoutique.ville}
+                  onChange={handleChange}
+                  required
+                />
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label>Type de boutique</Form.Label>
+                <Form.Select
+                  name="type"
+                  value={currentBoutique.type || 'Secondaire'}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="Secondaire">Secondaire</option>
+                  <option value="Bar">Bar</option> {/* Nouveau type Bar */}
+                  <option value="Centrale">Dépôt Principal</option>
+                </Form.Select>
+              </Form.Group>
+              <div className="border rounded p-3 mb-3 bg-light">
                 <h6 className="fw-bold text-primary mb-3">Configuration des QR Codes de Paiement</h6>
                 {[
-                    { id: 'orangeMoneyQrCode', accId: 'orangeMoneyAccount', label: 'Orange Money', color: 'info' },
-                    { id: 'mobicashQrCode', accId: 'mobicashAccount', label: 'MobiCash', color: 'success' },
-                    { id: 'paycardQrCode', accId: 'paycardAccount', label: 'PayCard', color: 'primary' }
+                  { id: 'orangeMoneyQrCode', accId: 'orangeMoneyAccount', label: 'Orange Money', color: 'info' },
+                  { id: 'mobicashQrCode', accId: 'mobicashAccount', label: 'MobiCash', color: 'success' },
+                  { id: 'paycardQrCode', accId: 'paycardAccount', label: 'PayCard', color: 'primary' }
                 ].map(mode => (
-                    <div key={mode.id} className="mb-3 p-2 border-bottom">
-                        <Form.Label className={`small fw-bold text-${mode.color} text-uppercase`}>{mode.label}</Form.Label>
-                        <Form.Group className="mb-2">
-                            <Form.Control
-                                type="text"
-                                name={mode.accId}
-                                value={currentBoutique[mode.accId] || ''}
-                                onChange={handleChange}
-                                placeholder={`N° de compte / téléphone ${mode.label}`}
-                                size="sm"
-                                className="rounded-pill"
-                            />
-                        </Form.Group>
-                        <Form.Group>
-                            <div className="d-flex align-items-center gap-2">
-                                {currentBoutique[mode.id] ? (
-                                    <img 
-                                        src={currentBoutique[mode.id]} 
-                                        alt={`QR ${mode.label}`} 
-                                        className="border rounded bg-white" 
-                                        style={{ width: '45px', height: '45px', objectFit: 'contain' }} 
-                                    />
-                                ) : (
-                                    <div className="border rounded bg-white d-flex align-items-center justify-content-center text-muted" style={{ width: '45px', height: '45px' }}>
-                                        <iconify-icon icon="solar:qr-code-linear"></iconify-icon>
-                                    </div>
-                                )}
-                                <div className="flex-grow-1">
-                                <Form.Control
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={(e) => handleQrCodeChange(e, mode.id)}
-                                    size="sm"
-                                />
-                            </div>
-                                {currentBoutique[mode.id] && (
-                                    <Button variant="outline-danger" size="sm" className="rounded-circle p-1 d-flex" onClick={() => setCurrentBoutique({...currentBoutique, [mode.id]: ''})}>
-                                        <iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon>
-                                    </Button>
-                                )}
-                            </div>
-                        </Form.Group>
-                    </div>
-                ))}
-            </div>
-
-            <Form.Group className="mb-3">
-              <Form.Label className="fw-bold">Assigner des Gérants</Form.Label>
-              <div className="border rounded p-2" style={{ maxHeight: '150px', overflowY: 'auto' }}>
-                {allGerants.length > 0 ? (
-                    allGerants.map(gerant => {
-                        const isTaken = isGerantTaken(gerant._id);
-                        const boutiqueName = isTaken ? boutiques.find(b => b.vendeurs?.some(v => (v._id || v) === gerant._id))?.nom : '';
-                        
-                        return (
-                            <Form.Check 
-                                key={gerant._id}
-                                type="checkbox"
-                                id={`gerant-${gerant._id}`}
-                                label={
-                                    <span>
-                                        {gerant.nom} {isTaken && <small className="text-danger ms-1">(Déjà à : {boutiqueName})</small>}
-                                    </span>
-                                }
-                                checked={currentBoutique.vendeurs.includes(gerant._id)}
-                                onChange={() => handleGerantToggle(gerant._id)}
-                                disabled={isTaken}
-                                className="mb-1"
-                            />
-                        );
-                    })
-                ) : (
-                    <small className="text-muted italic">Aucun gérant trouvé dans le système.</small>
-                )}
-              </div>
-              <Form.Text className="text-muted">
-                {currentBoutique.vendeurs.length} gérant(s) sélectionné(s)
-              </Form.Text>
-            </Form.Group>
-            
-            <div className="row">
-                <div className="col-md-6">
-                    <Form.Group className="mb-3">
-                        <Form.Label>Latitude</Form.Label>
-                        <Form.Control
-                            type="number" step="any" name="latitude"
-                            value={currentBoutique.latitude} onChange={handleChange}
-                        />
+                  <div key={mode.id} className="mb-3 p-2 border-bottom">
+                    <Form.Label className={`small fw-bold text-${mode.color} text-uppercase`}>{mode.label}</Form.Label>
+                    <Form.Group className="mb-2">
+                      <Form.Control
+                        type="text"
+                        name={mode.accId}
+                        value={currentBoutique[mode.accId] || ''}
+                        onChange={handleChange}
+                        placeholder={`N° de compte / téléphone ${mode.label}`}
+                        size="sm"
+                        className="rounded-pill"
+                      />
                     </Form.Group>
-                </div>
-                <div className="col-md-6">
-                    <Form.Group className="mb-3">
-                        <Form.Label>Longitude</Form.Label>
-                        <Form.Control
-                            type="number" step="any" name="longitude"
-                            value={currentBoutique.longitude} onChange={handleChange}
-                        />
-                    </Form.Group>
-                </div>
-            </div>
-
-            <Form.Group className="mb-3">
-              <Form.Check
-                type="checkbox"
-                name="active"
-                label="Boutique active"
-                checked={currentBoutique.active}
-                onChange={handleChange}
-              />
-            </Form.Group>
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={handleCloseModal}>
-              Annuler
-            </Button>
-            <Button variant="primary" type="submit">
-              {editMode ? 'Modifier' : 'Créer'}
-            </Button>
-          </Modal.Footer>
-        </Form>
-      </Modal>
-
-      {/* Modale de Réapprovisionnement (maintenant un composant séparé) */}
-      <RestockModal show={showRestockModal} onHide={() => setShowRestockModal(false)} onSuccess={handleRestockSuccess} />
-
-      {/* Modale de Transfert de Stock */}
-      <Modal show={showTransferModal} onHide={() => setShowTransferModal(false)}>
-        <Modal.Header closeButton>
-          <Modal.Title>Transférer le Stock</Modal.Title>
-        </Modal.Header>
-        <Form onSubmit={handleTransfer}>
-          <Modal.Body>
-            <Alert variant="info" className="small">
-                Déplacez tous les articles d'une boutique à une autre. Utile avant de supprimer une boutique ou lors d'un changement de gérant.
-            </Alert>
-            {transferMessage.text && <Alert variant={transferMessage.type}>{transferMessage.text}</Alert>}
-            
-            <Form.Group className="mb-3">
-              <Form.Label>Depuis la boutique (Source)</Form.Label>
-              <Form.Select 
-                value={transferData.sourceId}
-                onChange={handleTransferSourceChange}
-                required
-              >
-                <option value="">Sélectionner...</option>
-                {boutiques.map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
-              </Form.Select>
-            </Form.Group>
-
-            {/* Liste de sélection des articles */}
-            {transferData.sourceId && (
-                <Form.Group className="mb-3">
-                    <Form.Label>Sélectionner les articles à transférer</Form.Label>
-                    {loadingArticles ? <div className="text-center"><Spinner size="sm" /></div> : (
-                        <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', padding: '10px', borderRadius: '4px' }}>
-                            {sourceArticles.length > 0 || transferSearchTerm ? (
-                                <>
-                                <Form.Control
-                                    type="text"
-                                    placeholder="Rechercher un article..."
-                                    value={transferSearchTerm}
-                                    onChange={(e) => setTransferSearchTerm(e.target.value)}
-                                    className="mb-2"
-                                    size="sm"
-                                />
-                                <Form.Check 
-                                    type="checkbox"
-                                    label={`Tout sélectionner (${filteredSourceArticles.length})`}
-                                    checked={allFilteredAreSelected}
-                                    onChange={(e) => {
-                                        if (e.target.checked) setSelectedArticles(filteredSourceArticles.map(a => a._id));
-                                        else {
-                                            setSelectedArticles([]);
-                                            setTransferQuantities({});
-                                        }
-                                    }}
-                                    className="mb-2 fw-bold text-primary"
-                                />
-                                {filteredSourceArticles.map(article => (
-                                    <div key={article._id} className="d-flex align-items-center justify-content-between mb-2 border-bottom pb-1">
-                                        <Form.Check 
-                                            type="checkbox"
-                                            label={`${article.nom} (Dispo: ${article.quantite})`}
-                                            checked={selectedArticles.includes(article._id)}
-                                            onChange={(e) => {
-                                                if (e.target.checked) {
-                                                    setSelectedArticles([...selectedArticles, article._id]);
-                                                    // Par défaut, quantité max
-                                                    setTransferQuantities({...transferQuantities, [article._id]: article.quantite});
-                                                } else {
-                                                    setSelectedArticles(selectedArticles.filter(id => id !== article._id));
-                                                }
-                                            }}
-                                            className="flex-grow-1"
-                                        />
-                                        {selectedArticles.includes(article._id) && (
-                                            <Form.Control 
-                                                type="number" 
-                                                min="1" 
-                                                max={article.quantite}
-                                                value={transferQuantities[article._id] || article.quantite}
-                                                onChange={(e) => setTransferQuantities({...transferQuantities, [article._id]: parseInt(e.target.value)})}
-                                                style={{ width: '80px' }}
-                                                size="sm"
-                                                onClick={(e) => e.stopPropagation()}
-                                            />
-                                        )}
-                                    </div>
-                                ))}
-                                {filteredSourceArticles.length === 0 && sourceArticles.length > 0 && (
-                                    <p className="text-muted small mb-0">Aucun article ne correspond à votre recherche.</p>
-                                )}
-                                </>
-                            ) : <p className="text-muted small mb-0">Aucun article dans cette boutique.</p>}
+                    <Form.Group>
+                      <div className="d-flex align-items-center gap-2">
+                        {currentBoutique[mode.id] ? (
+                          <img
+                            src={currentBoutique[mode.id]}
+                            alt={`QR ${mode.label}`}
+                            className="border rounded bg-white"
+                            style={{ width: '45px', height: '45px', objectFit: 'contain' }}
+                          />
+                        ) : (
+                          <div className="border rounded bg-white d-flex align-items-center justify-content-center text-muted" style={{ width: '45px', height: '45px' }}>
+                            <iconify-icon icon="solar:qr-code-linear"></iconify-icon>
+                          </div>
+                        )}
+                        <div className="flex-grow-1">
+                          <Form.Control
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleQrCodeChange(e, mode.id)}
+                            size="sm"
+                          />
                         </div>
-                    )}
-                    <Form.Text className="text-muted">
-                        {selectedArticles.length} article(s) sélectionné(s)
-                    </Form.Text>
-                </Form.Group>
-            )}
+                        {currentBoutique[mode.id] && (
+                          <Button variant="outline-danger" size="sm" className="rounded-circle p-1 d-flex" onClick={() => setCurrentBoutique({ ...currentBoutique, [mode.id]: '' })}>
+                            <iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon>
+                          </Button>
+                        )}
+                      </div>
+                    </Form.Group>
+                  </div>
+                ))}
+              </div>
 
-            <Form.Group className="mb-3">
-              <Form.Label>Vers la boutique (Destination)</Form.Label>
-              <Form.Select 
-                value={transferData.targetId}
-                onChange={(e) => setTransferData({...transferData, targetId: e.target.value})}
-                required
-                disabled={!transferData.sourceId}
-              >
-                <option value="">Sélectionner une destination...</option>
-                {getTargetBoutiquesForTransfer().map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
-              </Form.Select>
-            </Form.Group>
-          </Modal.Body>
-          <Modal.Footer>
-            <div className="me-auto">
+              <Form.Group className="mb-3">
+                <Form.Label className="fw-bold">Assigner des Gérants</Form.Label>
+                <div className="border rounded p-2" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                  {allGerants.length > 0 ? (
+                    allGerants.map(gerant => {
+                      const isTaken = isGerantTaken(gerant._id);
+                      const boutiqueName = isTaken ? boutiques.find(b => b.vendeurs?.some(v => (v._id || v) === gerant._id))?.nom : '';
+
+                      return (
+                        <Form.Check
+                          key={gerant._id}
+                          type="checkbox"
+                          id={`gerant-${gerant._id}`}
+                          label={
+                            <span>
+                              {gerant.nom} {isTaken && <small className="text-danger ms-1">(Déjà à : {boutiqueName})</small>}
+                            </span>
+                          }
+                          checked={currentBoutique.vendeurs.includes(gerant._id)}
+                          onChange={() => handleGerantToggle(gerant._id)}
+                          disabled={isTaken}
+                          className="mb-1"
+                        />
+                      );
+                    })
+                  ) : (
+                    <small className="text-muted italic">Aucun gérant trouvé dans le système.</small>
+                  )}
+                </div>
+                <Form.Text className="text-muted">
+                  {currentBoutique.vendeurs.length} gérant(s) sélectionné(s)
+                </Form.Text>
+              </Form.Group>
+
+              <div className="row">
+                <div className="col-md-6">
+                  <Form.Group className="mb-3">
+                    <Form.Label>Latitude</Form.Label>
+                    <Form.Control
+                      type="number" step="any" name="latitude"
+                      value={currentBoutique.latitude} onChange={handleChange}
+                    />
+                  </Form.Group>
+                </div>
+                <div className="col-md-6">
+                  <Form.Group className="mb-3">
+                    <Form.Label>Longitude</Form.Label>
+                    <Form.Control
+                      type="number" step="any" name="longitude"
+                      value={currentBoutique.longitude} onChange={handleChange}
+                    />
+                  </Form.Group>
+                </div>
+              </div>
+
+              <Form.Group className="mb-3">
+                <Form.Check
+                  type="checkbox"
+                  name="active"
+                  label="Boutique active"
+                  checked={currentBoutique.active}
+                  onChange={handleChange}
+                />
+              </Form.Group>
+            </Modal.Body>
+            <Modal.Footer>
+              <Button variant="secondary" onClick={handleCloseModal}>
+                Annuler
+              </Button>
+              <Button variant="primary" type="submit">
+                {editMode ? 'Modifier' : 'Créer'}
+              </Button>
+            </Modal.Footer>
+          </Form>
+        </Modal>
+
+        {/* Modale de Réapprovisionnement (maintenant un composant séparé) */}
+        <RestockModal show={showRestockModal} onHide={() => setShowRestockModal(false)} onSuccess={handleRestockSuccess} />
+
+        {/* Modale de Transfert de Stock */}
+        <Modal show={showTransferModal} onHide={() => setShowTransferModal(false)}>
+          <Modal.Header closeButton>
+            <Modal.Title>Expédier vers une Boutique</Modal.Title>
+          </Modal.Header>
+          <Form onSubmit={handleTransfer}>
+            <Modal.Body>
+              <Alert variant="info" className="small">
+                Déplacez tous les articles d'une boutique à une autre. Utile avant de supprimer une boutique ou lors d'un changement de gérant.
+              </Alert>
+              {transferMessage.text && <Alert variant={transferMessage.type}>{transferMessage.text}</Alert>}
+
+              <Form.Group className="mb-3">
+                <Form.Label>Depuis la boutique (Source)</Form.Label>
+                <Form.Select
+                  value={transferData.sourceId}
+                  onChange={handleTransferSourceChange}
+                  required
+                >
+                  <option value="">Sélectionner...</option>
+                  {boutiques.map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
+                </Form.Select>
+              </Form.Group>
+
+              {/* Liste de sélection des articles */}
+              {transferData.sourceId && (
+                <Form.Group className="mb-3">
+                  <Form.Label>Sélectionner les articles à transférer</Form.Label>
+                  {loadingArticles ? <div className="text-center"><Spinner size="sm" /></div> : (
+                    <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #dee2e6', padding: '10px', borderRadius: '4px' }}>
+                      {sourceArticles.length > 0 || transferSearchTerm ? (
+                        <>
+                          <Form.Control
+                            type="text"
+                            placeholder="Rechercher un article..."
+                            value={transferSearchTerm}
+                            onChange={(e) => setTransferSearchTerm(e.target.value)}
+                            className="mb-2"
+                            size="sm"
+                          />
+                          <Form.Check
+                            type="checkbox"
+                            label={`Tout sélectionner (${filteredSourceArticles.length})`}
+                            checked={allFilteredAreSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedArticles(filteredSourceArticles.map(a => a._id));
+                              else {
+                                setSelectedArticles([]);
+                                setTransferQuantities({});
+                              }
+                            }}
+                            className="mb-2 fw-bold text-primary"
+                          />
+                          {filteredSourceArticles.map(article => (
+                            <div key={article._id} className="d-flex align-items-center justify-content-between mb-2 border-bottom pb-1">
+                              <Form.Check
+                                type="checkbox"
+                                label={`${article.nom} (Dispo: ${article.quantite})`}
+                                checked={selectedArticles.includes(article._id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedArticles([...selectedArticles, article._id]);
+                                    // Par défaut, quantité max
+                                    setTransferQuantities({ ...transferQuantities, [article._id]: article.quantite });
+                                  } else {
+                                    setSelectedArticles(selectedArticles.filter(id => id !== article._id));
+                                  }
+                                }}
+                                className="flex-grow-1"
+                              />
+                              {selectedArticles.includes(article._id) && (
+                                <Form.Control
+                                  type="number"
+                                  min="1"
+                                  max={article.quantite}
+                                  value={transferQuantities[article._id] || article.quantite}
+                                  onChange={(e) => setTransferQuantities({ ...transferQuantities, [article._id]: parseInt(e.target.value) })}
+                                  style={{ width: '80px' }}
+                                  size="sm"
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
+                            </div>
+                          ))}
+                          {filteredSourceArticles.length === 0 && sourceArticles.length > 0 && (
+                            <p className="text-muted small mb-0">Aucun article ne correspond à votre recherche.</p>
+                          )}
+                        </>
+                      ) : <p className="text-muted small mb-0">Aucun article dans cette boutique.</p>}
+                    </div>
+                  )}
+                  <Form.Text className="text-muted">
+                    {selectedArticles.length} article(s) sélectionné(s)
+                  </Form.Text>
+                </Form.Group>
+              )}
+
+              <Form.Group className="mb-3">
+                <Form.Label>Vers la boutique (Destination)</Form.Label>
+                <Form.Select
+                  value={transferData.targetId}
+                  onChange={(e) => setTransferData({ ...transferData, targetId: e.target.value })}
+                  required
+                  disabled={!transferData.sourceId}
+                >
+                  <option value="">Sélectionner une destination...</option>
+                  {getTargetBoutiquesForTransfer().map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
+                </Form.Select>
+              </Form.Group>
+            </Modal.Body>
+            <Modal.Footer>
+              <div className="me-auto">
                 <span className="fw-bold">Valeur du stock : </span>
                 <Badge bg="success" pill className="p-2 fs-6">
-                    {totalTransferValue.toLocaleString('fr-FR')} GNF
+                  {totalTransferValue.toLocaleString('fr-FR')} GNF
                 </Badge>
-            </div>
-            <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
-            <Button variant="primary" type="submit" disabled={transferLoading}>
-              {transferLoading ? <Spinner as="span" animation="border" size="sm" /> : `Transférer (${selectedArticles.length})`}
-            </Button>
-          </Modal.Footer>
-        </Form>
-      </Modal>
+              </div>
+              <Button variant="secondary" onClick={() => setShowTransferModal(false)}>Annuler</Button>
+              <Button variant="primary" type="submit" disabled={transferLoading}>
+                {transferLoading ? <Spinner as="span" animation="border" size="sm" /> : `Transférer (${selectedArticles.length})`}
+              </Button>
+            </Modal.Footer>
+          </Form>
+        </Modal>
 
-      {/* Modale de Confirmation de Suppression (Moderne) */}
-      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
-        <Modal.Header closeButton>
-          <Modal.Title className="text-danger">⚠️ Suppression de Boutique</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <p className="fw-bold">Êtes-vous sûr de vouloir supprimer cette boutique ?</p>
-          <Alert variant="warning" className="mb-0 small">
-            <iconify-icon icon="solar:danger-triangle-bold" className="me-2 align-middle"></iconify-icon>
-            Cette action est irréversible. Assurez-vous que la boutique est vide ou utilisez "Transférer Stock" au préalable.
-          </Alert>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
-          <Button variant="danger" onClick={executeDelete}>Supprimer définitivement</Button>
-        </Modal.Footer>
-      </Modal>
-    </div>
+        {/* Modale de Confirmation de Suppression (Moderne) */}
+        <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+          <Modal.Header closeButton>
+            <Modal.Title className="text-danger">⚠️ Suppression de Boutique</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <p className="fw-bold">Êtes-vous sûr de vouloir supprimer cette boutique ?</p>
+            <Alert variant="warning" className="mb-0 small">
+              <iconify-icon icon="solar:danger-triangle-bold" className="me-2 align-middle"></iconify-icon>
+              Cette action est irréversible. Assurez-vous que la boutique est vide ou utilisez "Expédier vers une Boutique" au préalable.
+            </Alert>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Annuler</Button>
+            <Button variant="danger" onClick={executeDelete}>Supprimer définitivement</Button>
+          </Modal.Footer>
+        </Modal>
+      </div>
     </ErrorBoundary>
   );
 };

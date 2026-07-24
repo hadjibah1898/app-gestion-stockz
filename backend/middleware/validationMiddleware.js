@@ -1,3 +1,8 @@
+/**
+ * @file validationMiddleware.js
+ * @description validationMiddleware - middleware
+ */
+
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
 const Fournisseur = require('../models/Fournisseur');

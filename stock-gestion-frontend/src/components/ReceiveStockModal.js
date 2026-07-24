@@ -1,3 +1,8 @@
+/**
+ * @file ReceiveStockModal.js
+ * @description Composant React.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Modal, Button, Table, Form, Alert, Badge, Spinner } from 'react-bootstrap';
 import { articleAPI } from '../services/api';

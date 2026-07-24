@@ -1,3 +1,8 @@
+/**
+ * @file ThermalTicket.js
+ * @description Composant de ticket thermique/imprimable pour les ventes.
+ */
+
 import React from 'react';
 
 // Helper pour formater la devise de manière concise pour le ticket
@@ -35,7 +40,7 @@ const ThermalTicket = React.forwardRef(({ ticketData }, ref) => {
             <div className="text-center mb-2">
                 <div className="mx-auto bg-gray-200 rounded-full h-12 w-12 flex items-center justify-center text-xl font-bold mb-2">
                     JC
-                </div>
+                </div> // Correction: Utiliser le logo de la boutique
                 <h1 className="text-lg font-bold uppercase">{shopName}</h1>
                 <p className="text-xs text-gray-600">{address}</p>
                 <p className="text-xs text-gray-600">Tél: {phone} | Email: {email}</p>

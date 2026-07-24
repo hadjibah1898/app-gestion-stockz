@@ -18,8 +18,11 @@ const venteSchema = new mongoose.Schema({
     remiseType: { type: String, enum: ['montant', 'pourcentage'], default: 'montant' }, // Nouveau champ
     modePaiement: { type: String, default: 'Cash' },
     transactionRef: { type: String },
+    numeroFacture: { type: String },
     pourboire: { type: Number, default: 0 },
-    numeroTable: { type: String }
+    numeroTable: { type: String },
+    isSynced: { type: Boolean, default: false },
+    syncedAt: { type: Date }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Vente', venteSchema);

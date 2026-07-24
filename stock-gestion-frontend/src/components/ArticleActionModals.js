@@ -1,3 +1,8 @@
+/**
+ * @file ArticleActionModals.js
+ * @description Composant React.
+ */
+
 import React from 'react';
 import { Modal, Button, Alert, Form, Table, Spinner } from 'react-bootstrap';
 

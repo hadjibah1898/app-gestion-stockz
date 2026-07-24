@@ -1,3 +1,8 @@
+/**
+ * @file InboxPopover.js
+ * @description Composant React.
+ */
+
 import { Popover, OverlayTrigger, Button, Badge, ListGroup } from 'react-bootstrap';
 import './InboxPopover.css';
 

@@ -10,6 +10,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Form, Spinner, Alert, Row, Col, InputGroup, Modal, Tabs, Tab, Table, Badge } from 'react-bootstrap';
+import { toast } from 'react-toastify';
 import { useLocation } from 'react-router-dom';
 import { caisseAPI, clientAPI, venteAPI } from '../services/api';
 import jsPDF from 'jspdf';
@@ -40,7 +41,6 @@ const CaisseView = () => {
     const location = useLocation(); // Pour détecter si on vient du dashboard avec une action
     const [caisseStatut, setCaisseStatut] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
     // State for forms
@@ -74,22 +74,20 @@ const CaisseView = () => {
         try {
             setLoading(true);
             const res = await caisseAPI.getStatut();
-            setCaisseStatut(res.data);
+            // L'intercepteur Axios unwrap déjà : res est directement l'objet caisse
+            setCaisseStatut(res);
         } catch (err) {
             // Si la caisse n'est pas ouverte, l'API renvoie 403, ce qui est normal.
             // On vérifie si un rapport est en attente.
             if (err.response && err.response.status === 403) {
-                setError(err.response.data.message);
+                // L'intercepteur gère déjà le toast, on peut juste logguer ou ignorer
             } else {
                 // Afficher le message d'erreur spécifique du backend s'il existe pour faciliter le débogage
                 // Gestion du cas où un rapport a été rejeté et nécessite une action
                 if (err.response?.data?.statut === 'REJETE') {
                     setIsCorrection(true);
-                    setError(
-                        <div>
-                            <strong>Rapport Rejeté :</strong> {err.response.data.message}
-                            <br/>
-                            <Button variant="outline-danger" size="sm" className="mt-2" onClick={() => setShowCloseModal(true)}>
+                    toast.error(
+                        <div><strong>Rapport Rejeté :</strong> {err.response.data.message} <Button variant="outline-danger" size="sm" className="mt-2" onClick={() => setShowCloseModal(true)}>
                                 Corriger et Relancer la clôture
                             </Button>
                         </div>
@@ -97,9 +95,7 @@ const CaisseView = () => {
                 } else {
                     setIsCorrection(false);
                 }
-                const msg = err.response?.data?.message || "Erreur lors de la récupération du statut de la caisse.";
-                const detail = err.response?.data?.error ? ` (${err.response.data.error})` : '';
-                setError(msg + detail);
+                // L'intercepteur gère déjà le toast pour les autres erreurs
             }
             setCaisseStatut(null); // Assure que l'état est bien null en cas d'erreur
         } finally {
@@ -126,7 +122,8 @@ const CaisseView = () => {
             const loadStatistiquesSession = async () => {
                 try {
                     const res = await caisseAPI.getStatistiquesSession();
-                    setStatistiquesSession(res.data);
+                    // L'intercepteur Axios unwrap déjà : res est directement l'objet
+                    setStatistiquesSession(res);
                 } catch (err) {
                     console.error("Erreur lors du chargement des statistiques de la session:", err);
                     // En cas d'erreur, on utilise les données du statut existant
@@ -157,9 +154,10 @@ const CaisseView = () => {
                 ]);
 
                 const mobileModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
-                const fintechSales = (ventesRes.data.ventes || [])
+                const allSales = (ventesRes.data && ventesRes.data.ventes) ? ventesRes.data.ventes : (ventesRes.ventes || ventesRes.data || []);
+                const fintechSales = (allSales || [])
                     .filter(v => (v.ouvertureCaisse?._id || v.ouvertureCaisse) === sessionId && mobileModes.includes(v.modePaiement) && !v.isCancelled);
-                const fintechRecoveries = (dettesRes.data || [])
+                const fintechRecoveries = (dettesRes.data || dettesRes || [])
                     .filter(p => (p.ouvertureCaisse?._id || p.ouvertureCaisse) === sessionId && mobileModes.includes(p.modePaiement) && p.statut === 'VALIDEE');
 
                 setActiveFintechData({ sales: fintechSales, recoveries: fintechRecoveries });
@@ -182,16 +180,16 @@ const CaisseView = () => {
 
     const handleOpenCaisse = async (e) => {
         e.preventDefault();
-        setError('');
+        // setError(''); // Géré par l'intercepteur
         setSuccess('');
         setOpeningCaisse(true);
         try {
             await caisseAPI.ouvrir({ fondInitial: parseFloat(fondInitial) });
-            setSuccess("Caisse ouverte avec succès !");
+            toast.success("Caisse ouverte avec succès !");
             setFondInitial('');
             fetchStatut(); // Recharger le statut
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'ouverture de la caisse.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setOpeningCaisse(false);
         }
@@ -231,13 +229,13 @@ const CaisseView = () => {
 
     const handleCloseCaisse = async (e) => {
         e.preventDefault();
-        setError('');
+        // setError(''); // Géré par l'intercepteur
         setSuccess('');
         setClosingCaisse(true);
 
         const montantClotureNum = parseFloat(montantCloture);
         if (isNaN(montantClotureNum)) {
-             setError("Veuillez saisir un montant valide.");
+             toast.error("Veuillez saisir un montant valide.");
              setClosingCaisse(false);
              return;
         }
@@ -258,7 +256,8 @@ const CaisseView = () => {
                 r: source.totalRecouvrement ?? source.session?.totalRecouvrement ?? 0,
                 dep: source.totalDepenses ?? source.session?.totalDepenses ?? 0
             };
-            soldeTheorique = Math.round(stats.f + (stats.v - stats.d - stats.m_sales) + (stats.r - stats.m_rec) - stats.dep);
+            const rapportsValides = source?.totalRapportsValides ?? source?.session?.totalRapportsValides ?? 0;
+            soldeTheorique = Math.round(stats.f + (stats.v - stats.d - stats.m_sales) + (stats.r - stats.m_rec) - stats.dep + rapportsValides);
         }
         
         const ecartCalcule = montantClotureNum - soldeTheorique;
@@ -267,7 +266,7 @@ const CaisseView = () => {
         if (ecartCalcule !== 0 && !commentaires.trim()) {
             setEcart(ecartCalcule);
             setAfficherJustification(true);
-            setError("Veuillez justifier l'écart détecté avant de valider la clôture.");
+            toast.error("Veuillez justifier l'écart détecté avant de valider la clôture.");
             setClosingCaisse(false);
             return;
         }
@@ -279,7 +278,7 @@ const CaisseView = () => {
                     montantCloture: Math.round(montantClotureNum),
                     commentairesGérant: commentaires
                 });
-                setSuccess("Rapport corrigé et renvoyé pour validation.");
+                toast.success("Rapport corrigé et renvoyé pour validation.");
             } else {
                 // Mode fermeture standard
                 await caisseAPI.fermer({ 
@@ -287,7 +286,7 @@ const CaisseView = () => {
                     commentairesGérant: commentaires.trim(),
                     commentaires: commentaires.trim()
                 });
-                setSuccess("Caisse fermée et rapport généré avec succès.");
+                toast.success("Caisse fermée et rapport généré avec succès.");
             }
             setMontantCloture('');
             setCommentaires('');
@@ -296,9 +295,9 @@ const CaisseView = () => {
             setShowCloseModal(false);
             setCurrentRapportForCorrection(null);
             setCaisseStatut(null); // Réinitialiser le statut pour afficher le formulaire d'ouverture
-            fetchStatut(); // Recharger le statut
+            fetchStatut(); // Recharger le statut (l'intercepteur gère l'erreur)
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'opération.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setClosingCaisse(false);
         }
@@ -334,13 +333,14 @@ const CaisseView = () => {
             const dep = source?.totalDepenses ?? source?.session?.totalDepenses ?? 0;
             const f = source?.fondInitial ?? 0;
 
+            const totalRapportsValides = source?.totalRapportsValides ?? source?.session?.totalRapportsValides ?? 0;
             return { 
                 fondInitial: f, totalVentes: v, totalVentesCash: Math.round(v - d - m_sales), totalDettes: d, 
                 totalVentesFintech: m_sales,
                 totalMobileMoneyRecoveries: m_rec,
                 totalMobileMoney: m_total, totalRecouvrementCash: Math.round(r - m_rec),
-                totalDepenses: dep, totalRecouvrement: r, 
-                soldeTheorique: Math.round(f + (v - d - m_sales) + (r - m_rec) - dep) 
+                totalDepenses: dep, totalRecouvrement: r, totalRapportsValides,
+                soldeTheorique: Math.round(f + (v - d - m_sales) + (r - m_rec) - dep + totalRapportsValides) 
             };
         }
     };
@@ -353,11 +353,6 @@ const CaisseView = () => {
                 <div className="text-center mb-4">
                     <iconify-icon icon="solar:lock-keyhole-minimalistic-bold-duotone" style={{ fontSize: '64px' }} className="text-danger"></iconify-icon>
                     <h4 className="fw-bold mt-3">Caisse Fermée</h4>
-                    {error && typeof error !== 'string' && ( // Si l'erreur est un objet (notre bouton de relance)
-                        <Alert variant="danger" className="mt-3">
-                            {error}
-                        </Alert>
-                    )}
                     <p className="text-muted">Veuillez ouvrir la caisse pour commencer à enregistrer des ventes.</p>
                 </div>
                 <Form onSubmit={handleOpenCaisse}>
@@ -404,7 +399,7 @@ const CaisseView = () => {
             </Card.Header>
             <Card.Body className="p-4">
                 <Row className="g-3 text-center">
-                    <Col md={3}>
+                    <Col md={2}>
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Fond Initial</h6>
@@ -412,16 +407,16 @@ const CaisseView = () => {
                             </Card.Body>
                         </Card>
                     </Col>
-                    <Col md={3}>
+                    <Col md={2}>
                         <Card className="bg-light border-0">
                             <Card.Body>
-                                <h6 className="text-muted">Ventes de la session</h6>
-                                <h4 className="fw-bold text-primary">{(caisseStatut.session.totalVentes || 0).toLocaleString()} GNF</h4>
-                                <small className="text-muted">{caisseStatut.session.nombreVentes} transaction(s)</small>
+                                <h6 className="text-muted">Ventes (Gérant)</h6>
+                                <h4 className="fw-bold text-primary">{(caisseStatut.session?.totalVentes || 0).toLocaleString()} GNF</h4>
+                                <small className="text-muted">{caisseStatut.session?.nombreVentes || 0} transaction(s)</small>
                             </Card.Body>
                         </Card>
                     </Col>
-                    <Col md={3}>
+                    <Col md={2}>
                         <Card className="bg-light border-0">
                             <Card.Body>
                                 <h6 className="text-muted">Recouvrements</h6>
@@ -430,16 +425,83 @@ const CaisseView = () => {
                             </Card.Body>
                         </Card>
                     </Col>
-                    <Col md={3}>
+                    <Col md={2}>
                         <Card className="bg-light border-0">
                             <Card.Body>
-                                <h6 className="text-muted">Dépenses de la session</h6>
-                                <h4 className="fw-bold text-danger">{(caisseStatut.session.totalDepenses || 0).toLocaleString()} GNF</h4>
-                                <small className="text-muted">{caisseStatut.session.nombreDepenses} dépense(s)</small>
+                                <h6 className="text-muted">Dépenses (Gérant)</h6>
+                                <h4 className="fw-bold text-danger">{(caisseStatut.session?.totalDepenses || 0).toLocaleString()} GNF</h4>
+                                <small className="text-muted">{caisseStatut.session?.nombreDepenses || 0} dépense(s)</small>
+                            </Card.Body>
+                        </Card>
+                    </Col>
+                    <Col md={2}>
+                        <Card className="border-0 shadow-sm" style={{ backgroundColor: '#FFF8E1' }}>
+                            <Card.Body>
+                                <h6 className="text-muted">Rapports Caissiers</h6>
+                                <h4 className="fw-bold" style={{ color: '#F57C00' }}>
+                                    {(caisseStatut.session?.totalRapportsValides || caisseStatut.totalRapportsValides || 0).toLocaleString()} GNF
+                                </h4>
+                                <small className="text-muted">
+                                    <iconify-icon icon="solar:users-group-rounded-bold" className="me-1"></iconify-icon>
+                                    {caisseStatut.rapportsCaissiersValides?.length || 0} rapport(s)
+                                </small>
+                            </Card.Body>
+                        </Card>
+                    </Col>
+                    <Col md={2}>
+                        <Card className="bg-primary-subtle border-0 shadow-sm">
+                            <Card.Body>
+                                <h6 className="text-muted">Total Caisse</h6>
+                                <h4 className="fw-bold text-primary">
+                                    {(
+                                        (caisseStatut.fondInitial || 0) +
+                                        (caisseStatut.session?.cashEnCaisse || 0) +
+                                        (caisseStatut.session?.totalRapportsValides || caisseStatut.totalRapportsValides || 0)
+                                    ).toLocaleString()} GNF
+                                </h4>
+                                <small className="text-muted">Solde consolidé</small>
                             </Card.Body>
                         </Card>
                     </Col>
                 </Row>
+
+                {/* Liste détaillée des rapports caissiers validés */}
+                {caisseStatut.rapportsCaissiersValides && caisseStatut.rapportsCaissiersValides.length > 0 && (
+                    <div className="mt-4">
+                        <h6 className="fw-bold mb-2 d-flex align-items-center">
+                            <iconify-icon icon="solar:clipboard-list-bold-duotone" className="me-2" style={{ color: '#F57C00' }}></iconify-icon>
+                            Rapports Caissiers Validés
+                            <Badge bg="warning" text="dark" className="ms-2">{caisseStatut.rapportsCaissiersValides.length}</Badge>
+                        </h6>
+                        <div className="table-responsive" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                            <Table size="sm" hover className="mb-0 small">
+                                <thead className="table-warning sticky-top">
+                                    <tr>
+                                        <th>Caissier</th>
+                                        <th>Date</th>
+                                        <th className="text-end">Montant Clôture</th>
+                                        <th className="text-end">Écart</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {caisseStatut.rapportsCaissiersValides.map(r => (
+                                        <tr key={r._id}>
+                                            <td className="fw-bold">{r.caissierNom}</td>
+                                            <td className="text-muted">{new Date(r.date).toLocaleDateString('fr-FR')}</td>
+                                            <td className="text-end fw-bold text-success">{(r.montantCloture || 0).toLocaleString()} GNF</td>
+                                            <td className="text-end">
+                                                <Badge bg={r.ecart === 0 ? 'success' : 'danger'}>
+                                                    {r.ecart === 0 ? '0' : `${r.ecart?.toLocaleString()} GNF`}
+                                                </Badge>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </Table>
+                        </div>
+                    </div>
+                )}
+
                 <div className="d-grid mt-4">
                     <Button variant="danger" size="lg" onClick={() => setShowCloseModal(true)}>
                         <iconify-icon icon="solar:logout-3-bold" className="me-2"></iconify-icon>
@@ -455,8 +517,7 @@ const CaisseView = () => {
     return (
         <div className="p-4">
             <h3 className="fw-bold mb-4">Gestion de la Caisse</h3>
-            {success && <Alert variant="success">{success}</Alert>}
-            {error && <Alert variant="danger">{error}</Alert>}
+            {success && <Alert variant="success">{success}</Alert>} {/* Garder le succès local si besoin */}
 
             <Tabs defaultActiveKey="caisse" id="caisse-tabs" className="mb-3">
                 <Tab eventKey="caisse" title="Caisse">
@@ -628,9 +689,19 @@ const CaisseView = () => {
                                 <div className="d-flex justify-content-between">
                                     <span className="text-muted d-flex align-items-center">
                                         <iconify-icon icon="solar:wallet-minus-bold" className="me-2 text-danger"></iconify-icon>
-                                        Total Dépenses
+                                        Total Dépenses (Gérant)
                                     </span>
                                     <span className="fw-bold text-danger">- {(displayValues.totalDepenses || 0).toLocaleString()} GNF</span>
+                                </div>
+                                <hr className="my-2 opacity-25" />
+                                <div className="d-flex justify-content-between mb-2">
+                                    <span className="text-muted d-flex align-items-center">
+                                        <iconify-icon icon="solar:users-group-rounded-bold" className="me-2" style={{ color: '#F57C00' }}></iconify-icon>
+                                        Rapports Caissiers Validés
+                                    </span>
+                                    <span className="fw-bold" style={{ color: '#F57C00' }}>
+                                        + {(statistiquesSession?.totalRapportsValides || caisseStatut?.session?.totalRapportsValides || caisseStatut?.totalRapportsValides || 0).toLocaleString()} GNF
+                                    </span>
                                 </div>
                                 <hr/>
                                 
@@ -719,8 +790,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [showModal, setShowModal] = useState(false); // Pour la création de dépense simple
     const [showCommissionModal, setShowCommissionModal] = useState(false); // Pour le paiement de commission
     const [newExpense, setNewExpense] = useState({ montant: '', motif: '' });
-    const [submitLoading, setSubmitLoading] = useState(false);
-    const [error, setError] = useState('');
+    const [submitLoading, setSubmitLoading] = useState(false); // Garder pour le spinner
     
     // États pour le paiement de commission
     const [workers, setWorkers] = useState([]);
@@ -728,8 +798,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const [selectedWorkerId, setSelectedWorkerId] = useState('');
     const [paymentAmount, setPaymentAmount] = useState('');
 
-    const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false);
-    const [commissionError, setCommissionError] = useState('');
+    const [commissionSubmitLoading, setCommissionSubmitLoading] = useState(false); // Garder pour le spinner
     
     // Utilisation directe du solde calculé par le backend pour éviter les erreurs de clés
     const availableCash = caisseStatut 
@@ -748,7 +817,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
         caisseAPI.getMesDepenses()
             .then(res => {
                 // On filtre les dépenses pour ne garder que celles de la session de caisse actuelle.
-                const sessionDepenses = res.data.filter(d => d.ouvertureCaisse === caisseStatut._id);
+                const sessionDepenses = (res.data.data || []).filter(d => d.ouvertureCaisse === caisseStatut._id);
                 setDepenses(sessionDepenses);
             })
             .catch(err => {
@@ -771,31 +840,27 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                     const workersWithCommission = res.data.filter(c => c.type === 'Ouvrier' && c.commission > 0);
                     setWorkers(workersWithCommission);
                 })
-                .catch(err => setCommissionError("Erreur chargement des ouvriers."))
+                .catch(err => { /* Erreur gérée par l'intercepteur Axios */ })
                 .finally(() => setLoadingWorkers(false));
         }
     }, [showCommissionModal]);
 
     const handleOpenCreateModal = () => {
         setNewExpense({ montant: '', motif: '' });
-        setError('');
         setShowModal(true);
     };
 
     const handleOpenCommissionModal = () => {
         setSelectedWorkerId('');
         setPaymentAmount('');
-        setCommissionError('');
         setShowCommissionModal(true);
     };
 
     const handleCreateExpense = async (e) => {
         e.preventDefault();
         setSubmitLoading(true);
-        setError('');
-
         if (parseFloat(newExpense.montant) > availableCash) {
-            setError(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
+            toast.error(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
             setSubmitLoading(false);
             return;
         }
@@ -807,7 +872,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
             setShowModal(false);
             if (onExpenseCreated) onExpenseCreated(); // Rafraîchir les stats globales
         } catch (err) {
-            setError(err.response?.data?.message || "Erreur lors de l'opération.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setSubmitLoading(false);
         }
@@ -816,30 +881,29 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
     const handlePayCommission = async (e) => {
         e.preventDefault();
         setCommissionSubmitLoading(true);
-        setCommissionError('');
         const selectedWorker = workers.find(w => w._id === selectedWorkerId);
 
         if (parseFloat(paymentAmount) > availableCash) {
-            setCommissionError(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
+            toast.error(`Fonds insuffisants en caisse. Disponible: ${availableCash.toLocaleString()} GNF`);
             setCommissionSubmitLoading(false);
             return;
         }
 
         if (!selectedWorker) {
-            setCommissionError("Veuillez sélectionner un ouvrier.");
+            toast.error("Veuillez sélectionner un ouvrier.");
             setCommissionSubmitLoading(false);
             return;
         }
 
         const amountToPay = parseFloat(paymentAmount);
         if (isNaN(amountToPay) || amountToPay <= 0) {
-            setCommissionError("Le montant à payer est invalide.");
+            toast.error("Le montant à payer est invalide.");
             setCommissionSubmitLoading(false);
             return;
         }
 
         if (amountToPay > selectedWorker.commission) {
-            setCommissionError("Le montant à payer ne peut pas dépasser la commission due.");
+            toast.error("Le montant à payer ne peut pas dépasser la commission due.");
             setCommissionSubmitLoading(false);
             return;
         }
@@ -857,7 +921,7 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
             if (onExpenseCreated) onExpenseCreated();
 
         } catch (err) {
-            setCommissionError(err.response?.data?.message || "Erreur lors du paiement de la commission.");
+            // Erreur gérée par l'intercepteur Axios
         } finally {
             setCommissionSubmitLoading(false);
         }
@@ -914,7 +978,6 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                 </Modal.Header>
                 <Form onSubmit={handleCreateExpense}>
                     <Modal.Body>
-                        {error && <Alert variant="danger">{error}</Alert>}
                         <Form.Group className="mb-3">
                             <Form.Label>Motif</Form.Label>
                             <Form.Control 
@@ -968,7 +1031,6 @@ const DepensesTab = ({ onExpenseCreated, caisseStatut }) => {
                 </Modal.Header>
                 <Form onSubmit={handlePayCommission}>
                     <Modal.Body>
-                        {commissionError && <Alert variant="danger">{commissionError}</Alert>}
                         {loadingWorkers ? <div className="text-center"><Spinner /></div> : (
                             <>
                                 <Form.Group className="mb-3">
@@ -1043,15 +1105,15 @@ const RapportsTab = ({ onCorrect }) => {
     };
 
     useEffect(() => {
-        caisseAPI.getMesRapports()
-            .then(res => {
-                if (res.data && res.data.data) {
-                    setRapports(res.data.data);
-                } else {
-                    setRapports(res.data || []);
-                }
+                caisseAPI.getMesRapports()
+                    .then(res => {
+                        // Après l'intercepteur, res = { data: [...], totalPages, ... }
+                        setRapports(res.data || []);
+                    })
+            .catch(err => {
+                console.error(err);
+                toast.error("Erreur chargement des rapports: " + (err.response?.data?.message || err.message));
             })
-            .catch(err => console.error(err))
             .finally(() => setLoading(false));
     }, []);
 
@@ -1062,7 +1124,8 @@ const RapportsTab = ({ onCorrect }) => {
                 setDetailsLoading(true);
                 try {
                     const res = await caisseAPI.getReportDetails(selectedRapport._id);
-                    setDetailedReportData(res.data);
+                    // Après l'intercepteur, res est déjà l'objet { rapport, ventes, depenses, ... }
+                    setDetailedReportData(res);
                 } catch (err) {
                     console.error("Erreur lors du chargement des détails du rapport:", err);
                 } finally {
@@ -1520,7 +1583,7 @@ const RapportsTab = ({ onCorrect }) => {
                                                                     </Badge>;
                                                                 } else if (mode === 'MobiCash') {
                                                                     return <Badge style={{ backgroundColor: '#FFCC00', color: 'black' }} className="border-0 fw-normal">
-                                                                        <iconify-icon icon="solar:phone-calling-bold" className="me-1 align-middle"></iconify-icon>Mobi
+                                                                    <iconify-icon icon="solar:phone-calling-bold" className="me-1 align-middle"></iconify-icon>Mobi // Correction: Utiliser l'icône appropriée
                                                                     </Badge>;
                                                                 } else if (mode === 'PayCard') {
                                                                     return <Badge bg="info" className="border-0 fw-normal">

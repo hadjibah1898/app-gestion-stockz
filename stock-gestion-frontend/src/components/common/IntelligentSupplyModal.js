@@ -1,241 +1,258 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Modal, Button, Form, Table, Alert, InputGroup, Spinner, Badge, Accordion } from 'react-bootstrap';
+/**
+ * @file IntelligentSupplyModal.js
+ * @description Composant React.
+ */
+
+import React, { useState, useEffect } from 'react';
+import { Modal, Button, Form, Row, Col, Table, Spinner, Card, InputGroup } from 'react-bootstrap';
 import { fournisseurAPI } from '../../services/api';
+import { toast } from 'react-toastify';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import logo from '../../assets/logo.png';
 
-const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply = [], preSelectedFournisseurId }) => {
-    const [groupedItems, setGroupedItems] = useState({});
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+/**
+ * Modale d'Approvisionnement Intelligent
+ * Permet de réapprovisionner rapidement un lot d'articles sélectionnés (ex: stock faible)
+ * Génère un Bon d'Entrée (PDF) professionnel après validation.
+ */
+const IntelligentSupplyModal = ({ show, onHide, onSuccess, articlesToSupply, preSelectedFournisseurId }) => {
+    const [fournisseurs, setFournisseurs] = useState([]);
+    const [supplyData, setSupplyData] = useState({ 
+        fournisseurId: '', 
+        items: [], 
+        imageJustificatif: '',
+        referenceFournisseur: '',
+        dateReception: new Date().toISOString().split('T')[0]
+    });
+    const [submitLoading, setSubmitLoading] = useState(false);
+    const [movementData, setMovementData] = useState(null);
 
-    const loadInitialData = useCallback(async () => {
+    const prevShowRef = React.useRef(false);
+    useEffect(() => {
+        if (show && !prevShowRef.current) {
+            loadFournisseurs();
+            const items = articlesToSupply.map(a => ({
+                articleId: a._id,
+                nom: a.nom,
+                quantite: 10,
+                prixAchat: a.prixAchat || 0,
+                prixVente: a.prixVente || 0,
+                code: a.code || '',
+                categorie: a.categorie || 'Divers'
+            }));
+            setSupplyData({ 
+                fournisseurId: preSelectedFournisseurId || '', 
+                items, 
+                imageJustificatif: '',
+                referenceFournisseur: '',
+                dateReception: new Date().toISOString().split('T')[0]
+            });
+            setMovementData(null);
+        }
+        prevShowRef.current = show;
+    }, [show]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const loadFournisseurs = async () => {
         try {
             const res = await fournisseurAPI.getAll();
-            const allSuppliers = res.data;
-            // setFournisseurs(allSuppliers); // Cette ligne est supprimée car 'fournisseurs' n'est pas utilisé directement
-
-            // Grouper les articles par fournisseur
-            const itemsBySupplier = articlesToSupply.reduce((acc, article) => {
-                const supplierId = article.fournisseur?._id || 'unassigned';
-                
-                if (!acc[supplierId]) {
-                    acc[supplierId] = {
-                        id: supplierId,
-                        nom: article.fournisseur?.nom || 'Fournisseur non spécifié',
-                        items: []
-                    };
-                }
-                
-                acc[supplierId].items.push({
-                    articleId: article._id,
-                    nom: article.nom,
-                    code: article.code,
-                    type: article.type,
-                    stockActuel: article.quantite,
-                    // Utilisation de chaînes pour éviter le blocage du clavier (NaN)
-                    quantite: '10', 
-                    prixAchat: article.prixAchat ? String(article.prixAchat) : '',
-                    prixVente: article.prixVente ? String(article.prixVente) : '',
-                    datePeremption: article.datePeremption ? article.datePeremption.split('T')[0] : '',
-                });
-                return acc;
-            }, {});
-
-            // Assigner les "non assignés" si un fournisseur par défaut est présent
-            if (preSelectedFournisseurId && itemsBySupplier['unassigned']) {
-                const targetSupplier = allSuppliers.find(f => f._id === preSelectedFournisseurId);
-                if (targetSupplier) {
-                    if (!itemsBySupplier[preSelectedFournisseurId]) {
-                        itemsBySupplier[preSelectedFournisseurId] = {
-                            id: preSelectedFournisseurId,
-                            nom: targetSupplier.nom,
-                            items: []
-                        };
-                    }
-                    itemsBySupplier[preSelectedFournisseurId].items.push(...itemsBySupplier['unassigned'].items);
-                    delete itemsBySupplier['unassigned'];
-                }
-            }
-
-            setGroupedItems(itemsBySupplier);
-            setError('');
-        } catch (err) {
-            setError("Erreur lors de l'initialisation des données.");
-        }
-    }, [articlesToSupply, preSelectedFournisseurId, setGroupedItems, setError]);
-
-    useEffect(() => {
-        if (show) {
-            loadInitialData();
-        }
-    }, [show, loadInitialData]);
-
-    const handleItemChange = (supplierId, itemIndex, field, value) => {
-        // On garde la valeur en string pour permettre l'effacement total au clavier
-        const updatedGroups = { ...groupedItems };
-        updatedGroups[supplierId].items[itemIndex][field] = value;
-        setGroupedItems({ ...updatedGroups });
+            setFournisseurs(Array.isArray(res) ? res : (res.data && Array.isArray(res.data) ? res.data : [])); // L'intercepteur gère l'erreur
+        } catch (err) { /* Erreur gérée par l'intercepteur Axios */ }
     };
 
-    const handleSubmit = async () => {
-        setLoading(true);
-        setError('');
+    const handleItemChange = (index, field, value) => {
+        const updatedItems = [...supplyData.items];
+        updatedItems[index][field] = value;
+        setSupplyData({ ...supplyData, items: updatedItems });
+    };
+
+    const handleGlobalJustificatifChange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                setSupplyData({ ...supplyData, imageJustificatif: event.target.result });
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleGeneratePDF = (mvt, action = 'download') => {
+        const doc = new jsPDF();
+        const formatCurrency = (val) => (val || 0).toLocaleString('fr-FR').replace(/\s/g, ' ') + ' GNF';
+
         try {
-            const groups = Object.values(groupedItems);
-            
-            // Validation avant envoi
-            for (const group of groups) {
-                if (group.id === 'unassigned') {
-                    throw new Error("Certains articles n'ont pas de fournisseur assigné.");
-                }
+            doc.addImage(logo, 'PNG', 14, 10, 40, 15);
+        } catch (e) { console.error("Logo non trouvé", e); }
 
-                for (const item of group.items) {
-                    const qte = Number(item.quantite);
-                    const pA = Number(item.prixAchat);
-                    const pV = Number(item.prixVente);
+        doc.setFontSize(18).setTextColor(41, 128, 185).setFont("helvetica", "bold");
+        doc.text("BON D'ENTRÉE EN STOCK (INTEL)", 105, 20, { align: 'center' });
 
-                    if (isNaN(qte) || qte <= 0) throw new Error(`Quantité invalide pour ${item.nom}`);
-                    if (isNaN(pA) || pA <= 0) throw new Error(`Prix d'achat invalide pour ${item.nom}`);
-                    if (pV > 0 && pA >= pV) throw new Error(`Le prix d'achat de ${item.nom} doit être inférieur au prix de vente.`);
-                }
+        doc.setFontSize(10).setTextColor(100).setFont("helvetica", "normal");
+        doc.text(`N° Bon : #BE-${mvt._id.toString().slice(-6).toUpperCase()}`, 105, 27, { align: 'center' });
+        doc.text(`Date : ${new Date(mvt.createdAt).toLocaleString('fr-FR')}`, 196, 20, { align: 'right' });
+
+        const tableColumn = ["Désignation", "Qté", "P. Achat", "P. Vente", "Total (Achat)"];
+        const tableRows = mvt.articles.map(a => [
+            a.nomArticle,
+            a.quantite,
+            formatCurrency(a.prixAchatUnitaire),
+            formatCurrency(a.prixVenteUnitaire),
+            formatCurrency(a.quantite * a.prixAchatUnitaire)
+        ]);
+
+        const totalGlobal = mvt.articles.reduce((sum, a) => sum + (a.quantite * (a.prixAchatUnitaire || 0)), 0);
+        tableRows.push([
+            { content: 'VALEUR TOTALE DU BON D\'ENTRÉE', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold', fillColor: [240, 240, 240] } },
+            { content: formatCurrency(totalGlobal), styles: { fontStyle: 'bold', fillColor: [240, 240, 240] } }
+        ]);
+
+        autoTable(doc, {
+            startY: 40,
+            head: [tableColumn],
+            body: tableRows,
+            theme: 'grid',
+            headStyles: { fillColor: [41, 128, 185], halign: 'center' },
+            columnStyles: {
+                1: { halign: 'center' },
+                2: { halign: 'right' },
+                3: { halign: 'right' },
+                4: { halign: 'right' }
             }
+        });
 
-            const supplyPromises = groups.map(group => {
-                // Conversion finale en nombres pour l'API
-                const cleanItems = group.items.map(item => ({
-                    ...item,
-                    quantite: Number(item.quantite),
-                    prixAchat: Number(item.prixAchat),
-                    prixVente: Number(item.prixVente)
-                }));
-                return fournisseurAPI.approvisionner({ fournisseurId: group.id, items: cleanItems });
-            });
+        let finalY = doc.lastAutoTable.finalY + 15;
+        if (finalY > 250) { doc.addPage(); finalY = 20; }
 
-            await Promise.all(supplyPromises);
-            onSuccess();
-        } catch (err) {
-            setError(err.response?.data?.message || err.message || "Erreur lors de l'approvisionnement.");
-        } finally {
-            setLoading(false);
+        doc.setFontSize(11).setTextColor(0).setFont("helvetica", "bold");
+        doc.text("LE FOURNISSEUR (VISA)", 14, finalY);
+        doc.text("LE RÉCEPTIONNAIRE (DÉPÔT)", 105, finalY);
+        
+        doc.setFontSize(10).setFont("helvetica", "normal").setTextColor(80);
+        doc.text(mvt.fournisseur?.nom || 'N/A', 14, finalY + 7);
+        doc.text(mvt.boutiqueDestination?.nom || 'Dépôt Principal', 105, finalY + 7);
+        
+        doc.setFontSize(9).setTextColor(150);
+        doc.text("Précédé de la mention 'Bon pour livraison'", 14, finalY + 15);
+        doc.text("Précédé de la mention 'Vérifié et Accepté'", 105, finalY + 15);
+
+        doc.setDrawColor(200).line(14, finalY + 35, 70, finalY + 35);
+        doc.line(105, finalY + 35, 160, finalY + 35);
+
+        if (action === 'preview') {
+            window.open(doc.output('bloburl'), '_blank');
+        } else if (action === 'print') {
+            doc.autoPrint();
+            window.open(doc.output('bloburl'), '_blank');
+        } else {
+            doc.save(`bon_entree_intelligent_${mvt._id.toString().slice(-6)}.pdf`);
         }
     };
 
-    const calculateTotal = () => {
-        return Object.values(groupedItems).reduce((total, group) => {
-            return total + group.items.reduce((groupTotal, item) => {
-                const qte = Number(item.quantite) || 0;
-                const prix = Number(item.prixAchat) || 0;
-                return groupTotal + (qte * prix);
-            }, 0);
-        }, 0);
+    const submitSupply = async () => {
+        if (!supplyData.fournisseurId) {
+            toast.error("Veuillez sélectionner un fournisseur.");
+            return;
+        }
+        setSubmitLoading(true);
+        try {
+            const res = await fournisseurAPI.approvisionner(supplyData);
+            // L'intercepteur Axios unwrap déjà : res contient directement movement
+            const movement = res.movement || (res.data && res.data.movement);
+            if (movement) {
+                setMovementData(movement);
+            } else {
+                onSuccess();
+                onHide(); // L'intercepteur gère l'erreur
+            }
+        } catch (err) { /* Erreur gérée par l'intercepteur Axios */
+        } finally {
+            setSubmitLoading(false);
+        }
     };
 
     return (
-        <Modal show={show} onHide={onHide} size="xl" centered backdrop="static">
+        <Modal show={show} onHide={onHide} size="xl">
             <Modal.Header closeButton>
-                <Modal.Title className="d-flex align-items-center">
-                    <span className="me-2 text-primary">📦</span>
-                    Approvisionnement Intelligent
-                </Modal.Title>
+                <Modal.Title>{movementData ? 'Opération Réussie' : 'Réapprovisionnement Intelligent'}</Modal.Title>
             </Modal.Header>
-            <Modal.Body>
-                <Alert variant="info" className="small border-0 shadow-sm">
-                    Les articles sont groupés par fournisseur. Ils seront ajoutés au <strong>Dépôt Principal</strong>.
-                </Alert>
-                
-                {error && <Alert variant="danger">{error}</Alert>}
+            {movementData ? (
+                <Modal.Body className="text-center py-5">
+                    <div className="mb-3 text-success">
+                        <iconify-icon icon="solar:check-circle-bold-duotone" style={{ fontSize: '72px' }}></iconify-icon>
+                    </div>
+                    <h4 className="fw-bold mb-3">L'approvisionnement intelligent a été validé !</h4>
+                    <p className="text-muted mb-4">Le stock a été mis à jour. Souhaitez-vous générer le Bon d'Entrée (BE) ?</p>
+                    <div className="d-flex justify-content-center gap-3">
+                        <Button variant="outline-primary" className="rounded-pill px-4 fw-bold" onClick={() => handleGeneratePDF(movementData, 'preview')}>
+                            <iconify-icon icon="solar:eye-bold" className="me-2"></iconify-icon> Aperçu PDF
+                        </Button>
+                        <Button variant="outline-info" className="rounded-pill px-4 fw-bold text-dark" onClick={() => handleGeneratePDF(movementData, 'print')}>
+                            <iconify-icon icon="solar:printer-bold" className="me-2"></iconify-icon> Imprimer
+                        </Button>
+                        <Button variant="primary" className="rounded-pill px-4 shadow-sm fw-bold" onClick={() => handleGeneratePDF(movementData, 'download')}>
+                            <iconify-icon icon="solar:download-bold" className="me-2"></iconify-icon> Télécharger PDF
+                        </Button>
+                    </div>
+                </Modal.Body>
+            ) : (
+                <Modal.Body>
+                    <Card className="border-0 bg-light rounded-4 mb-4 shadow-sm">
+                        <Card.Body>
+                            <Row className="g-3">
+                                <Col md={4}>
+                                    <Form.Label className="fw-bold small text-uppercase text-muted">Fournisseur</Form.Label>
+                                    <Form.Select value={supplyData.fournisseurId} onChange={(e) => setSupplyData({ ...supplyData, fournisseurId: e.target.value })} className="rounded-pill" required>
+                                        <option value="">Sélectionner...</option>
+                                        {fournisseurs.map(f => <option key={f._id} value={f._id}>{f.nom}</option>)}
+                                    </Form.Select>
+                                </Col>
+                                <Col md={4}>
+                                    <Form.Label className="fw-bold small text-uppercase text-muted">Réf. Bon de Livraison (BL)</Form.Label>
+                                    <Form.Control type="text" placeholder="Ex: BL-INTEL-001" value={supplyData.referenceFournisseur} onChange={e => setSupplyData({...supplyData, referenceFournisseur: e.target.value})} className="rounded-pill" />
+                                </Col>
+                                <Col md={4}>
+                                    <Form.Label className="fw-bold small text-uppercase text-muted">Date Réception</Form.Label>
+                                    <Form.Control type="date" value={supplyData.dateReception} onChange={e => setSupplyData({...supplyData, dateReception: e.target.value})} className="rounded-pill" />
+                                </Col>
+                            </Row>
+                        </Card.Body>
+                    </Card>
 
-                <Accordion defaultActiveKey={Object.keys(groupedItems)[0]} alwaysOpen>
-                    {Object.values(groupedItems).map((group) => (
-                        <Accordion.Item eventKey={group.id} key={group.id} className="mb-3 border shadow-sm">
-                            <Accordion.Header>
-                                <div className="d-flex justify-content-between w-100 me-3">
-                                    <span className="fw-bold text-dark">Fournisseur : {group.nom}</span>
-                                    <Badge pill bg="primary">{group.items.length} article(s)</Badge>
-                                </div>
-                            </Accordion.Header>
-                            <Accordion.Body>
-                                <Table responsive striped hover size="sm">
-                                    <thead>
-                                        <tr className="bg-light">
-                                            <th>Article</th>
-                                            <th className="text-center">Stock</th>
-                                            <th style={{ width: '110px' }}>Qté Ajout</th>
-                                            <th style={{ width: '140px' }}>P. Achat</th>
-                                            <th style={{ width: '140px' }}>P. Vente</th>
-                                            <th style={{ width: '150px' }}>Péremption</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {group.items.map((item, idx) => (
-                                            <tr key={idx}>
-                                                <td className="align-middle">
-                                                    <div className="fw-bold">{item.nom}</div>
-                                                    <small className="text-muted">{item.code}</small>
-                                                </td>
-                                                <td className="align-middle text-center">
-                                                    <Badge bg={item.stockActuel <= 5 ? 'danger' : 'secondary'}>
-                                                        {item.stockActuel}
-                                                    </Badge>
-                                                </td>
-                                                <td>
-                                                    <Form.Control 
-                                                        type="number" 
-                                                        value={item.quantite} 
-                                                        onChange={(e) => handleItemChange(group.id, idx, 'quantite', e.target.value)}
-                                                    />
-                                                </td>
-                                                <td>
-                                                    <InputGroup size="sm">
-                                                        <Form.Control 
-                                                            type="number" 
-                                                            value={item.prixAchat}
-                                                            onChange={(e) => handleItemChange(group.id, idx, 'prixAchat', e.target.value)}
-                                                            isInvalid={Number(item.prixAchat) >= Number(item.prixVente) && Number(item.prixVente) > 0}
-                                                        />
-                                                        <InputGroup.Text className="small px-1">GNF</InputGroup.Text>
-                                                    </InputGroup>
-                                                </td>
-                                                <td>
-                                                    <InputGroup size="sm">
-                                                        <Form.Control 
-                                                            type="number" 
-                                                            value={item.prixVente}
-                                                            onChange={(e) => handleItemChange(group.id, idx, 'prixVente', e.target.value)}
-                                                        />
-                                                        <InputGroup.Text className="small px-1">GNF</InputGroup.Text>
-                                                    </InputGroup>
-                                                </td>
-                                                <td>
-                                                    <Form.Control 
-                                                        type="date" 
-                                                        size="sm" 
-                                                        value={item.datePeremption} 
-                                                        onChange={(e) => handleItemChange(group.id, idx, 'datePeremption', e.target.value)}
-                                                    />
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </Table>
-                            </Accordion.Body>
-                        </Accordion.Item>
-                    ))}
-                </Accordion>
-            </Modal.Body>
-            <Modal.Footer className="bg-light d-flex justify-content-between">
-                <div className="text-start">
-                    <small className="text-muted d-block">Valeur totale estimée :</small>
-                    <span className="h5 fw-bold text-success">{calculateTotal().toLocaleString()} GNF</span>
-                </div>
-                <div>
-                    <Button variant="outline-secondary" onClick={onHide} className="me-2" disabled={loading}>
-                        Annuler
-                    </Button>
-                    <Button variant="primary" onClick={handleSubmit} disabled={loading || Object.keys(groupedItems).length === 0}>
-                        {loading ? <Spinner animation="border" size="sm" className="me-2" /> : null}
-                        Confirmer l'approvisionnement
-                    </Button>
-                </div>
+                    <Form.Group className="mb-4">
+                        <Form.Label className="fw-bold text-primary"><iconify-icon icon="solar:camera-bold" className="me-1"></iconify-icon> Photo du Justificatif</Form.Label>
+                        <Form.Control type="file" accept="image/*" onChange={handleGlobalJustificatifChange} className="rounded-pill" />
+                    </Form.Group>
+
+                    <Table responsive striped bordered hover className="align-middle text-center">
+                        <thead className="table-light small text-uppercase">
+                            <tr><th>Article</th><th>Quantité</th><th>P. Achat</th><th>P. Vente</th><th>Sous-total</th></tr>
+                        </thead>
+                        <tbody>
+                            {supplyData.items.map((item, idx) => (
+                                <tr key={idx}>
+                                    <td className="fw-bold text-start">{item.nom}</td>
+                                    <td><Form.Control type="number" value={item.quantite} onChange={e => handleItemChange(idx, 'quantite', e.target.value)} size="sm" className="text-center" /></td>
+                                    <td><InputGroup size="sm"><Form.Control type="number" value={item.prixAchat} onChange={e => handleItemChange(idx, 'prixAchat', e.target.value)} /><InputGroup.Text>GNF</InputGroup.Text></InputGroup></td>
+                                    <td><InputGroup size="sm"><Form.Control type="number" value={item.prixVente} onChange={e => handleItemChange(idx, 'prixVente', e.target.value)} /><InputGroup.Text>GNF</InputGroup.Text></InputGroup></td>
+                                    <td className="text-end fw-bold">{(item.quantite * item.prixAchat).toLocaleString()} GNF</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </Table>
+                </Modal.Body>
+            )}
+            <Modal.Footer>
+                {movementData ? (
+                    <Button variant="secondary" onClick={() => { onSuccess(); onHide(); }} className="rounded-pill px-4">Fermer</Button>
+                ) : (
+                    <>
+                        <Button variant="secondary" onClick={onHide}>Annuler</Button>
+                        <Button variant="success" onClick={submitSupply} disabled={submitLoading || supplyData.items.length === 0} className="rounded-pill px-4 shadow-sm fw-bold">
+                            {submitLoading ? <Spinner size="sm" /> : 'Valider le Lot'}
+                        </Button>
+                    </>
+                )}
             </Modal.Footer>
         </Modal>
     );

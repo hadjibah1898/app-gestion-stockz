@@ -1,3 +1,8 @@
+/**
+ * @file commissionService.js
+ * @description commissionService - services
+ */
+
 const Client = require('../models/Client');
 const OuvertureCaisse = require('../models/OuvertureCaisse');
 const Depense = require('../models/Depense');

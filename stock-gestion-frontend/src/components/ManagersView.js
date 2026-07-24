@@ -109,8 +109,10 @@ const ManagersView = () => {
 
     try {
       const res = await venteAPI.getHistorique({ gerantId: mId, page, limit: 10 });
-      setManagerHistory(res.data.ventes || []);
-      setHistoryTotalPages(res.data.totalPages || 1);
+      const allSales = (res.data && res.data.ventes) ? res.data.ventes : (res.ventes || res.data || []);
+      setManagerHistory(allSales);
+      const totalPages = (res.data && res.data.totalPages) ? res.data.totalPages : (res.totalPages || 1);
+      setHistoryTotalPages(totalPages);
       setShowHistoryModal(true);
     } catch (err) {
       setError("Impossible de charger l'historique.");
@@ -223,6 +225,7 @@ const ManagersView = () => {
                 <option value="">Sélectionner une boutique</option>
                 {boutiques.map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
               </Form.Select>
+              <Form.Text className="text-muted">Les gérants ne peuvent pas être assignés à un Dépôt Principal ou un Bar.</Form.Text>
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>

@@ -28,6 +28,12 @@ const ouvertureCaisseSchema = new mongoose.Schema({
         enum: ['OUVERTE', 'FERMEE'],
         default: 'OUVERTE',
     },
+    // Type de caisse : 'GERANT' (caisse principale du gérant) ou 'CAISSIER' (caisse indépendante d'un caissier)
+    type: {
+        type: String,
+        enum: ['GERANT', 'CAISSIER'],
+        default: 'GERANT',
+    },
     rapportGenere: {
         type: Boolean,
         default: false,
@@ -39,6 +45,11 @@ const ouvertureCaisseSchema = new mongoose.Schema({
     },
     // NOUVEAU : Cumul des dettes encaissées durant cette session
     totalRecouvrements: {
+        type: Number,
+        default: 0,
+    },
+    // NOUVEAU : Cumul des rapports de caissiers validés durant cette session
+    totalRapportsValides: {
         type: Number,
         default: 0,
     }

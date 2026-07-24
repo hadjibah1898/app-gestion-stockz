@@ -33,6 +33,7 @@ import {
   fournisseurAPI,
   mouvementAPI,
 } from "../services/api";
+import { toast } from 'react-toastify';
 import InventoryTab from "./InventoryTab";
 import AdjustmentsTab from "./AdjustmentsTab";
 import ArticleFormModal from "./ArticleFormModal";
@@ -84,6 +85,11 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [globalReceptionComment, setGlobalReceptionComment] = useState("");
   const [filterReceptionBoutique, setFilterReceptionBoutique] = useState("");
 
+  // États pour la modale de correction de transfert (Admin)
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  const [correctionMvt, setCorrectionMvt] = useState(null);
+  const [correctionItems, setCorrectionItems] = useState([]);
+
   // États pour les ajustements de stock
   const [adjustments, setAdjustments] = useState([]);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
@@ -131,7 +137,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [successMessage, setSuccessMessage] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -227,11 +232,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         );
         fetchData();
         setTimeout(() => setSuccessMessage(""), 3000);
-      } catch (err) {
-        setError(
-          err.response?.data?.message || "Erreur lors du renommage global.",
-        );
-      } finally {
+    } catch (err) {
+      console.error("Erreur ajustement:", err);
+      toast.error(err.response?.data?.message || err.message || "Erreur lors de la création de l'ajustement");
+    } finally {
         setLoading(false);
       }
     }
@@ -250,15 +254,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   // États pour la promo automatique péremption
   const [showAutoPromoModal, setShowAutoPromoModal] = useState(false);
   const [autoPromoConfig, setAutoPromoConfig] = useState({
-    jours: 7,
     pourcentage: 20,
   });
   const [autoPromoLoading, setAutoPromoLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    setError("");
-
     // Préparer les paramètres de tri pour l'API
     let sortParam = sortConfig.key;
     let orderParam = sortConfig.direction;
@@ -309,24 +310,25 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         articleAPI.getAll(params), // Le backend filtrera déjà par Admin grâce au service modifié
         userRole === "Admin"
           ? boutiqueAPI.getAll()
-          : Promise.resolve({ data: [] }),
+          : boutiqueAPI.getDetailsForServeur(localStorage.getItem('boutiqueId')).then(res => ({ data: res.data ? [res.data] : [] })),
         userRole === "Admin"
           ? fournisseurAPI.getAll()
           : Promise.resolve({ data: [] }),
       ]);
 
       // Handle paginated response or simple array
-      if (articlesRes.data && articlesRes.data.data) {
-        setArticles(applyClientSideSort(articlesRes.data.data)); // Appliquer un tri client si nécessaire
-        setTotalPages(articlesRes.data.totalPages);
+      if (articlesRes.data && Array.isArray(articlesRes.data)) {
+        setArticles(applyClientSideSort(articlesRes.data)); // Appliquer un tri client si nécessaire
+        setTotalPages(articlesRes.totalPages);
       } else {
-        setArticles(articlesRes.data || []);
+        setArticles([]);
         setTotalPages(1);
       }
 
-      setBoutiques(boutiquesRes.data);
+      const boutiquesList = Array.isArray(boutiquesRes) ? boutiquesRes : (boutiquesRes.data || []);
+      setBoutiques(boutiquesList);
       // Identifier la boutique centrale pour la logique de filtrage
-      const centrale = boutiquesRes.data.find((b) => b.type === "Centrale");
+      const centrale = boutiquesList.find((b) => b.type === "Centrale" || b.type === "Bar");
       const effectiveCentralId = centrale ? centrale._id : centralShopId;
 
       if (centrale) {
@@ -355,23 +357,22 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
               "Dépôt Principal non trouvé pour l'administrateur. Impossible de suivre les transferts.",
             );
           paramsPending.boutiqueSource = effectiveCentralId;
-          paramsPending.boutiqueDestinationType = "Secondaire"; // Ajout d'un filtre pour le type
 
           paramsReceived.boutiqueSource = effectiveCentralId;
-          paramsReceived.boutiqueDestinationType = "Secondaire"; // Ajout d'un filtre pour le type
         }
 
         const [pendingRes, receivedRes] = await Promise.all([
           mouvementAPI.getAll(paramsPending),
           mouvementAPI.getAll(paramsReceived),
         ]);
-        setPendingMovements(pendingRes.data.data || pendingRes.data || []);
-        setReceivedMovements(receivedRes.data.data || receivedRes.data || []);
+        // L'intercepteur Axios unwrap déjà : pendingRes/receivedRes sont les objets paginés { data: [...], totalCount, ... }
+        setPendingMovements(Array.isArray(pendingRes) ? pendingRes : (pendingRes.data || []));
+        setReceivedMovements(Array.isArray(receivedRes) ? receivedRes : (receivedRes.data || []));
       }
 
-      setFournisseurs(fournisseursRes.data);
+      setFournisseurs((fournisseursRes.data && Array.isArray(fournisseursRes.data)) ? fournisseursRes.data : (Array.isArray(fournisseursRes) ? fournisseursRes : []));
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "Erreur de chargement");
+      // Erreur gérée par l'intercepteur Axios
     } finally {
       setLoading(false);
     }
@@ -384,7 +385,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     filterStatus,
     sortConfig,
     filterReceptionBoutique,
-    centralShopId,
+    centralShopId
   ]);
 
   useEffect(() => {
@@ -394,11 +395,62 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   // eslint-disable-next-line no-unused-vars
   const handleRemindManager = async (mvtId) => {
     try {
-      await mouvementAPI.relancerGerant(mvtId);
-      setSuccessMessage("Notification de rappel envoyée au gérant.");
-      setTimeout(() => setSuccessMessage(""), 3000);
+      await mouvementAPI.relancerGerant(mvtId); // L'intercepteur gère l'erreur
+      toast.success("Notification de rappel envoyée au gérant.");
+      setTimeout(() => setSuccessMessage(""), 3000); // Garder le message de succès local
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
+    }
+  };
+
+  const handleOpenCorrectionModal = async (mvt) => {
+    setCorrectionMvt(mvt);
+    setValLoading(true);
+    try {
+      // Charger le stock disponible de la boutique source
+      const sourceId = mvt.boutiqueSource?._id || mvt.boutiqueSource;
+      const sourceStock = await articleAPI.getAll({ boutique: sourceId, limit: 0 });
+      const stockList = Array.isArray(sourceStock) ? sourceStock : (sourceStock.data || []);
+      
+      const items = mvt.articles.map(a => {
+        const stockArticle = stockList.find(s => s.nom === a.nomArticle);
+        return {
+          articleId: a.articleId || a._id,
+          nomArticle: a.nomArticle,
+          quantite: a.quantite,
+          prixAchatUnitaire: a.prixAchatUnitaire || 0,
+          stockDisponible: stockArticle ? stockArticle.quantite : 0
+        };
+      });
+      setCorrectionItems(items);
+      setShowCorrectionModal(true);
     } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la relance.");
+      toast.error("Impossible de charger le stock source.");
+    } finally {
+      setValLoading(false);
+    }
+  };
+
+  const handleCorrigerTransfert = async () => {
+    if (!correctionMvt) return;
+    setValLoading(true);
+    try {
+      const articles = correctionItems.filter(a => a.quantite > 0).map(a => ({
+        articleId: a.articleId,
+        nomArticle: a.nomArticle,
+        quantite: a.quantite
+      }));
+      if (articles.length === 0) {
+        toast.error("Aucun article à transférer.");
+        return;
+      }
+      await articleAPI.corrigerTransfert(correctionMvt._id, { articles });
+      toast.success("Transfert corrigé et relancé avec succès !");
+      setShowCorrectionModal(false);
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || "Erreur lors de la correction");
+    } finally {
+      setValLoading(false);
     }
   };
 
@@ -412,11 +464,10 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       return;
     try {
       await articleAPI.annulerTransfert(mvtId);
-      setSuccessMessage("Transfert annulé et stock restauré.");
+      toast.success("Transfert annulé et stock restauré.");
       fetchData();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de l'annulation.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     }
   };
 
@@ -542,15 +593,15 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         receptionItems,
         finalComment,
       );
-      setSuccessMessage(
+      toast.success(
         res.data.message || "Réception validée et reçu généré !",
       );
       setShowReceptionModal(false);
       fetchData();
-      setShowReceptionHistory(true); // Basculer automatiquement vers l'historique (les archives) après validation
+      // Le colis disparaît naturellement de la liste des attentes car son statut a changé en base
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la réception");
+      // Erreur gérée par l'intercepteur Axios
     } finally {
       setValLoading(false);
     }
@@ -567,19 +618,18 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     e.preventDefault();
     setValLoading(true);
     try {
-      await articleAPI.validateAdjustment(selectedAdj._id, {
+      await articleAPI.validateAdjustment(selectedAdj._id, { // L'intercepteur gère l'erreur
         decision: valDecision,
         commentaire: valComment,
       });
-      setSuccessMessage(
+      toast.success(
         `Ajustement ${valDecision === "VALIDE" ? "validé" : "rejeté"} avec succès.`,
       );
       setShowValidationModal(false);
       fetchAdjustments(); // Rafraîchir la liste
       fetchData(); // Rafraîchir l'inventaire car le stock a pu changer
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la validation.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setValLoading(false);
     }
@@ -596,9 +646,12 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     setAdjLoading(true);
     try {
       const res = await articleAPI.getAdjustments();
-      setAdjustments(res.data);
+      // L'intercepteur Axios unwrap déjà la réponse : res est le tableau d'ajustements
+      const data = Array.isArray(res) ? res : (res.data || []);
+      setAdjustments(data);
     } catch (err) {
-      console.error("Erreur chargement ajustements", err);
+      console.error("Erreur chargement ajustements:", err);
+      toast.error(err.response?.data?.message || "Erreur chargement des ajustements");
     } finally {
       setAdjLoading(false);
     }
@@ -634,12 +687,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     setAdjSubmitLoading(true);
     try {
       await articleAPI.createAdjustment(adjustmentFormData);
-      setSuccessMessage("Demande d'ajustement envoyée à l'administrateur.");
+      toast.success("Demande d'ajustement envoyée à l'administrateur.");
       setShowAdjustmentModal(false);
       fetchAdjustments();
       setTimeout(() => setSuccessMessage(""), 3000);
     } catch (err) {
-      setError(err.response?.data?.message || "Erreur lors de la demande.");
+      console.error("Erreur création ajustement:", err);
+      toast.error(err.response?.data?.message || err.message || "Erreur lors de la création de l'ajustement");
     } finally {
       setAdjSubmitLoading(false);
     }
@@ -737,6 +791,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, articles, searchParams, setSearchParams]);
 
   const handleShowModal = (article = null) => {
@@ -750,7 +805,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         prixAchat: "",
         prixVente: "",
         quantite: "",
-        boutique: "",
+        boutique: userRole === 'Gérant' ? localStorage.getItem('boutiqueId') : "",
         image: "",
         promo: 0,
         promoActive: false,
@@ -768,7 +823,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     setShowModal(true);
     setFieldErrors({});
   };
-
   const handleCloseModal = () => {
     setShowModal(false);
   };
@@ -800,8 +854,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement("canvas");
-          const MAX_WIDTH = 800;
-          const MAX_HEIGHT = 800;
+          const MAX_WIDTH = 500; // Réduit pour la rapidité
+          const MAX_HEIGHT = 500;
           let width = img.width;
           let height = img.height;
 
@@ -821,7 +875,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           const ctx = canvas.getContext("2d");
           ctx.drawImage(img, 0, 0, width, height);
 
-          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.7);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.6); // Qualité optimisée pour mobile
           setCurrentArticle({ ...currentArticle, image: compressedBase64 });
         };
       };
@@ -838,7 +892,6 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
     setSuccessMessage("");
     setFieldErrors({});
 
@@ -853,7 +906,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       );
 
       if (duplicate) {
-        setError(
+        toast.error(
           `Le code "${currentArticle.code}" est déjà utilisé par l'article "${duplicate.nom}".`,
         );
         setFieldErrors({ code: "Ce code article doit être unique." });
@@ -872,27 +925,19 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
     try {
       if (editMode) {
         if (!currentArticle._id) {
-          setError("Erreur interne : ID de l'article manquant.");
+          toast.error("Erreur interne : ID de l'article manquant.");
           return;
         }
-        await articleAPI.update(currentArticle._id, payload);
-        setSuccessMessage("Article modifié avec succès !");
+        await articleAPI.update(currentArticle._id, payload); // L'intercepteur gère l'erreur
+        toast.success("Article modifié avec succès !");
       } else {
-        await articleAPI.create(payload);
-        setSuccessMessage("Article créé avec succès !");
+        await articleAPI.create(payload); // L'intercepteur gère l'erreur
+        toast.success("Article créé avec succès !");
       }
       fetchData();
       handleCloseModal();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      if (err.response?.status === 400 && err.response.data.errors) {
-        // Si le backend renvoie des erreurs de validation par champ
-        setFieldErrors(err.response.data.errors);
-        setError(err.response.data.message);
-      } else {
-        setError(err.response?.data?.message || "Erreur d'enregistrement");
-      }
-    }
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */ }
   };
 
   const confirmDelete = (id) => {
@@ -901,16 +946,14 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   };
 
   const executeDelete = async () => {
-    setError("");
     setSuccessMessage("");
     try {
-      await articleAPI.delete(articleToDelete);
+      await articleAPI.delete(articleToDelete); // L'intercepteur gère l'erreur
       setShowDeleteModal(false);
-      setSuccessMessage("Article supprimé avec succès !");
+      toast.success("Article supprimé avec succès !");
       fetchData();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || "Erreur de suppression");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     }
   };
 
@@ -926,7 +969,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         status: filterStatus,
       };
       const res = await articleAPI.getAll(params);
-      let allArticles = res.data.data || res.data || [];
+      let allArticles = (Array.isArray(res.data) ? res.data : []);
 
       // 2. Application du filtre local promo si actif
       if (showPromoOnly) {
@@ -1093,10 +1136,8 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
       const fileName = title
         ? `${title.replace(/\s+/g, "_").toLowerCase()}_${new Date().toISOString().split("T")[0]}.pdf`
         : "articles.pdf";
-      doc.save(fileName);
-    } catch (err) {
-      console.error("Erreur export PDF:", err);
-      setError("Impossible de générer le PDF complet.");
+      doc.save(fileName); // L'intercepteur gère l'erreur
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setLoading(false);
     }
@@ -1114,7 +1155,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
         status: filterStatus,
       };
       const res = await articleAPI.getAll(params);
-      const allData = res.data.data || res.data || [];
+      const allData = (Array.isArray(res.data) ? res.data : []);
 
       const dataToExport = allData.map((a) => ({
         Code: a.code || "-",
@@ -1141,8 +1182,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       setSuccessMessage("Fichier Excel généré avec succès !");
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError("Erreur lors de la génération du fichier Excel.");
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setLoading(false);
     }
@@ -1151,18 +1191,13 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   const handleAutoPromoSubmit = async (e) => {
     e.preventDefault();
     setAutoPromoLoading(true);
-    setError("");
     try {
-      const res = await articleAPI.applyAutoPromo(autoPromoConfig);
-      setSuccessMessage(res.data.message);
+      const res = await articleAPI.applyAutoPromo(autoPromoConfig); // L'intercepteur gère l'erreur
+      toast.success(res.data.message);
       setShowAutoPromoModal(false);
       fetchData();
       setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err) {
-      setError(
-        err.response?.data?.message ||
-          "Erreur lors de l'application des promotions.",
-      );
+    } catch (err) { /* Erreur gérée par l'intercepteur Axios */
     } finally {
       setAutoPromoLoading(false);
     }
@@ -1470,7 +1505,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
   return (
     <div className="p-4">
       <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
-        <h3 className="fw-bold mb-0 text-body">
+        <h3 className="fw-bold mb-0 text-body"> {/* L'intercepteur gère l'erreur */}
           {title || "Gestion des Articles"}
         </h3>
         <div className="d-flex flex-wrap gap-2">
@@ -1497,41 +1532,15 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                   setPreSelectedSupplier(supplierToPreselect);
                   setShowIntelligentSupplyModal(true);
                 }}
-                className="rounded-pill px-4 shadow-sm"
+                className="rounded-pill px-4 shadow-sm" // L'intercepteur gère l'erreur
               >
                 <iconify-icon
                   icon="solar:box-up-bold"
                   className="me-2 align-middle"
                 ></iconify-icon>
-                Approvisionner ({selectedArticles.length})
+                Enregistrer une Livraison ({selectedArticles.length})
               </Button>
             </>
-          )}
-          {userRole === "Admin" && (
-            <Button
-              variant="outline-warning"
-              onClick={handleRenameCategory}
-              className="rounded-pill px-4 shadow-sm"
-            >
-              <iconify-icon
-                icon="solar:pen-new-square-bold"
-                className="me-2 align-middle"
-              ></iconify-icon>
-              Renommer une Catégorie
-            </Button>
-          )}
-          {userRole === "Admin" && (
-            <Button
-              variant="warning"
-              onClick={() => setShowAutoPromoModal(true)}
-              className="rounded-pill px-4 shadow-sm text-white"
-            >
-              <iconify-icon
-                icon="solar:tag-price-bold-duotone"
-                className="me-2 align-middle"
-              ></iconify-icon>
-              Promo Péremption
-            </Button>
           )}
           <Button
             variant="outline-success"
@@ -1613,21 +1622,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
 
       {/* --- ALERTES DE NOTIFICATION --- */}
       <div className="notification-area">
-        {successMessage && (
-          <Alert variant="success" className="rounded-4 border-0 shadow-sm">
-            {successMessage}
-          </Alert>
-        )}
-        {error && (
-          <Alert
-            variant="danger"
-            onClose={() => setError("")}
-            dismissible
-            className="rounded-4 border-0 shadow-sm"
-          >
-            {error}
-          </Alert>
-        )}
+        {successMessage && <Alert variant="success" className="rounded-4 border-0 shadow-sm">{successMessage}</Alert>}
       </div>
 
       {/* --- CONTENU DES ONGLETS --- */}
@@ -1668,7 +1663,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                   >
                     <option value="">Toutes les destinations</option>
                     {boutiques
-                      .filter((b) => b.type !== "Centrale")
+                      .filter((b) => b.type !== "Centrale" && b.type !== "Bar")
                       .map((b) => (
                         <option key={b._id} value={b._id}>
                           {b.nom}
@@ -1768,7 +1763,7 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                                 De
                               </small>
                               <span className="fw-bold">
-                                {mvt.boutiqueSource?.type === 'Centrale' ? "Dépôt Principal" : (mvt.boutiqueSource?.nom || "Dépôt")}
+                                {mvt.boutiqueSource?.type === 'Centrale' || mvt.boutiqueSource?.type === 'Bar' ? "Dépôt Principal" : (mvt.boutiqueSource?.nom || "Dépôt")}
                               </span>
                             </div>
                             <iconify-icon
@@ -1897,8 +1892,19 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
                                 </Button>
                               ) : (
                                 <div className="d-flex gap-2">
+                                  <Button variant="outline-danger" size="sm" className="rounded-pill fw-bold d-flex align-items-center gap-1" onClick={() => {
+                                    const items = mvt.articles.map((a) => ({
+                                      nomArticle: a.nomArticle,
+                                      quantiteAttendue: a.quantite,
+                                      quantiteRecue: a.quantite,
+                                      commentaire: ''
+                                    }));
+                                    handleGenerateReceptionPDF(mvt, items, mvt.details);
+                                  }} title="Générer le bon de transfert PDF">
+                                    <iconify-icon icon="solar:file-pdf-bold" style={{fontSize:'16px'}}></iconify-icon> PDF
+                                  </Button>
+                                  <Button variant="outline-warning" size="sm" className="rounded-pill flex-grow-1 fw-bold text-dark" onClick={() => handleOpenCorrectionModal(mvt)}>Relancer</Button>
                                   <Button variant="outline-danger" size="sm" className="rounded-pill flex-grow-1 fw-bold" onClick={() => handleCancelTransfer(mvt._id)}>Annuler</Button>
-                                  <Button variant="outline-warning" size="sm" className="rounded-pill flex-grow-1 fw-bold text-dark" onClick={() => handleRemindManager(mvt._id)}>Relancer</Button>
                                 </div>
                               )
                             )}
@@ -1967,6 +1973,80 @@ const ArticlesView = ({ userRole, boutiqueId, title, headerActions }) => {
           userRole,
         }}
       />
+
+      {/* Modale de Correction de Transfert (Admin) */}
+      <Modal show={showCorrectionModal} onHide={() => setShowCorrectionModal(false)} centered size="lg">
+        <Modal.Header closeButton className="border-0 pb-0">
+          <Modal.Title className="fw-bold">
+            📦 Correction Transfert #{correctionMvt?._id?.toString().slice(-6)}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {correctionMvt && (
+            <>
+              <div className="d-flex align-items-center gap-3 mb-3 p-2 bg-light rounded-3">
+                <span className="text-muted small">De: <strong>{correctionMvt.boutiqueSource?.nom || 'Dépôt Principal'}</strong></span>
+                <iconify-icon icon="solar:double-alt-arrow-right-bold" className="text-primary" />
+                <span className="text-muted small">Pour: <strong className="text-primary">{correctionMvt.boutiqueDestination?.nom || 'Boutique'}</strong></span>
+              </div>
+              <div className="table-responsive">
+                <table className="table table-sm table-borderless align-middle">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Article</th>
+                      <th className="text-end" style={{width:'90px'}}>Stock Dispo</th>
+                      <th className="text-end" style={{width:'100px'}}>Quantité</th>
+                      <th className="text-end" style={{width:'120px'}}>Valeur</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {correctionItems.map((item, idx) => {
+                      const depasseStock = item.quantite > item.stockDisponible;
+                      return (
+                      <tr key={idx} className={depasseStock ? 'table-danger' : ''}>
+                        <td className="fw-bold">
+                          {item.nomArticle}
+                          {depasseStock && <Badge bg="danger" className="ms-2">Stock insuffisant</Badge>}
+                        </td>
+                        <td className="text-end fw-bold">
+                          <Badge bg="light" text="dark">{item.stockDisponible}</Badge>
+                        </td>
+                        <td>
+                          <Form.Control
+                            type="number"
+                            size="sm"
+                            min="0"
+                            max={item.stockDisponible}
+                            value={item.quantite}
+                            onChange={(e) => {
+                              const newItems = [...correctionItems];
+                              newItems[idx].quantite = parseInt(e.target.value) || 0;
+                              setCorrectionItems(newItems);
+                            }}
+                            className={`rounded-pill text-center ${depasseStock ? 'border-danger' : ''}`}
+                          />
+                        </td>
+                        <td className="text-end fw-bold text-muted">
+                          {(item.quantite * (item.prixAchatUnitaire || 0)).toLocaleString()} GNF
+                        </td>
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer className="border-0 pt-0">
+          <Button variant="secondary" className="rounded-pill px-4" onClick={() => setShowCorrectionModal(false)}>
+            Annuler
+          </Button>
+          <Button variant="primary" className="rounded-pill px-4 fw-bold shadow-sm" onClick={handleCorrigerTransfert} disabled={valLoading}>
+            {valLoading ? <Spinner size="sm" /> : <><iconify-icon icon="solar:refresh-bold" className="me-2" />Relancer avec corrections</>}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <AdjustmentModals
         {...{

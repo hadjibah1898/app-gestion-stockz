@@ -1,102 +1,93 @@
+/**
+ * @file fournisseurController.js
+ * @description Contrôleur fournisseurs : CRUD et approvisionnement de la centrale.
+ */
+
 const Fournisseur = require('../models/Fournisseur');
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
 const Mouvement = require('../models/Mouvement');
-const { logAction } = require('../services/auditLogService');
+const auditHelper = require('../utils/auditHelper');
+const asyncHandler = require('../middleware/asyncHandler');
+const mongoose = require('mongoose');
 
 // --- CRUD Fournisseur ---
 
-exports.createFournisseur = async (req, res) => {
-    try {
-        const fournisseur = await Fournisseur.create({
-            ...req.body,
-            createur: req.user.id
+exports.createFournisseur = asyncHandler(async (req, res) => {
+    const fournisseur = await Fournisseur.create({
+        ...req.body,
+        createur: req.user.id
+    });
+    await auditHelper.logSuccess(req, req.user, 'CREATE_SUPPLIER', 'Fournisseur', fournisseur._id);
+    res.status(201).json({ success: true, data: fournisseur });
+});
+
+exports.getAllFournisseurs = asyncHandler(async (req, res) => {
+    const page = parseInt(req.query.page);
+    const limit = parseInt(req.query.limit) || 10;
+    const { search } = req.query;
+    const query = {};
+
+    if (req.user.role === 'Admin') {
+        query.createur = req.user.id;
+    }
+
+    if (search) {
+        query.nom = { $regex: search, $options: 'i' };
+    }
+
+    if (page) {
+        const skip = (page - 1) * limit;
+        const total = await Fournisseur.countDocuments(query);
+        const fournisseurs = await Fournisseur.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+        
+        res.status(200).json({
+            success: true,
+            data: fournisseurs,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
+            totalCount: total
         });
-        res.status(201).json(fournisseur);
-    } catch (error) {
-        res.status(400).json({ message: "Erreur création fournisseur", error: error.message });
+    } else {
+        const fournisseurs = await Fournisseur.find(query).sort({ createdAt: -1 }).lean();
+        res.status(200).json({ success: true, data: fournisseurs });
     }
-};
+});
 
-exports.getAllFournisseurs = async (req, res) => {
-    try {
-        const page = parseInt(req.query.page);
-        const limit = parseInt(req.query.limit) || 10;
-        const { search } = req.query;
-        const query = {};
+exports.updateFournisseur = asyncHandler(async (req, res) => {
+    const fournisseurCheck = await Fournisseur.findById(req.params.id);
+    if (!fournisseurCheck) return res.status(404).json({ message: "Fournisseur introuvable" });
 
-        // SÉCURITÉ MULTI-TENANT : L'Admin ne voit que ses fournisseurs, le SuperAdmin voit tout
-        if (req.user.role === 'Admin') {
-            query.createur = req.user.id;
-        }
-
-        if (search) {
-            query.nom = { $regex: search, $options: 'i' };
-        }
-
-        if (page) {
-            const skip = (page - 1) * limit;
-            const total = await Fournisseur.countDocuments(query);
-            const fournisseurs = await Fournisseur.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit);
-            
-            res.status(200).json({
-                data: fournisseurs,
-                totalPages: Math.ceil(total / limit),
-                currentPage: page,
-                totalCount: total
-            });
-        } else {
-            const fournisseurs = await Fournisseur.find(query).sort({ createdAt: -1 });
-            res.status(200).json(fournisseurs);
-        }
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
+        return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
     }
-};
+    const fournisseur = await Fournisseur.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    await auditHelper.logSuccess(req, req.user, 'UPDATE_SUPPLIER', 'Fournisseur', fournisseur._id, { before: fournisseurCheck, after: fournisseur });
+    res.status(200).json({ success: true, data: fournisseur });
+});
 
-exports.updateFournisseur = async (req, res) => {
-    try {
-        const fournisseurCheck = await Fournisseur.findById(req.params.id);
-        if (!fournisseurCheck) return res.status(404).json({ message: "Fournisseur introuvable" });
+exports.deleteFournisseur = asyncHandler(async (req, res) => {
+    const fournisseurId = req.params.id;
+    const fournisseurCheck = await Fournisseur.findById(fournisseurId);
+    if (!fournisseurCheck) return res.status(404).json({ message: "Fournisseur introuvable" });
 
-        if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
-            return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
-        }
-        const fournisseur = await Fournisseur.findByIdAndUpdate(req.params.id, req.body, { new: true });
-        res.status(200).json(fournisseur);
-    } catch (error) {
-        res.status(400).json({ message: error.message });
+    if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
+        return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
     }
-};
 
-exports.deleteFournisseur = async (req, res) => {
-    try {
-        const fournisseurId = req.params.id;
-
-        // Vérifier si des articles sont liés à ce fournisseur
-        const fournisseurCheck = await Fournisseur.findById(fournisseurId);
-        if (!fournisseurCheck) return res.status(404).json({ message: "Fournisseur introuvable" });
-
-        if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
-            return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
-        }
-
-        const articleCount = await Article.countDocuments({ fournisseur: fournisseurId });
-        if (articleCount > 0) {
-            return res.status(400).json({ message: `Impossible de supprimer ce fournisseur, il est lié à ${articleCount} article(s). Veuillez d'abord réassigner ces articles à un autre fournisseur.` });
-        }
-
-        await Fournisseur.findByIdAndDelete(fournisseurId);
-        res.status(200).json({ message: "Fournisseur supprimé" });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    const articleCount = await Article.countDocuments({ fournisseur: fournisseurId });
+    if (articleCount > 0) {
+        return res.status(400).json({ message: `Impossible de supprimer ce fournisseur, il est lié à ${articleCount} article(s).` });
     }
-};
+
+    await Fournisseur.findByIdAndDelete(fournisseurId);
+    await auditHelper.logSuccess(req, req.user, 'DELETE_SUPPLIER', 'Fournisseur', fournisseurId);
+    res.status(200).json({ success: true, message: "Fournisseur supprimé" });
+});
 
 // --- LOGIQUE D'APPROVISIONNEMENT (Cœur de la demande) ---
 
-exports.approvisionnerCentrale = async (req, res) => {
-    try {
+exports.approvisionnerCentrale = asyncHandler(async (req, res) => {
         const { fournisseurId, items, imageJustificatif, referenceFournisseur, dateReception } = req.body; 
 
         const fournisseur = await Fournisseur.findById(fournisseurId);
@@ -119,7 +110,7 @@ exports.approvisionnerCentrale = async (req, res) => {
         let articlesCrees = 0;
 
         for (const item of items) {
-            const quantiteAjout = parseInt(item.quantite);
+            const quantiteAjout = Number(item.quantite);
             if (quantiteAjout <= 0) continue;
 
             // Validation Backend : Le prix de vente, s'il est fourni, doit être supérieur au prix d'achat.
@@ -185,6 +176,7 @@ exports.approvisionnerCentrale = async (req, res) => {
         await fournisseur.save();
 
         // Enregistrer le mouvement de stock
+        const dateReceptionFormatted = dateReception ? new Date(dateReception).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR');
         const movement = await Mouvement.create({
             type: 'Approvisionnement',
             fournisseur: fournisseur._id,
@@ -198,29 +190,16 @@ exports.approvisionnerCentrale = async (req, res) => {
                 prixVenteUnitaire: i.prixVente || (i.prixAchat * 1.2)
             })),
             operateur: req.user.id,
-            details: `Réception BL N°${referenceFournisseur} du ${new Date(dateReception).toLocaleDateString()}`
+            details: `Réception BL N°${referenceFournisseur || 'N/A'} du ${dateReceptionFormatted}`
         });
 
         const populatedMovement = await Mouvement.findById(movement._id).populate('fournisseur boutiqueDestination operateur');
 
-        await logAction({
-            req,
-            user: req.user,
-            action: 'SUPPLY_STOCK',
-            entity: 'Fournisseur',
-            entityId: fournisseurId,
-            details: { items, created: articlesCrees, updated: articlesMisAJour },
-            status: 'SUCCESS'
-        });
+        await auditHelper.logSuccess(req, req.user, 'SUPPLY_STOCK', 'Fournisseur', fournisseurId, { items, created: articlesCrees, updated: articlesMisAJour });
 
         res.status(200).json({ 
             message: `Approvisionnement réussi vers ${depotPrincipal.nom}.`,
             details: `${articlesCrees} nouveaux articles, ${articlesMisAJour} mis à jour.`,
             movement: populatedMovement
         });
-
-    } catch (error) {
-        console.error("Erreur approvisionnement:", error);
-        res.status(500).json({ message: "Erreur lors de l'approvisionnement", error: error.message });
-    }
-};
+});

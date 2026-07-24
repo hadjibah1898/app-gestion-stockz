@@ -1,3 +1,8 @@
+/**
+ * @file caisseService.js
+ * @description Service de gestion des sessions de caisse (ouverture, fermeture, rapports).
+ */
+
 const mongoose = require('mongoose');
 const OuvertureCaisse = require('../models/OuvertureCaisse');
 const Depense = require('../models/Depense');
@@ -8,6 +13,8 @@ const Vente = require('../models/Vente');
 const DebtPayment = require('../models/DebtPayment');
 const DebtMovement = require('../models/DebtMovement');
 const commissionService = require('./commissionService');
+const User = require('../models/User');
+const venteService = require('./venteService');
 
 // --- FONCTIONS UTILITAIRES INTERNES ---
 
@@ -15,33 +22,44 @@ const commissionService = require('./commissionService');
  * Convertit de manière sécurisée une valeur de la DB (Decimal128 ou autre) en nombre.
  */
 const safeNum = (val) => {
-    if (!val) return 0;
-    // Gestion du format lean de MongoDB Decimal128
-    const s = val.$numberDecimal ? val.$numberDecimal : val.toString();
-    return parseFloat(s) || 0;
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') return parseFloat(val) || 0;
+  if (typeof val === 'object' && val.$numberDecimal) {
+    return parseFloat(val.$numberDecimal) || 0;
+  }
+  return 0;
 };
 
+exports.safeNum = safeNum;
+
 const calculerBilansSession = async (ouvertureCaisseId) => {
-    // On s'assure d'avoir un ObjectId valide pour la requête
-    const sessionOid = mongoose.isValidObjectId(ouvertureCaisseId) 
-        ? new mongoose.Types.ObjectId(ouvertureCaisseId.toString())
+    const id = (ouvertureCaisseId && typeof ouvertureCaisseId === 'object' && ouvertureCaisseId._id) 
+        ? ouvertureCaisseId._id 
+        : ouvertureCaisseId;
+
+    const sessionOid = mongoose.isValidObjectId(id) 
+        ? new mongoose.Types.ObjectId(id.toString())
         : null;
 
     if (!sessionOid) return { cashEnCaisse: 0, totalVentes: 0, totalDettesAccordees: 0, totalDepenses: 0, totalRecouvrement: 0, listeRecouvrements: [] };
 
-    // 1. Ventes (Uniquement ce qui est payé cash au moment de la vente)
     const ventes = await Vente.find({ ouvertureCaisse: sessionOid, isCancelled: { $ne: true } }).lean();
-    const totalVentes = Math.round(ventes.reduce((acc, v) => acc + safeNum(v.prixTotal), 0));
-    const venteIds = ventes.map(v => v._id);
-    const dettesAccordees = await DebtMovement.find({ venteAssociee: { $in: venteIds }, type: 'CREATION' }).lean();
-    const totalDettesAccordees = Math.round(dettesAccordees.reduce((acc, d) => acc + safeNum(d.montant), 0));
+    const totalVentes = Math.round(ventes.reduce((acc, v) => acc + safeNum(v.prixTotal), 0) || 0);
+    
+    const ventesFinalisees = ventes.filter(v => v.statut === 'finalisee');
+    const totalVentesFinalisees = Math.round(ventesFinalisees.reduce((acc, v) => acc + safeNum(v.prixTotal), 0) || 0);
 
-    // 3. Recouvrements (Dettes payées durant cette session)
-    // On ajoute populate('client', 'nom') pour récupérer le nom réel du client au lieu de son ID
+    const finalizedVenteIds = ventesFinalisees.map(v => v._id);
+    const dettesAccordees = await DebtMovement.find({ 
+        venteAssociee: { $in: finalizedVenteIds }, 
+        type: 'CREATION' 
+    }).lean();
+    const totalDettesAccordees = Math.round(dettesAccordees.reduce((acc, d) => acc + safeNum(d.montant), 0) || 0);
+
     const remboursements = await DebtPayment.find({ ouvertureCaisse: sessionOid, statut: 'VALIDEE' }).populate('client', 'nom').lean();
-    const totalRecouvrement = Math.round(remboursements.reduce((sum, p) => sum + safeNum(p.montant), 0));
+    const totalRecouvrement = Math.round(remboursements.reduce((sum, p) => sum + safeNum(p.montant), 0) || 0);
 
-    // Regroupement par client (Fusionner les montants si un client a payé plusieurs fois dans la session)
     const listeRecouvrementsGroupée = Object.values(remboursements.reduce((acc, curr) => {
         const clientId = curr.client?._id?.toString() || 'inconnu';
         if (!acc[clientId]) {
@@ -54,33 +72,29 @@ const calculerBilansSession = async (ouvertureCaisseId) => {
         return acc;
     }, {}));
 
-    // Calcul du total Mobile Money (Numérique RÉELLEMENT encaissé)
     const mobileModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
     
-    // Fintech sur les ventes (CA Net encaissé en Fintech)
     let totalMobileMoneySales = 0;
-    ventes.forEach(v => {
+    for (const v of ventesFinalisees) {
         if (mobileModes.includes(v.modePaiement)) {
-            const detteLiee = dettesAccordees.find(d => d.venteAssociee?.toString() === v._id.toString());
-            totalMobileMoneySales += (safeNum(v.prixTotal) - (detteLiee ? safeNum(detteLiee.montant) : 0));
+            const detteLiee = dettesAccordees.find(d => d.venteAssociee && d.venteAssociee.toString() === v._id.toString());
+            const montantDette = detteLiee ? safeNum(detteLiee.montant) : 0;
+            totalMobileMoneySales += (safeNum(v.prixTotal) - montantDette);
         }
-    });
+    }
 
-    // Fintech sur les recouvrements
     const totalMobileMoneyRecoveries = Math.round(remboursements
         .filter(p => mobileModes.includes(p.modePaiement))
         .reduce((sum, p) => sum + safeNum(p.montant), 0));
 
     const totalMobileMoney = Math.round(totalMobileMoneySales + totalMobileMoneyRecoveries);
 
-    // 2. Dépenses de la session
     const depenses = await Depense.find({ ouvertureCaisse: sessionOid }).lean();
-    const totalDepenses = Math.round(depenses.reduce((acc, d) => acc + safeNum(d.montant), 0));
+    const totalDepenses = Math.round(depenses.reduce((acc, d) => acc + safeNum(d.montant), 0) || 0);
 
-    // Logique : Le Cash en Caisse (Physique) exclut le Mobile Money et les dettes
-    const cashVentesSeul = totalVentes - totalDettesAccordees - totalMobileMoneySales;
+    const cashVentesSeul = totalVentesFinalisees - totalDettesAccordees - totalMobileMoneySales;
     const cashRecouvrementSeul = totalRecouvrement - totalMobileMoneyRecoveries;
-    const cashEnCaisse = cashVentesSeul + cashRecouvrementSeul - totalDepenses;
+    const cashEnCaisse = Math.round(cashVentesSeul + cashRecouvrementSeul - totalDepenses);
 
     console.log(`[DEBUG SESSION ${ouvertureCaisseId}] Brut: ${totalVentes} | Crédits: ${totalDettesAccordees} | Recouv: ${totalRecouvrement} | Dép: ${totalDepenses} | NET: ${cashEnCaisse}`);
 
@@ -101,8 +115,7 @@ const calculerBilansSession = async (ouvertureCaisseId) => {
 
 // --- EXPORTS ---
 
-exports.ouvrirCaisse = async ({ fondInitial, gerantId, boutiqueId }) => {
-    // Nettoyage rigoureux du fond initial
+exports.ouvrirCaisse = async ({ fondInitial, gerantId, boutiqueId, type = 'GERANT' }) => {
     const cleanFond = typeof fondInitial === 'string' 
         ? fondInitial.replace(/[^0-9.]+/g, "") 
         : fondInitial;
@@ -110,49 +123,90 @@ exports.ouvrirCaisse = async ({ fondInitial, gerantId, boutiqueId }) => {
     return await OuvertureCaisse.create({ 
         fondInitial: parseFloat(cleanFond) || 0, 
         gerant: gerantId, 
-        boutique: boutiqueId 
+        boutique: boutiqueId,
+        type 
     });
 };
 
-exports.fermerCaisseEtCreerRapport = async ({ ouvertureCaisseId, montantCloture, commentairesGérant, gerantId, paiementsCommissions }) => {
-    const ouverture = await OuvertureCaisse.findById(ouvertureCaisseId);
+exports.fermerCaisseEtCreerRapport = async ({ 
+    ouvertureCaisseId, 
+    ouvertureCaisse,
+    montantCloture, 
+    soldeReel,
+    commentairesGérant,
+    commentairesGerant, 
+    gerantId,
+    gérantId,
+    gerant,
+    paiementsCommissions 
+}) => {
+    const finalGerantId = gerantId || gérantId || gerant;
+    const finalCommentaires = commentairesGérant || commentairesGerant;
+    const finalMontantCloture = parseFloat(montantCloture?.toString() || soldeReel?.toString()) || 0;
+    const targetCaisseId = ouvertureCaisseId || ouvertureCaisse;
+
+    let ouverture;
+    
+    if (targetCaisseId && typeof targetCaisseId === 'object' && targetCaisseId.statut) {
+        ouverture = targetCaisseId;
+    } 
+    else if (targetCaisseId && mongoose.isValidObjectId(targetCaisseId)) {
+        ouverture = await OuvertureCaisse.findById(targetCaisseId);
+    }
+    else if (!ouverture && finalGerantId) {
+        ouverture = await OuvertureCaisse.findOne({ gerant: finalGerantId, statut: 'OUVERTE' });
+    }
+
     if (!ouverture) throw new Error("Caisse introuvable.");
 
-    // Traitement des commissions si présentes
+    const rapportExistant = await RapportCaisse.findOne({ ouvertureCaisse: ouverture._id });
+    if (rapportExistant) {
+        console.warn(`[Caisse] Tentative de clôture d'une session (${ouverture._id}) ayant déjà un rapport.`);
+        if (ouverture.statut === 'OUVERTE') {
+            ouverture.statut = 'FERMEE';
+            ouverture.dateFermeture = new Date();
+            await ouverture.save();
+        }
+        return rapportExistant;
+    }
+
+    await venteService.annulerCommandesNonEncaissees(ouverture._id);
+
     if (paiementsCommissions && Array.isArray(paiementsCommissions)) {
         for (const p of paiementsCommissions) {
             await commissionService.processPayment({ 
                 workerId: p.clientId, 
                 montant: p.montant, 
-                gerantId, 
-                boutiqueId: ouverture.boutique, 
-                ouvertureCaisseId 
+                gerantId: finalGerantId, 
+                boutiqueId: ouverture.boutique?._id || ouverture.boutique, 
+                ouvertureCaisseId: ouverture._id 
             });
         }
     }
 
-    const bilan = await calculerBilansSession(ouvertureCaisseId);
-    const fondInit = safeNum(ouverture.fondInitial);
-    
-    const soldeTheorique = fondInit + bilan.cashEnCaisse;
-    const ecart = (parseFloat(montantCloture?.toString()) || 0) - soldeTheorique;
+    // 4. Calculer le bilan de la session
+    const bilan = await calculerBilansSession(ouverture._id);
+    const fondInit = safeNum(ouverture.fondInitial || 0);
+    const totalRapports = safeNum(ouverture.totalRapportsValides || 0);
+    const soldeTheorique = fondInit + bilan.cashEnCaisse + totalRapports;
+    const ecart = finalMontantCloture - soldeTheorique;
 
     const rapport = await RapportCaisse.create({
-        ouvertureCaisse: ouvertureCaisseId,
-        gerant: gerantId,
-        boutique: ouverture.boutique,
+        ouvertureCaisse: ouverture._id,
+        gerant: finalGerantId,
+        boutique: ouverture.boutique?._id || ouverture.boutique,
         fondInitial: ouverture.fondInitial,
         totalVentes: bilan.totalVentes,
         totalDettes: bilan.totalDettesAccordees,
         totalMobileMoney: bilan.totalMobileMoney,
         totalMobileMoneyRecoveries: bilan.totalMobileMoneyRecoveries,
-        totalRecouvrement: bilan.totalRecouvrement, // Correspond maintenant au schéma
-        totalDepensesApprouvees: bilan.totalDepenses, // Correspond maintenant au schéma
+        totalRecouvrement: bilan.totalRecouvrement,
+        totalDepensesApprouvees: bilan.totalDepenses,
         soldeTheorique,
-        montantCloture,
+        montantCloture: finalMontantCloture,
         ecart,
-        commentairesGérant,
-        statut: 'EN_ATTENTE' // Assurer le statut initial pour la validation
+        commentairesGérant: finalCommentaires,
+        statut: 'EN_ATTENTE'
     });
 
     ouverture.statut = 'FERMEE';
@@ -175,15 +229,13 @@ exports.validerRapport = async ({ rapportId, adminId, commentairesAdmin }) => {
         const boutiqueNom = rapport.boutique?.nom || "Boutique inconnue";
         const gerantNom = rapport.gerant?.nom || "Gérant inconnu";
 
-        // 1. Mise à jour du rapport
-        rapport.statut = 'VALIDE'; // Cohérence avec le frontend qui attend 'VALIDE'
+        rapport.statut = 'VALIDE';
         rapport.adminValidateur = adminId;
         rapport.commentairesAdmin = commentairesAdmin;
         rapport.dateValidation = new Date();
         await rapport.save();
 
-        // 2. Transfert vers la Caisse Centrale (On transfère le montant RÉEL déclaré par le gérant)
-        const caisseAdmin = await CaisseAdmin.getInstance();
+        const caisseAdmin = await CaisseAdmin.getOrCreateForAdmin(adminId);
         await caisseAdmin.ajouterMouvement({
             rapport: rapport._id,
             montant: rapport.montantCloture,
@@ -213,9 +265,9 @@ exports.rejeterRapport = async ({ rapportId, adminId, commentairesAdmin }) => {
     );
 };
 
-exports.getCaisseAdmin = async () => {
-    const caisseAdmin = await CaisseAdmin.getInstance();
-    console.log('getCaisseAdmin - Solde Actuel de la Caisse Admin:', caisseAdmin.soldeActuel);
+exports.getCaisseAdmin = async (adminId) => {
+    const caisseAdmin = await CaisseAdmin.getOrCreateForAdmin(adminId);
+    console.log('getCaisseAdmin - Solde Actuel de la Caisse Admin (' + adminId + '):', caisseAdmin.soldeActuel);
     return caisseAdmin;
 };
 
@@ -228,14 +280,11 @@ exports.getReportDetails = async ({ rapportId }) => {
 
     if (!rapport) throw new Error("Rapport introuvable.");
 
-    // S'assurer que l'ID d'ouverture de caisse est valide avant de l'utiliser dans les requêtes
     if (!rapport.ouvertureCaisse || !mongoose.isValidObjectId(rapport.ouvertureCaisse)) {
         console.error(`ID d'ouverture de caisse invalide ou manquant pour le rapport ${rapportId}: ${rapport.ouvertureCaisse}`);
         throw new Error("ID d'ouverture de caisse invalide ou manquant pour ce rapport.");
     }
 
-    // Récupérer les détails granulaires pour le PDF
-    // Utilisation de { $ne: true } pour la cohérence avec le calcul du bilan
     try {
         const [ventes, depenses, remboursements] = await Promise.all([
             Vente.find({ ouvertureCaisse: rapport.ouvertureCaisse, isCancelled: { $ne: true } }).populate('article', 'nom code').lean(),
@@ -243,14 +292,12 @@ exports.getReportDetails = async ({ rapportId }) => {
             DebtPayment.find({ ouvertureCaisse: rapport.ouvertureCaisse, statut: 'VALIDEE' }).populate('client', 'nom').lean()
         ]);
 
-        // Récupérer les dettes accordées (crédits) lors des ventes de cette session
         const venteIds = ventes.map(v => v._id);
         const dettesAccordees = await DebtMovement.find({ 
             venteAssociee: { $in: venteIds }, 
             type: 'CREATION' 
         }).populate('client', 'nom').lean();
 
-        // Nettoyage des montants pour éviter les objets Decimal128 dans le frontend
         const rapportNettoye = {
             ...rapport,
             fondInitial: safeNum(rapport.fondInitial),
@@ -274,35 +321,114 @@ exports.getReportDetails = async ({ rapportId }) => {
 /**
  * Statistiques en temps réel pour la modale de clôture
  */
-exports.getStatistiquesSession = async (gerantId) => {
-    const ouverture = await OuvertureCaisse.findOne({ gerant: gerantId, statut: 'OUVERTE' }).lean();
+exports.getStatistiquesSession = async (user) => {
+    const userId = user.id || user._id;
+    const boutiqueId = user.boutique?._id || user.boutique;
+
+    let query;
+    if (user.role === 'Serveur') {
+        query = { boutique: boutiqueId, statut: 'OUVERTE', type: 'GERANT' };
+    } else if (user.role === 'Caissier') {
+        query = { gerant: userId, statut: 'OUVERTE', type: 'CAISSIER' };
+    } else {
+        query = { gerant: userId, statut: 'OUVERTE', type: 'GERANT' };
+    }
+
+    const ouverture = await OuvertureCaisse.findOne(query).lean();
     if (!ouverture) return { soldeTheorique: 0, totalVentes: 0, totalRecouvrement: 0 };
 
     const bilan = await calculerBilansSession(ouverture._id);
     const fondInitial = Math.round(parseFloat(ouverture.fondInitial?.toString()) || 0);
-    const soldeTheorique = Math.round(fondInitial + bilan.cashEnCaisse);
+    const totalRapports = Math.round(parseFloat(ouverture.totalRapportsValides?.toString()) || 0);
+    const soldeTheorique = Math.round(fondInitial + bilan.cashEnCaisse + totalRapports);
     
+    // Récupérer la liste détaillée des rapports caissiers validés
+    let rapportsCaissiersValides = [];
+    if (totalRapports > 0) {
+        rapportsCaissiersValides = await RapportCaisse.find({
+            boutique: boutiqueId,
+            gerantValidateur: userId,
+            statut: 'VALIDE_PAR_GERANT'
+        })
+        .populate('gerant', 'nom role')
+        .select('fondInitial totalVentes totalMobileMoney totalDettes montantCloture ecart commentairesGérant createdAt')
+        .sort({ createdAt: -1 })
+        .lean();
+
+        rapportsCaissiersValides = rapportsCaissiersValides.map(r => ({
+            _id: r._id,
+            caissierNom: r.gerant?.nom || 'Caissier inconnu',
+            fondInitial: safeNum(r.fondInitial),
+            totalVentes: safeNum(r.totalVentes),
+            totalMobileMoney: safeNum(r.totalMobileMoney),
+            totalDettes: safeNum(r.totalDettes),
+            montantCloture: safeNum(r.montantCloture),
+            ecart: safeNum(r.ecart),
+            commentairesGérant: r.commentairesGérant,
+            date: r.createdAt
+        }));
+    }
+    
+    let syncInfo = {};
+    if (user.role !== 'Admin') {
+        const unsyncedCount = await Vente.countDocuments({ ouvertureCaisse: ouverture._id, isSynced: { $ne: true } });
+        syncInfo = { 
+            ventesAttenteSynchro: unsyncedCount,
+            showSyncButton: unsyncedCount > 0 
+        };
+    } else {
+        syncInfo = { showSyncButton: false };
+    }
+
     return {
         fondInitial: fondInitial,
         ...bilan,
-        soldeTheorique: soldeTheorique
+        soldeTheorique: soldeTheorique,
+        totalRapportsValides: totalRapports,
+        rapportsCaissiersValides,
+        ...syncInfo
     };
 };
 
-exports.getStatutCaisse = async (gerantId) => {
-    const ouverture = await OuvertureCaisse.findOne({ gerant: gerantId, statut: 'OUVERTE' }).populate('boutique').lean();
+exports.getStatutCaisse = async (user) => {
+    const userId = user.id || user._id;
+    const boutiqueId = user.boutique?._id || user.boutique;
+
+    let query;
+    if (user.role === 'Serveur') {
+        query = { boutique: boutiqueId, statut: 'OUVERTE', type: 'GERANT' };
+    } else if (user.role === 'Caissier') {
+        query = { gerant: userId, statut: 'OUVERTE', type: 'CAISSIER' };
+    } else {
+        query = { gerant: userId, statut: 'OUVERTE', type: 'GERANT' };
+    }
+
+    const ouverture = await OuvertureCaisse.findOne(query).populate('boutique').lean();
     if (!ouverture) return null;
     const bilan = await calculerBilansSession(ouverture._id);
 
-    // On s'assure que le fond initial est bien lu, même en format Decimal128
     const fondInitialNum = parseFloat(ouverture.fondInitial?.toString()) || 
                            (typeof ouverture.fondInitial === 'number' ? ouverture.fondInitial : 0);
+    const totalRapports = Math.round(parseFloat(ouverture.totalRapportsValides?.toString()) || 0);
+
+    let syncInfo = {};
+    if (user.role !== 'Admin') {
+        const unsyncedCount = await Vente.countDocuments({ ouvertureCaisse: ouverture._id, isSynced: { $ne: true } });
+        syncInfo = { 
+            ventesAttenteSynchro: unsyncedCount,
+            showSyncButton: unsyncedCount > 0 
+        };
+    } else {
+        syncInfo = { showSyncButton: false };
+    }
 
     return { 
         ...ouverture, 
+        ...syncInfo,
         session: { 
             ...bilan, 
-            cashReelActuel: Math.max(0, fondInitialNum + bilan.cashEnCaisse)
+            cashReelActuel: Math.max(0, fondInitialNum + bilan.cashEnCaisse + totalRapports),
+            totalRapportsValides: totalRapports
         } 
     };
 };
@@ -313,24 +439,6 @@ exports.listerDepenses = async (queryFilters, user = null) => {
         const limit = parseInt(queryFilters.limit) || 10;
 
         const filters = {};
-
-        // SÉCURITÉ MULTI-TENANT
-        if (user && user.role === 'Admin') {
-            const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
-            const myIds = myBoutiques.map(b => b._id.toString());
-            
-            if (queryFilters.boutique) {
-                if (!myIds.includes(queryFilters.boutique.toString())) {
-                    filters.boutique = { $in: [] }; 
-                } else {
-                    filters.boutique = queryFilters.boutique;
-                }
-            } else {
-                filters.boutique = { $in: myBoutiques.map(b => b._id) };
-            }
-        } else if (queryFilters.boutique) {
-            filters.boutique = queryFilters.boutique;
-        }
 
         // Nettoyage des filtres pour éviter les chaînes vides
         if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
@@ -354,7 +462,6 @@ exports.listerRapports = async (queryFilters, user = null) => {
     const limit = parseInt(queryFilters.limit) || 10;
     const filters = {};
 
-    // SÉCURITÉ MULTI-TENANT
     if (user && user.role === 'Admin') {
         const myBoutiques = await Boutique.find({ createur: user.id }).select('_id');
         const myIds = myBoutiques.map(b => b._id.toString());
@@ -368,12 +475,28 @@ exports.listerRapports = async (queryFilters, user = null) => {
         } else {
             filters.boutique = { $in: myBoutiques.map(b => b._id) };
         }
+
+        // L'Admin ne voit QUE les rapports des gérants (pas ceux des caissiers)
+        // Sauf s'il filtre déjà par un gérant spécifique
+        if (queryFilters.gerant) {
+            filters.gerant = queryFilters.gerant;
+        } else {
+            const gerantsIds = await User.find({ 
+                role: 'Gérant', 
+                boutique: { $in: myBoutiques.map(b => b._id) } 
+            }).select('_id');
+            if (gerantsIds.length > 0) {
+                filters.gerant = { $in: gerantsIds.map(g => g._id) };
+            } else {
+                filters.gerant = { $in: [] };
+            }
+        }
     } else if (queryFilters.boutique) {
         filters.boutique = queryFilters.boutique;
+        if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
+    } else {
+        if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
     }
-
-    // On ne construit le filtre que pour les valeurs présentes et non vides
-    if (queryFilters.gerant) filters.gerant = queryFilters.gerant;
 
     if (queryFilters.startDate || queryFilters.endDate) {
         const dateFilter = {};
@@ -431,12 +554,12 @@ exports.creerDepense = async ({ montant, motif, justificatif, ouvertureCaisseId,
     const ouverture = await OuvertureCaisse.findById(ouvertureCaisseId).lean();
     if (!ouverture) throw new Error("Session de caisse introuvable.");
 
-    // Forcer la conversion du fond initial
     const fondInit = parseFloat(ouverture.fondInitial?.toString() || ouverture.fondInitial) || 0;
-    const dispo = fondInit + bilan.cashEnCaisse;
+    const totalRapports = parseFloat(ouverture.totalRapportsValides?.toString() || 0) || 0;
+    const dispo = fondInit + bilan.cashEnCaisse + totalRapports;
 
     if (montantDepense > dispo) {
-        throw new Error(`Fonds insuffisants. Disponible: ${Math.floor(dispo).toLocaleString()} GNF (Fond: ${fondInit}, Cash Session: ${bilan.cashEnCaisse})`);
+        throw new Error(`Fonds insuffisants. Disponible: ${Math.floor(dispo).toLocaleString()} GNF (Fond: ${fondInit}, Cash Session: ${bilan.cashEnCaisse}, Rapports Caissiers: ${totalRapports})`);
     }
 
     return await Depense.create({ 
@@ -446,4 +569,45 @@ exports.creerDepense = async ({ montant, motif, justificatif, ouvertureCaisseId,
         boutique: boutiqueId, 
         statut: 'VALIDEE' 
     });
+};
+
+// ==========================================
+// NOUVEAU : GESTION VALIDATION RAPPORTS CAISSIERS
+// ==========================================
+
+/**
+ * Ajoute le montant d'un rapport de caissier validé à la caisse ouverte du gérant
+ * Le montant est stocké dans totalRapportsValides (champ séparé du fondInitial)
+ * pour préserver l'intégrité du fond de caisse initial.
+ * 
+ * @param {Object} params - Paramètres
+ * @param {String} params.gerantId - ID du gérant qui valide
+ * @param {Number} params.montant - Montant à ajouter
+ * @param {String} params.rapportId - ID du rapport validé
+ * @returns {Object} - L'ouverture de caisse mise à jour
+ */
+exports.ajouterMontantCaisseGerant = async ({ gerantId, montant, rapportId }) => {
+    const ouvertureGerant = await OuvertureCaisse.findOne({
+        gerant: gerantId,
+        statut: 'OUVERTE',
+        type: 'GERANT'
+    });
+
+    if (!ouvertureGerant) {
+        throw new Error("Aucune caisse ouverte trouvée pour le gérant. Impossible d'ajouter le montant.");
+    }
+
+    const montantNum = parseFloat(montant) || 0;
+    if (montantNum <= 0) {
+        throw new Error("Le montant à ajouter doit être positif.");
+    }
+
+    // Stocker dans totalRapportsValides (champ séparé, ne corrompt PAS fondInitial)
+    ouvertureGerant.totalRapportsValides = (ouvertureGerant.totalRapportsValides || 0) + montantNum;
+    
+    await ouvertureGerant.save();
+
+    console.log(`[Caisse] Montant de ${montantNum} GNF ajouté au cumul rapports caissiers du gérant ${gerantId}. Total cumulé: ${ouvertureGerant.totalRapportsValides} GNF`);
+
+    return ouvertureGerant;
 };

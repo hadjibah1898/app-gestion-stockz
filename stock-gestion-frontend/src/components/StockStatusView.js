@@ -59,39 +59,39 @@ const StockStatusView = () => {
     }, [sortConfig]);
 
     const fetchData = useCallback(async () => {
-            try {
-                setLoading(true);
-                
-                const params = {
-                    limit: 0, // On récupère tout ce qui correspond aux filtres pour le calcul des totaux
-                    search: searchTerm,
-                    boutique: filterBoutique !== 'all' ? filterBoutique : undefined,
-                    fournisseur: filterFournisseur !== 'all' ? filterFournisseur : undefined,
-                    status: filterStatus !== 'all' ? filterStatus : undefined
-                };
+        try {
+            setLoading(true);
 
-                const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
-                    articleAPI.getAll(params),
-                    boutiqueAPI.getAll(),
-                    fournisseurAPI.getAll()
-                ]);
+            const params = {
+                limit: 0, // On récupère tout ce qui correspond aux filtres pour le calcul des totaux
+                search: searchTerm,
+                boutique: filterBoutique !== 'all' ? filterBoutique : undefined,
+                fournisseur: filterFournisseur !== 'all' ? filterFournisseur : undefined,
+                status: filterStatus !== 'all' ? filterStatus : undefined
+            };
 
-                const articles = articlesRes.data.data || [];
-                const allBoutiques = boutiquesRes.data.sort((a, b) => a.nom.localeCompare(b.nom));
-                const allFournisseurs = fournisseursRes.data;
+            const [articlesRes, boutiquesRes, fournisseursRes] = await Promise.all([
+                articleAPI.getAll(params),
+                boutiqueAPI.getAll(),
+                fournisseurAPI.getAll()
+            ]);
 
-                const centrale = allBoutiques.find(b => b.type === 'Centrale');
-                if (centrale) setCentralShopId(centrale._id);
+            const articles = articlesRes.data || [];
+            const allBoutiques = (Array.isArray(boutiquesRes) ? boutiquesRes : []).sort((a, b) => a.nom.localeCompare(b.nom));
+            const allFournisseurs = (fournisseursRes.data && Array.isArray(fournisseursRes.data)) ? fournisseursRes.data : (Array.isArray(fournisseursRes) ? fournisseursRes : []);
 
-                setAllArticles(articles);
-                setBoutiques(allBoutiques);
-                setFournisseurs(allFournisseurs);
+            const centrale = allBoutiques.find(b => b.type === 'Centrale');
+            if (centrale) setCentralShopId(centrale._id);
 
-            } catch (err) {
-                setError(err.response?.data?.message || "Erreur lors du chargement de l'état des stocks.");
-            } finally {
-                setLoading(false);
-            }
+            setAllArticles(articles);
+            setBoutiques(allBoutiques);
+            setFournisseurs(allFournisseurs);
+
+        } catch (err) {
+            setError(err.response?.data?.message || "Erreur lors du chargement de l'état des stocks.");
+        } finally {
+            setLoading(false);
+        }
     }, [filterBoutique, filterFournisseur, filterStatus, searchTerm]); // Déclenche un fetch uniquement quand les filtres changent
 
     useEffect(() => {
@@ -118,7 +118,7 @@ const StockStatusView = () => {
         if (sortConfig.key !== key) {
             return <iconify-icon icon="solar:sort-vertical-linear" className="ms-1 align-middle opacity-50"></iconify-icon>;
         }
-        return sortConfig.direction === 'asc' 
+        return sortConfig.direction === 'asc'
             ? <iconify-icon icon="solar:sort-from-top-to-bottom-bold" className="ms-1 align-middle text-primary"></iconify-icon>
             : <iconify-icon icon="solar:sort-from-bottom-to-top-bold" className="ms-1 align-middle text-primary"></iconify-icon>;
     };
@@ -153,7 +153,7 @@ const StockStatusView = () => {
             if (article.quantite <= 0) outOfStock[bId] = true;
             return acc;
         }, {});
-        
+
         return { groupedArticles: grouped, outOfStockMap: outOfStock };
     }, [allArticles]);
 
@@ -183,14 +183,14 @@ const StockStatusView = () => {
         if (allArticles.length === 0) return alert("Aucune donnée à exporter.");
 
         const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
-        
+
         // En-tête
-        try { doc.addImage(logo, 'PNG', 14, 8, 40, 15); } catch (e) {}
-        
+        try { doc.addImage(logo, 'PNG', 14, 8, 40, 15); } catch (e) { }
+
         doc.setFontSize(18);
         doc.setTextColor(41, 128, 185);
         doc.text("État Global des Stocks", 60, 16);
-        
+
         doc.setFontSize(10);
         doc.setTextColor(100);
         doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 60, 22);
@@ -246,7 +246,7 @@ const StockStatusView = () => {
 
         // Footer
         const pageCount = doc.internal.getNumberOfPages();
-        for(let i = 1; i <= pageCount; i++) {
+        for (let i = 1; i <= pageCount; i++) {
             doc.setPage(i);
             doc.setFontSize(8);
             doc.setTextColor(150);
@@ -322,7 +322,7 @@ const StockStatusView = () => {
                         <Col md={3}>
                             <Form.Group>
                                 <Form.Label className="small fw-bold">Rechercher</Form.Label>
-                                <Form.Control 
+                                <Form.Control
                                     type="text"
                                     placeholder="Nom ou code article..."
                                     value={searchTerm}
@@ -352,8 +352,8 @@ const StockStatusView = () => {
                             <Col md={2}>
                                 <Form.Group>
                                     <Form.Label className="small fw-bold">Filtrer par fournisseur</Form.Label>
-                                    <Form.Select 
-                                        value={filterFournisseur} 
+                                    <Form.Select
+                                        value={filterFournisseur}
                                         onChange={e => setFilterFournisseur(e.target.value)}
                                     >
                                         <option value="all">Tous les fournisseurs</option>
@@ -375,8 +375,8 @@ const StockStatusView = () => {
                         </Col>
                         <Col md="auto" className="ms-auto d-flex gap-2 align-self-end pb-1">
                             {(sortConfig.key !== 'nom' || sortConfig.direction !== 'asc' || filterStatus !== 'all' || filterBoutique !== 'all' || searchTerm !== '') && (
-                                <Button 
-                                    variant="outline-danger" 
+                                <Button
+                                    variant="outline-danger"
                                     size="sm"
                                     onClick={resetAllFilters}
                                     className="rounded-pill shadow-sm d-flex align-items-center"
@@ -397,11 +397,11 @@ const StockStatusView = () => {
                     const boutiqueArticles = groupedArticles[boutique._id] || [];
                     const totalStockValue = boutiqueArticles.reduce((sum, article) => sum + (article.quantite * article.prixAchat), 0);
                     const isCentral = boutique.type === 'Centrale';
-                    
+
                     // Application du tri sur les articles de la boutique
-                    const sortedBoutiqueArticles = [...boutiqueArticles].sort((a, b) => {
+                    const sortedBoutiqueArticles = [...boutiqueArticles].sort((a, b) => { // Correction: Utiliser une copie pour le tri
                         let aValue, bValue;
-                        
+
                         switch (sortConfig.key) {
                             case 'nom': aValue = a.nom.toLowerCase(); bValue = b.nom.toLowerCase(); break;
                             case 'code': aValue = (a.code || '').toLowerCase(); bValue = (b.code || '').toLowerCase(); break;
@@ -411,7 +411,7 @@ const StockStatusView = () => {
                             case 'prixVente': aValue = a.prixVente; bValue = b.prixVente; break;
                             case 'valeurStock': aValue = a.quantite * a.prixAchat; bValue = b.quantite * b.prixAchat; break;
                             case 'margeUnitaire': aValue = a.prixVente - a.prixAchat; bValue = b.prixVente - b.prixAchat; break;
-                            case 'margePourcent': 
+                            case 'margePourcent':
                                 aValue = a.prixVente > 0 ? ((a.prixVente - a.prixAchat) / a.prixVente) : 0;
                                 bValue = b.prixVente > 0 ? ((b.prixVente - b.prixAchat) / b.prixVente) : 0;
                                 break;
@@ -430,68 +430,68 @@ const StockStatusView = () => {
                     const columnCount = 11 + (isCentral ? 1 : 0);
 
                     return (
-                        <Card key={boutique._id} className="border-0 shadow-sm rounded-4 mb-4">
-                        <Card.Header className="bg-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-3">
-                            <div>
-                                <h5 className="fw-bold mb-0">{boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill>Dépôt Principal</Badge>}</h5>
-                                <Badge bg="primary-subtle" text="primary-emphasis" className="p-2 fs-6 mt-1">
-                                    {outOfStockMap[boutique._id] && (
-                                        <span className="blink-animation me-2">
-                                            <iconify-icon icon="solar:danger-triangle-bold" className="me-1"></iconify-icon>
-                                            Besoin de réapprovisionnement
-                                        </span>
-                                    )}
-                                    Valeur totale: {formatCurrency(totalStockValue)}
-                                </Badge>
-                            </div>
-                        </Card.Header>
-                        <Card.Body className="p-0">
-                            <Table responsive hover className="align-middle mb-0">
-                                <thead className="bg-body-tertiary">
-                                    <tr>
-                                        <th className="ps-4 border-0 text-muted small text-uppercase">Img</th>
-                                        <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('code')}>Code {getSortIcon('code')}</th>
-                                        <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('nom')}>Produit {getSortIcon('nom')}</th>
-                                        {isCentral && <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('fournisseur')}>Fournisseur {getSortIcon('fournisseur')}</th>}
-                                        <th className="text-center border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('quantite')}>unite Disponible {getSortIcon('quantite')}</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('prixAchat')}>Prix d'Achat {getSortIcon('prixAchat')}</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('prixVente')}>Prix de Vente {getSortIcon('prixVente')}</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('margeUnitaire')}>Marge Unitaire {getSortIcon('margeUnitaire')}</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('margePourcent')}>Marge (%) {getSortIcon('margePourcent')}</th>
-                                        <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('valeurStock')}>Valeur Stock {getSortIcon('valeurStock')}</th>
-                                        <th className="text-center border-0 text-muted small text-uppercase">Seuil d'Alerte</th>
-                                        <th className="text-center pe-4 border-0 text-muted small text-uppercase">Statut</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {sortedBoutiqueArticles.length > 0 ? sortedBoutiqueArticles.map(article => {
-                                        const margeUnitaire = article.prixVente - article.prixAchat;
-                                        const margePourcentage = article.prixVente > 0 ? (margeUnitaire / article.prixVente) * 100 : 0;
-
-                                        return (
-                                            <tr key={article._id}>
-                                                <td className="ps-4">{article.image ? <img src={article.image} alt="" className="rounded shadow-sm" style={{width: '35px', height: '35px', objectFit: 'cover'}} /> : <span className="text-muted small">-</span>}</td>
-                                                <td className="ps-4 text-muted small">{article.code || '-'}</td>
-                                                <td className="ps-4 fw-bold">{article.nom}</td>
-                                                {isCentral && <td className="ps-4">{article.fournisseur?.nom || <Badge bg="secondary">Non spécifié</Badge>}</td>}
-                                                <td className="text-center">{article.quantite}</td>
-                                                <td className="text-end text-danger">{formatCurrency(article.prixAchat)}</td>
-                                                <td className="text-end text-success">{formatCurrency(article.prixVente)}</td>
-                                                <td className="text-end text-primary fw-bold">{formatCurrency(margeUnitaire)}</td>
-                                                <td className="text-end text-primary">{margePourcentage.toFixed(1)}%</td>
-                                                <td className="text-end fw-bold">{formatCurrency(article.quantite * article.prixAchat)}</td>
-                                                <td className="text-center text-muted">{article.seuilAlerte || 10}</td>
-                                                <td className="text-center pe-4">{getStatusBadge(article.quantite, article.seuilAlerte)}</td>
-                                            </tr>
-                                        );
-                                    }) : (
+                        <Card key={boutique._id} className={`border-0 shadow-sm rounded-4 mb-4 ${boutique.type === 'Bar' ? 'bar-card-header' : ''}`}>
+                            <Card.Header className="bg-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-3">
+                                <div>
+                                    <h5 className="fw-bold mb-0">{boutique.nom} {boutique.type === 'Centrale' && <Badge bg="primary" pill>Dépôt Principal</Badge>}</h5>
+                                    <Badge bg="primary-subtle" text="primary-emphasis" className="p-2 fs-6 mt-1">
+                                        {outOfStockMap[boutique._id] && (
+                                            <span className="blink-animation me-2">
+                                                <iconify-icon icon="solar:danger-triangle-bold" className="me-1"></iconify-icon>
+                                                Besoin de réapprovisionnement
+                                            </span>
+                                        )}
+                                        Valeur totale: {formatCurrency(totalStockValue)}
+                                    </Badge>
+                                </div>
+                            </Card.Header>
+                            <Card.Body className="p-0">
+                                <Table responsive hover className="align-middle mb-0">
+                                    <thead className="bg-body-tertiary">
                                         <tr>
-                                            <td colSpan={columnCount} className="text-center text-muted p-4">Aucun article dans cette boutique.</td>
+                                            <th className="ps-4 border-0 text-muted small text-uppercase">Img</th>
+                                            <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('code')}>Code {getSortIcon('code')}</th>
+                                            <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('nom')}>Produit {getSortIcon('nom')}</th>
+                                            {isCentral && <th className="ps-4 border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('fournisseur')}>Fournisseur {getSortIcon('fournisseur')}</th>}
+                                            <th className="text-center border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('quantite')}>unite Disponible {getSortIcon('quantite')}</th>
+                                            <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('prixAchat')}>Prix d'Achat {getSortIcon('prixAchat')}</th>
+                                            <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('prixVente')}>Prix de Vente {getSortIcon('prixVente')}</th>
+                                            <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('margeUnitaire')}>Marge Unitaire {getSortIcon('margeUnitaire')}</th>
+                                            <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('margePourcent')}>Marge (%) {getSortIcon('margePourcent')}</th>
+                                            <th className="text-end border-0 text-muted small text-uppercase cursor-pointer" onClick={() => handleSort('valeurStock')}>Valeur Stock {getSortIcon('valeurStock')}</th>
+                                            <th className="text-center border-0 text-muted small text-uppercase">Seuil d'Alerte</th>
+                                            <th className="text-center pe-4 border-0 text-muted small text-uppercase">Statut</th>
                                         </tr>
-                                    )}
-                                </tbody>
-                            </Table>
-                        </Card.Body>
+                                    </thead>
+                                    <tbody>
+                                        {sortedBoutiqueArticles.length > 0 ? sortedBoutiqueArticles.map(article => {
+                                            const margeUnitaire = article.prixVente - article.prixAchat;
+                                            const margePourcentage = article.prixVente > 0 ? (margeUnitaire / article.prixVente) * 100 : 0;
+
+                                            return (
+                                                <tr key={article._id}>
+                                                    <td className="ps-4">{article.image ? <img src={article.image} alt="" className="rounded shadow-sm" style={{ width: '35px', height: '35px', objectFit: 'cover' }} /> : <span className="text-muted small">-</span>}</td>
+                                                    <td className="ps-4 text-muted small">{article.code || '-'}</td>
+                                                    <td className="ps-4 fw-bold">{article.nom}</td>
+                                                    {isCentral && <td className="ps-4">{article.fournisseur?.nom || <Badge bg="secondary">Non spécifié</Badge>}</td>}
+                                                    <td className="text-center">{article.quantite}</td>
+                                                    <td className="text-end text-danger">{formatCurrency(article.prixAchat)}</td>
+                                                    <td className="text-end text-success">{formatCurrency(article.prixVente)}</td>
+                                                    <td className="text-end text-primary fw-bold">{formatCurrency(margeUnitaire)}</td>
+                                                    <td className="text-end text-primary">{margePourcentage.toFixed(1)}%</td>
+                                                    <td className="text-end fw-bold">{formatCurrency(article.quantite * article.prixAchat)}</td>
+                                                    <td className="text-center text-muted">{article.seuilAlerte || 10}</td>
+                                                    <td className="text-center pe-4">{getStatusBadge(article.quantite, article.seuilAlerte)}</td>
+                                                </tr>
+                                            );
+                                        }) : (
+                                            <tr>
+                                                <td colSpan={columnCount} className="text-center text-muted p-4">Aucun article dans cette boutique.</td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </Table>
+                            </Card.Body>
                         </Card>
                     );
                 })}

@@ -22,7 +22,7 @@ const AdminCaisseView = () => {
     const [caisseAdmin, setCaisseAdmin] = useState(null);
     const [hasOpenSessions, setHasOpenSessions] = useState(false);
     const [tipPercentage, setTipPercentage] = useState(5); // Valeur locale pour l'UI
-    
+
     // Filtres
     const [dateFilter, setDateFilter] = useState({ startDate: '', endDate: '' });
     const [filterGerant, setFilterGerant] = useState('');
@@ -62,12 +62,13 @@ const AdminCaisseView = () => {
                 boutiqueAPI.getAll()
             ]);
 
-            setManagers(usersRes.data.filter(u => u.role === 'Gérant'));
-            setBoutiques(boutiquesRes.data);
-            setHasOpenSessions(boutiquesRes.data.some(b => b.isSessionOpen));
+            setManagers((usersRes.data || []).filter(u => u.role === 'Gérant'));
+            setBoutiques(boutiquesRes.data || []);
+            setHasOpenSessions((boutiquesRes.data || []).some(b => b.isSessionOpen));
             // Extraire le tableau de données du format paginé
             setRapports(rapportsRes.data.data || rapportsRes.data || []);
-            setCaisseAdmin(caisseAdminRes.data);
+            // L'intercepteur Axios unwrap déjà : caisseAdminRes est directement l'objet
+            setCaisseAdmin(caisseAdminRes?.soldeActuel !== undefined ? caisseAdminRes : (caisseAdminRes.data || null));
             setCurrentPage(1); // Réinitialiser la page lors d'un changement de filtre
 
         } catch (err) {
@@ -164,19 +165,20 @@ const AdminCaisseView = () => {
         setFintechLoading(true);
         try {
             // On récupère l'historique global des ventes sur la période avec les filtres actuels
-            const res = await venteAPI.getHistorique({ 
+            const res = await venteAPI.getHistorique({
                 startDate: dateFilter.startDate,
                 endDate: dateFilter.endDate,
                 gerantId: filterGerant,
                 limit: 0, // On récupère tout pour la période sans pagination
                 transactionRefSearch: fintechSearchTerm // Passer le terme de recherche
             });
-            
-            const allSales = res.data.ventes || [];
+
+            // Gérer les différents formats de réponse possibles
+            const allSales = (res.data && res.data.ventes) ? res.data.ventes : (res.ventes || res.data || []);
             const digitalModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
-            
+
             // On filtre uniquement les transactions Fintech (non annulées)
-            const filtered = allSales.filter(v => digitalModes.includes(v.modePaiement) && !v.isCancelled);
+            const filtered = (allSales || []).filter(v => digitalModes.includes(v.modePaiement) && !v.isCancelled);
             setFintechSales(filtered);
         } catch (err) {
             console.error(err);
@@ -194,14 +196,14 @@ const AdminCaisseView = () => {
     }, [key, fetchFintechSales]);
 
     const handleExportFintechPDF = () => {
-        const doc = new jsPDF({ orientation: 'landscape' });
+        const doc = new jsPDF('portrait');
         const formatCurrencyPdf = (amount) => (safeNum(amount).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
 
         // En-tête
         doc.addImage(logo, 'PNG', 14, 8, 40, 15);
         doc.setFontSize(18).setTextColor(255, 102, 0); // Orange Fintech
         doc.text("DÉTAIL DES TRANSACTIONS FINTECH (OM/MOBI)", 60, 18);
-        
+
         doc.setFontSize(10).setTextColor(100);
         doc.text(`Période du ${dateFilter.startDate || 'début'} au ${dateFilter.endDate || 'ce jour'}`, 14, 30);
         if (filterGerant) {
@@ -255,7 +257,7 @@ const AdminCaisseView = () => {
         const worksheet = XLSX.utils.json_to_sheet(dataToExport);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Transactions Fintech");
-        
+
         // Ajustement des colonnes
         worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 20 }, { wch: 20 }, { wch: 15 }, { wch: 20 }, { wch: 15 }];
 
@@ -271,14 +273,14 @@ const AdminCaisseView = () => {
     };
 
     const handleExportPDF = () => {
-        const doc = new jsPDF({ orientation: 'landscape' });
+        const doc = new jsPDF('portrait');
 
         // Helper pour le formatage de la devise dans le PDF
         const formatCurrencyPdf = (amount) => {
             const value = safeNum(amount).toLocaleString('fr-FR') + ' GNF';
             return value.replace(/[\u00a0\u202f]/g, ' ');
         };
-        
+
         // En-tête du document
         doc.addImage(logo, 'PNG', 14, 8, 40, 15);
         doc.setFontSize(22);
@@ -290,7 +292,7 @@ const AdminCaisseView = () => {
         let startY = 30;
         doc.text(`Période du ${dateFilter.startDate || 'début'} au ${dateFilter.endDate || 'fin'}`, 14, startY);
         startY += 8;
-        
+
         // Informations sur les filtres appliqués
         if (filterGerant) {
             const selectedManager = managers.find(m => m._id === filterGerant);
@@ -312,7 +314,7 @@ const AdminCaisseView = () => {
                 if (end) end.setHours(23, 59, 59, 999);
 
                 const dateMatch = (!start || entryDate >= start) && (!end || entryDate <= end);
-                
+
                 let gerantMatch = true;
                 if (filterGerant) {
                     const selectedManager = managers.find(m => m._id === filterGerant);
@@ -374,7 +376,7 @@ const AdminCaisseView = () => {
             doc.setTextColor(0);
             const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY : 100;
             doc.text(`Solde Actuel Caisse Centrale: ${formatCurrency(caisseAdmin.soldeActuel)}`, 14, finalY + 10);
-        } 
+        }
         // Tableau pour les rapports de caisse
         else {
             const tableColumn = ["Date", "Gérant", "Boutique", "Ventes", "Numérique", "Dettes", "Dépenses", "Théorique", "Montant Reçu", "Écart"];
@@ -433,16 +435,16 @@ const AdminCaisseView = () => {
                     valign: 'middle'
                 },
                 columnStyles: {
-                    0: { cellWidth: 22 }, // Date
-                    1: { cellWidth: 25 }, // Gérant
-                    2: { cellWidth: 25 }, // Boutique
-                    3: { halign: 'right', cellWidth: 25 }, // Ventes
-                    4: { halign: 'right', cellWidth: 25 }, // Numérique
-                    5: { halign: 'right', cellWidth: 20 }, // Dettes
-                    6: { halign: 'right', cellWidth: 20 }, // Dépenses
-                    7: { halign: 'right', cellWidth: 30 }, // Solde Théorique
-                    8: { halign: 'right', cellWidth: 30 }, // Montant Reçu
-                    9: { halign: 'right', cellWidth: 20 }  // Écart
+                    0: { cellWidth: 18 }, // Date
+                    1: { cellWidth: 22 }, // Gérant
+                    2: { cellWidth: 20 }, // Boutique
+                    3: { halign: 'right', cellWidth: 20 }, // Ventes
+                    4: { halign: 'right', cellWidth: 18 }, // Numérique
+                    5: { halign: 'right', cellWidth: 16 }, // Dettes
+                    6: { halign: 'right', cellWidth: 16 }, // Dépenses
+                    7: { halign: 'right', cellWidth: 22 }, // Solde Théorique
+                    8: { halign: 'right', cellWidth: 22 }, // Montant Reçu
+                    9: { halign: 'right', cellWidth: 18 }  // Écart
                 }
             });
         }
@@ -458,7 +460,7 @@ const AdminCaisseView = () => {
         if (key === 'caisse-centrale' && caisseAdmin) {
             fileName = `export_caisse_centrale_${new Date().toISOString().split('T')[0]}.xlsx`;
             sheetName = "Caisse Centrale";
-            
+
             const sortedHistory = [...filteredHistory].reverse();
             dataToExport = sortedHistory.map(entry => ({
                 'Date': new Date(entry.dateTransaction || entry.createdAt).toLocaleDateString('fr-FR'),
@@ -598,12 +600,12 @@ const AdminCaisseView = () => {
             const entryDate = new Date(entry.dateTransaction || entry.createdAt);
             const start = dateFilter.startDate ? new Date(dateFilter.startDate) : null;
             const end = dateFilter.endDate ? new Date(dateFilter.endDate) : null;
-            
+
             if (start) start.setHours(0, 0, 0, 0);
             if (end) end.setHours(23, 59, 59, 999);
 
             const dateMatch = (!start || entryDate >= start) && (!end || entryDate <= end);
-            
+
             let gerantMatch = true;
             if (filterGerant) {
                 const entryGerantId = entry.gerant?._id || (typeof entry.gerant === 'string' ? entry.gerant : null);
@@ -651,20 +653,20 @@ const AdminCaisseView = () => {
                         {managers.map(m => <option key={m._id} value={m._id}>{m.nom}</option>)}
                     </Form.Select>
                     <div className="d-flex gap-2 align-items-center">
-                        <Form.Control 
-                            type="date" 
+                        <Form.Control
+                            type="date"
                             size="sm"
-                            value={dateFilter.startDate} 
-                            onChange={e => setDateFilter({...dateFilter, startDate: e.target.value})}
+                            value={dateFilter.startDate}
+                            onChange={e => setDateFilter({ ...dateFilter, startDate: e.target.value })}
                             className="rounded-pill shadow-sm"
                             title="Date début"
                         />
                         <span className="text-muted">-</span>
-                        <Form.Control 
-                            type="date" 
+                        <Form.Control
+                            type="date"
                             size="sm"
-                            value={dateFilter.endDate} 
-                            onChange={e => setDateFilter({...dateFilter, endDate: e.target.value})}
+                            value={dateFilter.endDate}
+                            onChange={e => setDateFilter({ ...dateFilter, endDate: e.target.value })}
                             className="rounded-pill shadow-sm"
                             title="Date fin"
                         />
@@ -709,11 +711,11 @@ const AdminCaisseView = () => {
                                 </div>
                                 <iconify-icon icon="solar:phone-calling-bold-duotone" style={{ fontSize: '40px', opacity: 0.5, color: '#FF6600' }}></iconify-icon>
                             </div>
-                            <Button 
-                                variant="link" 
-                                className="p-0 text-decoration-none text-start small fw-bold mt-2" 
+                            <Button
+                                variant="link"
+                                className="p-0 text-decoration-none text-start small fw-bold mt-2"
                                 style={{ color: '#FF6600' }}
-                                    onClick={() => setKey('fintech')}
+                                onClick={() => setKey('fintech')}
                             >
                                 <iconify-icon icon="solar:list-bold" className="me-1"></iconify-icon>
                                 Liste des transactions
@@ -742,39 +744,6 @@ const AdminCaisseView = () => {
                                 </h4>
                             </div>
                             <iconify-icon icon="solar:danger-triangle-bold-duotone" style={{ fontSize: '40px', opacity: 0.5 }}></iconify-icon>
-                        </Card.Body>
-                    </Card>
-                </Col>
-                <Col lg={3} sm={6}>
-                    <Card className="border-0 shadow-sm bg-info-subtle text-info h-100">
-                        <Card.Body>
-                            <h6 className="mb-1">Taux de Pourboire Actuel</h6>
-                            <div className="d-flex align-items-center gap-2">
-                                <Form.Control size="sm" type="number" value={tipPercentage} onChange={e => setTipPercentage(e.target.value)} style={{ width: '60px' }} className="rounded-pill" />
-                                <span className="fw-bold">%</span>
-                                <OverlayTrigger
-                                    placement="top"
-                                    overlay={
-                                        <Tooltip id="tip-percentage-tooltip">
-                                            {hasOpenSessions 
-                                                ? "Modification impossible : Une ou plusieurs caisses sont actuellement ouvertes. Clôturez toutes les sessions pour modifier le taux." 
-                                                : "Mettre à jour le taux de pourboire global utilisé par défaut."}
-                                        </Tooltip>
-                                    }
-                                >
-                                    <span className="d-inline-block">
-                                        <Button 
-                                            variant="info" 
-                                            size="sm" 
-                                            className="rounded-pill text-white" 
-                                            onClick={handleUpdateTips}
-                                            disabled={hasOpenSessions}
-                                        >
-                                            Fixer
-                                        </Button>
-                                    </span>
-                                </OverlayTrigger>
-                            </div>
                         </Card.Body>
                     </Card>
                 </Col>
@@ -815,9 +784,9 @@ const AdminCaisseView = () => {
                                         <tr><td colSpan="9" className="text-center py-5"><Spinner animation="border" /></td></tr>
                                     ) : currentRapports.length > 0 ? (
                                         currentRapports.map(r => (
-                                            <tr 
-                                                key={r._id} 
-                                                onClick={() => handleShowDetails(r)} 
+                                            <tr
+                                                key={r._id}
+                                                onClick={() => handleShowDetails(r)}
                                                 className={`${r.statut === 'EN_ATTENTE' ? 'bg-warning-subtle' : 'clickable-row'}`}
                                             >
                                                 <td className="ps-4 text-nowrap">
@@ -829,7 +798,7 @@ const AdminCaisseView = () => {
                                                     <div className="small text-muted">{r.boutique?.nom || 'N/A'}</div>
                                                 </td>
                                                 <td className="text-end text-success">{formatCurrency(r.totalVentes)}</td>
-                                                <td className="text-end text-info">{formatCurrency(r.totalRecouvrement)}</td>
+                                                <td className={`text-end ${r.boutique?.type === 'Bar' ? 'text-bar-primary' : 'text-info'}`}>{formatCurrency(r.totalRecouvrement)}</td>
                                                 <td className="text-end fw-bold" style={{ color: '#FF6600' }}>{formatCurrency(r.totalMobileMoney)}</td>
                                                 <td className="text-end text-warning">{formatCurrency(r.totalDettes)}</td>
                                                 <td className="text-end text-danger">{formatCurrency(r.totalDepensesApprouvees)}</td>
@@ -1033,7 +1002,7 @@ const AdminCaisseView = () => {
                                     <strong className="fs-5">ALERTE ÉCART : {formatCurrency(selectedReport.ecart)}</strong>
                                 </div>
                                 <div className="p-2 bg-white rounded border small text-dark">
-                                    <strong>Justification du gérant :</strong><br/>
+                                    <strong>Justification du gérant :</strong><br />
                                     {selectedReport.commentairesGérant || "Aucune explication fournie."}
                                 </div>
                             </Alert>
@@ -1128,9 +1097,9 @@ const AdminCaisseView = () => {
                                 </Col>
                             </Row>
 
-                            <Tabs 
-                                defaultActiveKey="ventes" 
-                                id="report-details-tabs" 
+                            <Tabs
+                                defaultActiveKey="ventes"
+                                id="report-details-tabs"
                                 className="nav-tabs-custom"
                                 onSelect={() => setFilterSalesMode(null)} // Réinitialiser le filtre si on change d'onglet
                             >
@@ -1155,40 +1124,40 @@ const AdminCaisseView = () => {
                                                     return true; // Show all if no filter
                                                 })
                                                 .map(vente => (
-                                                <tr key={vente._id}>
-                                                    <td>{new Date(vente.createdAt).toLocaleTimeString('fr-FR')}</td>
-                                                    <td>{vente.article?.nom || 'Article supprimé'}</td>
-                                                    <td>
-                                                        {(() => {
-                                                            const mode = vente.modePaiement || 'Cash';
-                                                            if (mode === 'Orange Money') {
-                                                                return <Badge style={{ backgroundColor: '#FF6600', color: 'white', fontSize: '0.75rem' }} className="border-0 fw-normal">
-                                                                    <iconify-icon icon="simple-icons:orange" className="me-1 align-middle"></iconify-icon>OM
+                                                    <tr key={vente._id}>
+                                                        <td>{new Date(vente.createdAt).toLocaleTimeString('fr-FR')}</td>
+                                                        <td>{vente.article?.nom || 'Article supprimé'}</td>
+                                                        <td>
+                                                            {(() => {
+                                                                const mode = vente.modePaiement || 'Cash';
+                                                                if (mode === 'Orange Money') {
+                                                                    return <Badge style={{ backgroundColor: '#FF6600', color: 'white', fontSize: '0.75rem' }} className="border-0 fw-normal">
+                                                                        <iconify-icon icon="simple-icons:orange" className="me-1 align-middle"></iconify-icon>OM
+                                                                    </Badge>;
+                                                                } else if (mode === 'MobiCash') {
+                                                                    return <Badge style={{ backgroundColor: '#FFCC00', color: 'black', fontSize: '0.75rem' }} className="border-0 fw-normal">
+                                                                        <iconify-icon icon="solar:phone-calling-bold" className="me-1 align-middle"></iconify-icon>Mobi // Correction: Utiliser l'icône appropriée
+                                                                    </Badge>;
+                                                                } else if (mode === 'PayCard') {
+                                                                    return <Badge bg="info" style={{ fontSize: '0.75rem' }} className="border-0 fw-normal">
+                                                                        <iconify-icon icon="solar:card-bold" className="me-1 align-middle"></iconify-icon>Card
+                                                                    </Badge>;
+                                                                }
+
+                                                                let bg = 'light';
+                                                                let text = 'dark';
+                                                                if (mode === 'Cash') { bg = 'success-subtle'; text = 'success'; }
+                                                                else if (mode === 'Dette') { bg = 'warning-subtle'; text = 'warning-emphasis'; }
+
+                                                                return <Badge bg={bg} text={text} style={{ fontSize: '0.75rem' }} className="border-0 fw-normal">
+                                                                    {mode}
                                                                 </Badge>;
-                                                            } else if (mode === 'MobiCash') {
-                                                                return <Badge style={{ backgroundColor: '#FFCC00', color: 'black', fontSize: '0.75rem' }} className="border-0 fw-normal">
-                                                                    <iconify-icon icon="solar:phone-calling-bold" className="me-1 align-middle"></iconify-icon>Mobi
-                                                                </Badge>;
-                                                            } else if (mode === 'PayCard') {
-                                                                return <Badge bg="info" style={{ fontSize: '0.75rem' }} className="border-0 fw-normal">
-                                                                    <iconify-icon icon="solar:card-bold" className="me-1 align-middle"></iconify-icon>Card
-                                                                </Badge>;
-                                                            }
-                                                            
-                                                            let bg = 'light';
-                                                            let text = 'dark';
-                                                            if (mode === 'Cash') { bg = 'success-subtle'; text = 'success'; }
-                                                            else if (mode === 'Dette') { bg = 'warning-subtle'; text = 'warning-emphasis'; }
-                                                            
-                                                            return <Badge bg={bg} text={text} style={{ fontSize: '0.75rem' }} className="border-0 fw-normal">
-                                                                {mode}
-                                                            </Badge>;
-                                                        })()}
-                                                    </td>
-                                                    <td className="text-center">{vente.quantite}</td>
-                                                    <td className="text-end fw-bold">{formatCurrency(vente.prixTotal)}</td>
-                                                </tr>
-                                            ))}
+                                                            })()}
+                                                        </td>
+                                                        <td className="text-center">{vente.quantite}</td>
+                                                        <td className="text-end fw-bold">{formatCurrency(vente.prixTotal)}</td>
+                                                    </tr>
+                                                ))}
                                             {reportDetails.ventes.length === 0 && (
                                                 <tr><td colSpan="4" className="text-center text-muted py-3">Aucune vente pour cette session.</td></tr>
                                             )}

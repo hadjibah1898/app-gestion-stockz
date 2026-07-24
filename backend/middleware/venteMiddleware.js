@@ -1,6 +1,12 @@
+/**
+ * @file venteMiddleware.js
+ * @description Middleware de validation des données de vente avant traitement.
+ */
+
 const Article = require('../models/Article');
 const Client = require('../models/Client'); // Import du modèle Client
 const mongoose = require('mongoose'); // Pour valider les ObjectId
+const { logAction } = require('../services/auditLogService');
 
 /**
  * Middleware de sécurité et de validation pour le module de vente
@@ -15,6 +21,24 @@ exports.verifyArticlesBelongToBoutique = async (req, res, next) => {
         const { panier } = req.body;
         const userBoutiqueId = req.user.boutique ? req.user.boutique.toString() : null;
 
+        // SÉCURITÉ : Bloquer si l'utilisateur doit changer son mot de passe
+        if (req.user.mustChangePassword) {
+            await logAction({
+                req,
+                user: req.user,
+                action: 'ACCESS_BLOCKED_PWD_CHANGE_REQUIRED',
+                entity: 'User',
+                entityId: req.user._id,
+                status: 'FAILURE',
+                errorMessage: "Vente refusée : changement de mot de passe obligatoire non effectué.",
+                details: {
+                    path: req.originalUrl,
+                    method: req.method
+                }
+            });
+            return res.status(403).json({ message: "Action refusée : Vous devez changer votre mot de passe par défaut avant d'effectuer des ventes." });
+        }
+
         // SÉCURITÉ : L'administrateur n'est pas autorisé à effectuer des ventes.
         // Son rôle est uniquement la supervision et la validation.
         if (req.user.role === 'Admin') {
@@ -28,6 +52,13 @@ exports.verifyArticlesBelongToBoutique = async (req, res, next) => {
         // Vérifier si une boutique est assignée au gérant
         if (!userBoutiqueId) {
             return res.status(403).json({ message: "Action refusée : aucune boutique n'est assignée à votre compte." });
+        }
+
+        // SÉCURITÉ CRITIQUE : Vérifier si une session de caisse est ouverte pour cette boutique
+        const OuvertureCaisse = mongoose.model('OuvertureCaisse');
+        const sessionActive = await OuvertureCaisse.findOne({ boutique: userBoutiqueId, statut: 'OUVERTE' });
+        if (!sessionActive) {
+            return res.status(403).json({ message: "Vente refusée : La caisse de cette boutique est fermée. Le gérant doit ouvrir la caisse avant de commencer." });
         }
 
         // Vérifier l'existence du client si un ID est fourni
@@ -63,11 +94,13 @@ exports.verifyArticlesBelongToBoutique = async (req, res, next) => {
         let totalPanier = 0;
 
         for (const item of panier) {
-            const { article: articleId, quantite, remiseTemp } = item;
+            let { article: articleId, quantite, remiseTemp, remiseType } = item;
 
-            // Validation de l'ID de l'article
-            if (!mongoose.Types.ObjectId.isValid(articleId)) {
-                return res.status(400).json({ message: `ID d'article invalide dans le panier : ${articleId}.` });
+            // SÉCURITÉ SYNC : Extraire l'ID si c'est un objet (cas du mode hors-ligne)
+            const cleanArticleId = (articleId && typeof articleId === 'object' && articleId._id) ? articleId._id : articleId;
+
+            if (!cleanArticleId || !mongoose.Types.ObjectId.isValid(cleanArticleId)) {
+                return res.status(400).json({ message: `Identifiant d'article invalide ou manquant.` });
             }
 
             // Validation de la quantité
@@ -80,10 +113,15 @@ exports.verifyArticlesBelongToBoutique = async (req, res, next) => {
                 return res.status(400).json({ message: `La remise temporaire pour l'article ${articleId} doit être un nombre non négatif.` });
             }
 
-            const article = await Article.findById(articleId);
+            // Validation du type de remise
+            if (remiseType && !['montant', 'pourcentage'].includes(remiseType)) {
+                return res.status(400).json({ message: `Le type de remise pour l'article ${articleId} est invalide.` });
+            }
+
+            const article = await Article.findById(cleanArticleId);
 
             if (!article) {
-                return res.status(404).json({ message: `L'article avec l'ID ${articleId} est introuvable.` });
+                return res.status(404).json({ message: `L'article "${item.article?.nom || cleanArticleId}" est introuvable sur le serveur.` });
             }
 
             // Vérifier que l'article appartient à la boutique du gérant
@@ -98,8 +136,19 @@ exports.verifyArticlesBelongToBoutique = async (req, res, next) => {
 
             // Calculer le prix effectif pour le total du panier (simplifié pour le middleware)
             let prixUnitaire = article.prixVente; // Pour l'estimation rapide
-            if (remiseTemp) prixUnitaire = Math.max(0, prixUnitaire - parseFloat(remiseTemp));
+            
+            if (remiseTemp && remiseTemp > 0) {
+                prixUnitaire = remiseType === 'pourcentage' 
+                    ? prixUnitaire * (1 - parseFloat(remiseTemp) / 100) 
+                    : prixUnitaire - parseFloat(remiseTemp);
+            }
+            
             totalPanier += prixUnitaire * quantite;
+        }
+
+        // SÉCURITÉ : Validation de la dette (montant payé < total)
+        if (montantPaye !== undefined && montantPaye < totalPanier && !clientId) {
+            return res.status(400).json({ message: "Un client est obligatoire pour enregistrer une vente à crédit (dette)." });
         }
 
         next();

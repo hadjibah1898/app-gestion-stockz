@@ -1,3 +1,8 @@
+/**
+ * @file RestockModal.js
+ * @description Composant React.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal, Button, Form, Alert, Spinner } from 'react-bootstrap';
 import { boutiqueAPI, articleAPI } from '../services/api';
@@ -22,14 +27,14 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
         if (!show) return;
         setLoading(true);
         try {
-            const boutiquesRes = await boutiqueAPI.getAll();
-            const centrale = boutiquesRes.data.find(b => b.type === 'Centrale');
-            setBoutiques(boutiquesRes.data);
+            const boutiques = await boutiqueAPI.getAll();
+            const centrale = boutiques.find(b => b.type === 'Centrale');
+            setBoutiques(boutiques);
             setCentralShop(centrale);
 
             if (centrale) {
                 const articlesRes = await articleAPI.getAll();
-                const allArticles = articlesRes.data.data || articlesRes.data || [];
+                const allArticles = (Array.isArray(articlesRes) ? articlesRes : (Array.isArray(articlesRes.data) ? articlesRes.data : []));
                 const shopArticles = allArticles.filter(a => (a.boutique?._id || a.boutique) === centrale._id);
                 setCentralShopArticles(shopArticles);
             }
@@ -135,16 +140,15 @@ const RestockModal = ({ show, onHide, onSuccess }) => {
         }));
 
         try {
-            const res = await articleAPI.transferStock({ 
-                sourceId: centralShop._id,
+            const res = await articleAPI.restock({ 
                 targetId: restockTargetId, 
                 articles: articlesPayload,
                 nomTransporteur: nomTransporteur
             });
-            if (res.data.movement) {
-                setMovementData(res.data.movement); // On bascule vers l'affichage du succès
+            if (res && res._id) {
+                setMovementData(res); // res est directement le mouvement après extraction par l'intercepteur
             } else {
-                onSuccess(res.data.message);
+                onSuccess("Articles réapprovisionnés avec succès!");
                 handleClose();
             }
         } catch (err) {

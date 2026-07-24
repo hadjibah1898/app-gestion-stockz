@@ -11,8 +11,6 @@ export const NotificationProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
     const [toastQueue, setToastQueue] = useState([]);
     
-    // Utilisation d'une ref pour stocker les notifications actuelles
-    // Cela permet d'y accéder dans fetchNotifications sans l'ajouter aux dépendances (ce qui causerait une boucle infinie)
     const notificationsRef = useRef(notifications);
 
     useEffect(() => {
@@ -28,15 +26,16 @@ export const NotificationProvider = ({ children }) => {
             return;
         }
         try {
-            const res = userRole === 'Admin' 
+            // L'intercepteur extrait déjà l'enveloppe .data, res contient directement le tableau
+            const fetchedNotifications = userRole === 'Admin' 
                 ? await authAPI.getAllNotifications() 
                 : await authAPI.getNotifications();
             
-            const fetchedNotifications = res.data || []; 
+            const cleanNotifications = Array.isArray(fetchedNotifications) ? fetchedNotifications : [];
 
             if (!isInitialFetch) {
                 const currentNotifications = notificationsRef.current;
-                const newNotifications = fetchedNotifications.filter(
+                const newNotifications = cleanNotifications.filter(
                     fetchedNotif => !currentNotifications.some(existingNotif => existingNotif._id === fetchedNotif._id)
                 );
 
@@ -45,32 +44,36 @@ export const NotificationProvider = ({ children }) => {
                 }
             }
 
-            // Comparaison pour éviter les mises à jour d'état inutiles (qui causent des boucles)
             setNotifications(prev => {
-                if (JSON.stringify(prev) === JSON.stringify(fetchedNotifications)) return prev;
-                return fetchedNotifications;
+                if (JSON.stringify(prev) === JSON.stringify(cleanNotifications)) return prev;
+                return cleanNotifications;
             });
             
-            setUnreadCount(fetchedNotifications.filter(n => !n.read).length);
+            setUnreadCount(cleanNotifications.filter(n => !n.read).length);
         } catch (error) {
             console.error("Failed to fetch notifications", error);
         } finally {
             setLoading(false);
         }
-    }, []); // Dépendances vides : la fonction est stable et ne change jamais
+    }, []);
 
+    // Gestion du rafraîchissement par Polling (Vérification toutes les 60 secondes)
     useEffect(() => {
         const token = localStorage.getItem('token');
         if (token) {
-            fetchNotifications(true);
-            const interval = setInterval(() => fetchNotifications(false), 20000); // Poll every 20 seconds
+            fetchNotifications(true); // Chargement immédiat au montage
+
+            const interval = setInterval(() => {
+                fetchNotifications(false); // Lance le calcul des différences pour afficher les Toasts
+            }, 60000); 
+
             return () => clearInterval(interval);
         } else {
             setNotifications([]);
             setUnreadCount(0);
             setLoading(false);
         }
-    }, [fetchNotifications]); // Se déclenche uniquement au montage ou si fetchNotifications change (ce qui n'arrive plus)
+    }, [fetchNotifications]);
 
     const markAsRead = useCallback(async (id) => {
         const notification = notifications.find(n => n._id === id);
@@ -81,7 +84,7 @@ export const NotificationProvider = ({ children }) => {
                 await authAPI.markNotificationRead(id);
             } catch (error) {
                 console.error("Failed to mark notification as read", error);
-                fetchNotifications(true); // Revert on error
+                fetchNotifications(true); 
             }
         }
     }, [notifications, fetchNotifications]);

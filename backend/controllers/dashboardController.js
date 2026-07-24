@@ -1,31 +1,74 @@
+/**
+ * @file dashboardController.js
+ * @description Contrôleur du tableau de bord : agrégation des statistiques globales.
+ */
+
 const Vente = require('../models/Vente');
 const User = require('../models/User');
 const Article = require('../models/Article');
 const Boutique = require('../models/Boutique');
 const Client = require('../models/Client');
 const DebtPayment = require('../models/DebtPayment');
+const OuvertureCaisse = require('../models/OuvertureCaisse');
 const Depense = require('../models/Depense');
 const mongoose = require('mongoose');
+const asyncHandler = require('../middleware/asyncHandler');
 
-exports.getDashboardStats = async (req, res) => {
-    try {
+exports.getDashboardStats = asyncHandler(async (req, res) => {
         const { range } = req.query; // 'monthly' ou 'yearly' reçu du frontend
         const now = new Date();
         const adminId = req.user.id;
         const userRole = req.user.role;
 
-        // 0. Isolation Multi-tenant : Seul l'Admin est limité à ses créations. 
-        // Le SuperAdmin ne reçoit pas de filtre sur le créateur.
-        const myBoutiqueFilter = userRole === 'Admin' ? { createur: adminId } : {};
+        // Isolation Multi-tenant : Filtre par créateur pour l'Admin, par boutique assignée pour le Gérant
+        let myBoutiqueFilter = {};
+        if (userRole === 'Admin') {
+            myBoutiqueFilter = { createur: adminId };
+        } else if (userRole === 'Gérant') {
+            myBoutiqueFilter = { _id: req.user.boutique };
+        } else if (userRole === 'Serveur') {
+            myBoutiqueFilter = { _id: req.user.boutique };
+        } else {
+            myBoutiqueFilter = { _id: null };
+        }
+
         const myBoutiques = await Boutique.find(myBoutiqueFilter).select('_id');
         const myBoutiqueIds = myBoutiques.map(b => b._id);
+
+        // SÉCURITÉ & PERFORMANCE : Si aucune boutique n'est rattachée (Nouvel Admin)
+        // On retourne un objet vide structuré pour éviter les erreurs de calcul plus bas
+        if (myBoutiqueIds.length === 0) {
+            return res.status(200).json({
+                totalCA: 0, totalBenefice: 0, totalArticles: 0, articlesPeuStock: 0,
+                dailyOrdersPending: 0, totalVentes: 0,
+                performanceEquipe: [],
+                performanceGerants: [],
+                performanceBoutiques: [],
+                stockBoutiques: [],
+                boutiquesActives: 0,
+                boutiquesInactives: 0,
+                dailySales: 0,
+                dailyOrders: 0,
+                dailyRecoveries: 0,
+                salesProfit: { categories: [], series: [] },
+                productSales: { labels: [], series: [] },
+                detailedSales: []
+            });
+        }
+
+        // HIÉRARCHIE : L'Admin voit tout, le Gérant voit toute l'activité de sa boutique
+        let userRestriction = {};
+        if (userRole === 'Gérant') {
+            // Le gérant voit tout ce qui appartient à sa boutique (déjà filtré par myBoutiqueIds)
+            userRestriction = {}; 
+        }
 
         // 1. Stats du jour (Pour la bannière)
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
         
         const dailyStats = await Vente.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds }, createdAt: { $gte: todayStart, $lte: todayEnd } } },
+            { $match: { ...userRestriction, boutique: { $in: myBoutiqueIds }, createdAt: { $gte: todayStart, $lte: todayEnd } } },
             {
                 $group: {
                     _id: null,
@@ -40,6 +83,7 @@ exports.getDashboardStats = async (req, res) => {
             {
                 $match: {
                     boutique: { $in: myBoutiqueIds },
+                    ...userRestriction,
                     statut: 'VALIDEE',
                     datePaiement: { $gte: todayStart, $lte: todayEnd }
                 }
@@ -55,7 +99,7 @@ exports.getDashboardStats = async (req, res) => {
         // 2. Agrégation pour calculer CA et Coût d'achat total (Global)
         // Calcul du CA total (plus robuste, n'exclut pas les ventes d'articles supprimés)
         const totalCAData = await Vente.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds } } },
+            { $match: { boutique: { $in: myBoutiqueIds }, isCancelled: false } },
             {
                 $group: {
                     _id: null,
@@ -66,7 +110,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // Calcul du coût d'achat total (nécessite la jointure avec les articles)
         const totalCoutAchatData = await Vente.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds } } },
+            { $match: { ...userRestriction, boutique: { $in: myBoutiqueIds }, isCancelled: false } },
             {
                 $lookup: {
                     from: Article.collection.name,
@@ -75,7 +119,7 @@ exports.getDashboardStats = async (req, res) => {
                     as: 'articleDetails'
                 }
             },
-            { $unwind: '$articleDetails' },
+            { $unwind: { path: '$articleDetails', preserveNullAndEmptyArrays: true } },
             {
                 $group: {
                     _id: null,
@@ -86,7 +130,7 @@ exports.getDashboardStats = async (req, res) => {
 
         // Calcul des dépenses totales (Global)
         const totalDepensesData = await Depense.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds } } },
+            { $match: { ...userRestriction, boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
                     _id: null,
@@ -95,28 +139,28 @@ exports.getDashboardStats = async (req, res) => {
             }
         ]);
 
-        // 3. Graphique Analyse des Ventes (Sales Analysis)
-        let salesChartData = { categories: [], series: [] };
-        let matchStage = {};
+        // Initialisation des variables
+        let performanceGerants = [];
+        let performanceBoutiques = [];
+        let stockBoutiques = [];
+        const isAdmin = userRole === 'Admin';
+
+        // 3. Graphique Analyse des Ventes (Sales Analysis) - DISPONIBLE POUR TOUS
+        let matchStage = { 
+            boutique: { $in: myBoutiqueIds },
+            isCancelled: false,
+            ...userRestriction
+        };
         let groupStage = {};
         
         if (range === 'yearly') {
-            const startOfYear = new Date(now.getFullYear(), 0, 1);
-            const endOfYear = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
-            matchStage = { createdAt: { $gte: startOfYear, $lte: endOfYear } };
-            // Grouper par mois (1-12)
+            matchStage.createdAt = { $gte: new Date(now.getFullYear(), 0, 1), $lte: new Date(now.getFullYear(), 11, 31, 23, 59, 59) };
             groupStage = { _id: { $month: "$createdAt" }, total: { $sum: "$prixTotal" } };
         } else {
-            // Par défaut: Mensuel
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-            matchStage = { createdAt: { $gte: startOfMonth, $lte: endOfMonth } };
-            matchStage.boutique = { $in: myBoutiqueIds };
-            // Grouper par jour (1-31)
+            matchStage.createdAt = { $gte: new Date(now.getFullYear(), now.getMonth(), 1), $lte: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59) };
             groupStage = { _id: { $dayOfMonth: "$createdAt" }, total: { $sum: "$prixTotal" } };
         }
 
-        // Agrégation améliorée : CA, Coût et Dépenses par unité de temps et par boutique
         const unitExpression = groupStage._id;
         const detailedSalesRaw = await Vente.aggregate([
             { $match: matchStage },
@@ -128,20 +172,25 @@ exports.getDashboardStats = async (req, res) => {
                     as: 'art'
                 }
             },
-            { $unwind: '$art' },
+            { $unwind: { path: '$art', preserveNullAndEmptyArrays: true } },
             { 
                 $project: { 
                     unit: unitExpression, 
                     boutique: 1, 
                     ca: '$prixTotal', 
-                    cost: { $multiply: ['$quantite', '$art.prixAchat'] } 
+                    cost: { $multiply: ['$quantite', { $ifNull: ['$art.prixAchat', 0] }] } 
                 } 
             },
             {
                 $unionWith: {
                     coll: Depense.collection.name,
                     pipeline: [
-                        { $match: matchStage },
+                        { 
+                            $match: { 
+                                boutique: { $in: myBoutiqueIds },
+                                createdAt: matchStage.createdAt 
+                            } 
+                        },
                         { $project: { unit: unitExpression, boutique: 1, depense: '$montant' } }
                     ]
                 }
@@ -175,29 +224,17 @@ exports.getDashboardStats = async (req, res) => {
             { $sort: { unit: 1 } }
         ]);
 
-        // Formatage des données pour le graphique
-        if (range === 'yearly') {
-            const months = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"];
-            const dataMap = new Array(12).fill(0);
-            detailedSalesRaw.forEach(item => { if(item.unit) dataMap[item.unit - 1] += item.ca; });
-            salesChartData = {
-                categories: months,
-                series: [{ name: "Chiffre d'affaires", data: dataMap }]
-            };
-        } else {
-            const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-            const days = Array.from({length: daysInMonth}, (_, i) => (i + 1).toString());
-            const dataMap = new Array(daysInMonth).fill(0);
-            detailedSalesRaw.forEach(item => { if(item.unit) dataMap[item.unit - 1] += item.ca; });
-            salesChartData = {
-                categories: days,
-                series: [{ name: "Chiffre d'affaires", data: dataMap }]
-            };
-        }
+        let salesChartData = range === 'yearly' ? {
+            categories: ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"],
+            series: [{ name: "Chiffre d'affaires", data: Array.from({length: 12}, (_, i) => detailedSalesRaw.find(d => d.unit === i + 1)?.ca || 0) }]
+        } : {
+            categories: Array.from({length: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}, (_, i) => (i + 1).toString()),
+            series: [{ name: "Chiffre d'affaires", data: Array.from({length: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}, (_, i) => detailedSalesRaw.find(d => d.unit === i + 1)?.ca || 0) }]
+        };
 
-        // 4. Graphique Articles les plus vendus (Top 5)
+        // 4. Graphique Articles les plus vendus (Top 5) - DISPONIBLE POUR TOUS
         const topProducts = await Vente.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds } } },
+            { $match: { ...matchStage, isCancelled: false } },
             { $group: { _id: "$article", totalVendu: { $sum: "$quantite" } } },
             { $sort: { totalVendu: -1 } },
             { $limit: 5 },
@@ -213,11 +250,9 @@ exports.getDashboardStats = async (req, res) => {
             { $project: { nom: "$articleInfo.nom", totalVendu: 1 } }
         ]);
 
-        const productChartData = {
-            labels: topProducts.map(p => p.nom),
-            series: topProducts.map(p => p.totalVendu)
-        };
+        const productChartData = { labels: topProducts.map(p => p.nom), series: topProducts.map(p => p.totalVendu) };
 
+        // Calculs RESTREINTS à l'ADMIN (Performance globale)
         // --- NOUVEAU : Calcul des recouvrements par gérant pour le classement ---
         const recoveriesByGerant = await DebtPayment.aggregate([
             { $match: { boutique: { $in: myBoutiqueIds }, statut: 'VALIDEE' } },
@@ -231,17 +266,21 @@ exports.getDashboardStats = async (req, res) => {
 
         const recoveryMap = {};
         recoveriesByGerant.forEach(r => {
-            recoveryMap[r._id.toString()] = r.total;
+            if (r._id) {
+                recoveryMap[r._id.toString()] = r.total;
+            }
         });
 
         // 5. Performance par Gérant
+        if (isAdmin) {
         const performanceGerantsRaw = await Vente.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds } } },
+            { $match: { boutique: { $in: myBoutiqueIds }, isCancelled: false } },
             {
                 $group: {
                     _id: '$gerant',
                     totalVendu: { $sum: '$prixTotal' },
-                    totalPourboires: { $sum: '$pourboire' }
+                    totalPourboires: { $sum: '$pourboire' },
+                    nbVentes: { $sum: 1 }
                 }
             },
             {
@@ -270,20 +309,85 @@ exports.getDashboardStats = async (req, res) => {
                     nom: '$gerantDetails.nom',
                     boutiqueNom: '$boutiqueDetails.nom', // Inclure le nom de la boutique
                     chiffreAffaires: '$totalVendu',
-                    pourboires: '$totalPourboires'
+                    pourboires: '$totalPourboires',
+                    nbVentes: 1
                 }
             }
         ]);
 
-        const performanceGerants = performanceGerantsRaw.map(g => ({
+        performanceGerants = performanceGerantsRaw.map(g => ({
             ...g,
             totalRecouvrements: recoveryMap[g.id?.toString()] || 0,
             totalPourboires: g.pourboires || 0
         }));
+        }
+
+        // 5b. Performance par Caissier (NOUVEAU)
+        let performanceCaissiers = [];
+        if (userRole === 'Gérant' || userRole === 'Admin') {
+            const caissierFilter = userRole === 'Gérant' 
+                ? { boutique: { $in: myBoutiqueIds }, role: 'Caissier' }
+                : { boutique: { $in: myBoutiqueIds }, role: 'Caissier' };
+            
+            const caissiers = await User.find(caissierFilter).select('_id nom');
+            const caissierIds = caissiers.map(c => c._id);
+
+            if (caissierIds.length > 0) {
+                const performanceCaissiersRaw = await Vente.aggregate([
+                    { 
+                        $match: { 
+                            gerant: { $in: caissierIds }, 
+                            boutique: { $in: myBoutiqueIds }, 
+                            isCancelled: false 
+                        } 
+                    },
+                    {
+                        $group: {
+                            _id: '$gerant',
+                            totalVendu: { $sum: '$prixTotal' },
+                            totalPourboires: { $sum: '$pourboire' },
+                            nbVentes: { $sum: 1 },
+                            nbDettes: { 
+                                $sum: { 
+                                    $cond: [{ $gt: ['$client', null] }, 1, 0] 
+                                } 
+                            }
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: User.collection.name,
+                            localField: '_id',
+                            foreignField: '_id',
+                            as: 'caissierDetails'
+                        }
+                    },
+                    { $unwind: '$caissierDetails' },
+                    { $sort: { totalVendu: -1 } },
+                    {
+                        $project: {
+                            id: '$_id',
+                            nom: '$caissierDetails.nom',
+                            chiffreAffaires: '$totalVendu',
+                            pourboires: '$totalPourboires',
+                            nbVentes: 1,
+                            nbDettes: 1,
+                            panierMoyen: { $cond: [{ $gt: ['$nbVentes', 0] }, { $divide: ['$totalVendu', '$nbVentes'] }, 0] }
+                        }
+                    }
+                ]);
+
+                performanceCaissiers = performanceCaissiersRaw.map(c => ({
+                    ...c,
+                    totalRecouvrements: recoveryMap[c.id?.toString()] || 0
+                }));
+            }
+        }
 
         // 6. Performance par Boutique
-        const performanceBoutiques = await Vente.aggregate([
-            { $match: { boutique: { $in: myBoutiqueIds } } },
+        if (isAdmin) {
+        performanceBoutiques = await Vente.aggregate([
+            { $match: { boutique: { $in: myBoutiqueIds }, isCancelled: false } },
             {
                 $group: {
                     _id: '$boutique',
@@ -310,9 +414,11 @@ exports.getDashboardStats = async (req, res) => {
                 }
             }
         ]);
+        }
 
         // 8. État du Stock par Boutique (Nouveau)
-        const stockBoutiques = await Article.aggregate([
+        if (isAdmin) {
+        stockBoutiques = await Article.aggregate([
             { $match: { boutique: { $in: myBoutiqueIds } } },
             {
                 $group: {
@@ -340,12 +446,57 @@ exports.getDashboardStats = async (req, res) => {
                 }
             }
         ]);
+        }
 
         // 7. Total des articles en stock
         const totalArticlesInStock = await Article.aggregate([
             { $match: { boutique: { $in: myBoutiqueIds } } },
             { $group: { _id: null, total: { $sum: '$quantite' } } }
         ]);
+
+        // Compte des articles en stock faible (pré-calculé pour le dashboard)
+        const articlesPeuStock = await Article.countDocuments({
+            boutique: { $in: myBoutiqueIds },
+            $expr: { $lte: ["$quantite", { $ifNull: ["$seuilAlerte", 10] }] }
+        });
+
+        // Compte des commandes en attente aujourd'hui pour la boutique (Vue Gérant)
+        const dailyOrdersPending = await Vente.countDocuments({
+            ...userRestriction, boutique: { $in: myBoutiqueIds }, createdAt: { $gte: todayStart, $lte: todayEnd }, statut: 'commande'
+        });
+
+        // 9. Performance de l'Équipe (Serveurs) pour la session en cours
+        let performanceEquipe = [];
+        if (userRole === 'Gérant') {
+            const sessionActive = await OuvertureCaisse.findOne({ 
+                boutique: req.user.boutique, statut: 'OUVERTE' 
+            });
+
+            if (sessionActive) {
+                performanceEquipe = await Vente.aggregate([
+                    { $match: { ouvertureCaisse: sessionActive._id, isCancelled: false } },
+                    {
+                        $group: {
+                            _id: '$gerant',
+                            ca: { $sum: '$prixTotal' },
+                            pourboires: { $sum: '$pourboire' },
+                            nbVentes: { $sum: 1 }
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: 'users',
+                            localField: '_id',
+                            foreignField: '_id',
+                            as: 'user'
+                        }
+                    },
+                    { $unwind: '$user' },
+                    { $project: { nom: '$user.nom', ca: 1, pourboires: 1, nbVentes: 1 } },
+                    { $sort: { ca: -1 } }
+                ]);
+            }
+        }
 
         // Construction de l'objet de statistiques pour le frontend
         const stats = {
@@ -355,8 +506,12 @@ exports.getDashboardStats = async (req, res) => {
                 (totalCoutAchatData[0]?.totalCoutAchat || 0) - 
                 (totalDepensesData[0]?.total || 0),
             totalArticles: totalArticlesInStock[0]?.total || 0,
+            articlesPeuStock,
+            dailyOrdersPending,
             totalVentes: await Vente.countDocuments({ boutique: { $in: myBoutiqueIds } }),
+            performanceEquipe, // Ajouté pour le Gérant
             performanceGerants: performanceGerants,
+            performanceCaissiers: performanceCaissiers, // NOUVEAU: Performance des caissiers
             performanceBoutiques: performanceBoutiques, // Ajouté à la réponse
             stockBoutiques: stockBoutiques, // Ajouté à la réponse
             boutiquesActives: await Boutique.countDocuments({ ...myBoutiqueFilter, active: true }),
@@ -371,9 +526,4 @@ exports.getDashboardStats = async (req, res) => {
         };
 
         res.status(200).json(stats);
-
-    } catch (error) {
-        console.error("Erreur Dashboard:", error);
-        res.status(500).json({ message: "Erreur lors de la récupération des statistiques.", error: error.message });
-    }
-};
+});

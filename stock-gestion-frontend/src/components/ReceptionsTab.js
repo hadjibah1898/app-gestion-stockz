@@ -1,3 +1,8 @@
+/**
+ * @file ReceptionsTab.js
+ * @description Composant React.
+ */
+
 import React from 'react';
 import { Row, Col, Alert, Badge, Button, Form, Card } from 'react-bootstrap';
 

@@ -1,3 +1,8 @@
+/**
+ * @file clientRoutes.js
+ * @description Routes CRUD des clients et gestion des dettes/créances.
+ */
+
 const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
@@ -30,7 +35,7 @@ router.route('/:id')
     .all(validateObjectId('id'))
     .get(clientController.getClient)
     .put(validateClient, clientController.updateClient)
-    .delete(authorize('Admin'), clientController.deleteClient);
+    .delete(authorize('Admin', 'AdminBar'), clientController.deleteClient);
 
 // --- 4. Paiement Direct (CORRIGÉ) ---
 // On utilise 'protect' (déjà actif via router.use) et 'checkCaisseOuverte'

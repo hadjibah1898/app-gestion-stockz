@@ -19,7 +19,7 @@ const mouvementSchema = new mongoose.Schema({
     }],
     statutTransfert: {
         type: String,
-        enum: ['EXPEDIE', 'RECU', 'ANNULE', 'SANS_OBJET'],
+        enum: ['EXPEDIE', 'RECU', 'ANNULE', 'REJETE', 'LIVRAISON_PARTIELLE', 'SANS_OBJET'],
         default: 'SANS_OBJET'
     },
     operateur: { 

@@ -69,7 +69,7 @@ const rapportCaisseSchema = new mongoose.Schema({
     },
     statut: {
         type: String,
-        enum: ['EN_ATTENTE', 'VALIDE', 'REJETE'],
+        enum: ['EN_ATTENTE', 'VALIDE_PAR_GERANT', 'REJETE_PAR_GERANT', 'VALIDE', 'REJETE'],
         default: 'EN_ATTENTE',
     },
     adminValidateur: {
@@ -77,6 +77,13 @@ const rapportCaisseSchema = new mongoose.Schema({
         ref: 'User',
     },
     dateValidation: {
+        type: Date,
+    },
+    gerantValidateur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+    },
+    dateValidationGerant: {
         type: Date,
     },
     commentairesGérant: { type: String },

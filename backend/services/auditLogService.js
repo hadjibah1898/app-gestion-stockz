@@ -1,3 +1,8 @@
+/**
+ * @file auditLogService.js
+ * @description auditLogService - services
+ */
+
 const AuditLog = require('../models/AuditLog');
 
 /**

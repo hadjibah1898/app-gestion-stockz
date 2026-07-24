@@ -1,10 +1,16 @@
+/**
+ * @file pdfUtils.js
+ * @description Composant React.
+ */
+
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import logo from '../assets/logo.png';
+import { safeNum } from './formatUtils'; // Import safeNum
 
 // Helper pour nettoyer le formatage des nombres pour le PDF
 const formatPrice = (price) => {
-    return (price || 0).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
+    return safeNum(price).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ');
 };
 
 /**
@@ -35,6 +41,7 @@ export const generateReceiptPDF = (ticketData) => {
         itemLevelDiscount = 0,
         totalNet = 0,
         amountPaid = 0,
+        pourboire = 0,
         echeanceDette = null,
     } = ticketData;
 
@@ -45,7 +52,7 @@ export const generateReceiptPDF = (ticketData) => {
         doc.setFontSize(14);
         doc.text(shopName || 'BOUTIQUE', 40, 10, { align: 'center' });
     }
-    
+
     doc.setFontSize(8);
     doc.setFont("helvetica", "normal");
     doc.text(address || '', 40, 20, { align: 'center' });
@@ -59,7 +66,7 @@ export const generateReceiptPDF = (ticketData) => {
     doc.text(`Serveur: ${serverName}`, 5, 47);
     doc.text(`Caissier: ${cashierName}`, 5, 51);
     doc.text(`Mode: ${modePaiement}`, 40, 51);
-    
+
     // --- Tableau Articles ---
     const tableRows = items.map(item => [
         item.article.nom.substring(0, 20),
@@ -91,7 +98,7 @@ export const generateReceiptPDF = (ticketData) => {
     doc.text('Sous-total:', 5, finalY);
     doc.text(`${formatPrice(subTotal)} GNF`, 75, finalY, { align: 'right' });
     finalY += 4;
-    
+
     if (itemLevelDiscount > 0) {
         doc.text('Remise (articles):', 5, finalY);
         doc.text(`- ${formatPrice(itemLevelDiscount)} GNF`, 75, finalY, { align: 'right' });
@@ -99,18 +106,31 @@ export const generateReceiptPDF = (ticketData) => {
     }
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text('TOTAL NET:', 5, finalY);
+    doc.setFontSize(9);
+    doc.text('TOTAL ARTICLES:', 5, finalY);
     doc.text(`${formatPrice(totalNet)} GNF`, 75, finalY, { align: 'right' });
-    finalY += 5;
-    
+    finalY += 6;
+
+    if (pourboire > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.text('Service (Pourboire):', 5, finalY);
+        doc.text(`+ ${formatPrice(pourboire)} GNF`, 75, finalY, { align: 'right' });
+        finalY += 6;
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text('TOTAL À PAYER:', 5, finalY);
+        doc.text(`${formatPrice(totalNet + pourboire)} GNF`, 75, finalY, { align: 'right' });
+        finalY += 7;
+    }
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.text('Montant versé:', 5, finalY);
     doc.text(`${formatPrice(amountPaid)} GNF`, 75, finalY, { align: 'right' });
     finalY += 5;
 
-    const balance = amountPaid - totalNet;
+    const balance = amountPaid - (totalNet + pourboire);
 
     if (balance >= 0) {
         // Cas normal : Monnaie à rendre
@@ -121,7 +141,7 @@ export const generateReceiptPDF = (ticketData) => {
         doc.setFont("helvetica", "bold");
         doc.text('RESTE A PAYER:', 5, finalY);
         doc.text(`${formatPrice(Math.abs(balance))} GNF`, 75, finalY, { align: 'right' });
-        
+
         if (echeanceDette) {
             finalY += 5;
             doc.setFontSize(7);
