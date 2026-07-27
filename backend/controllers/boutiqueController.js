@@ -59,8 +59,8 @@ exports.createBoutique = asyncHandler(async (req, res) => {
 
     // Vérification que les utilisateurs sont bien des gérants
     // SÉCURITÉ MULTI-TENANT : Un Admin ne peut assigner que les gérants qu'il a créés
-    const managerFilter = req.user.role === 'Admin' ? { createur: currentUserId } : {};
-    const validManagers = await User.find({ _id: { $in: managersToCheck }, role: 'Gérant', ...managerFilter });
+    const managerFilter = ['Admin', 'AdminBar'].includes(req.user.role) ? { createur: currentUserId } : {};
+    const validManagers = await User.find({ _id: { $in: managersToCheck }, role: { $in: ['Gérant', 'GérantBar'] }, ...managerFilter });
 
     if (validManagers.length !== managersToCheck.length) {
         return res.status(400).json({ success: false, message: "Certains utilisateurs sélectionnés ne sont pas des gérants valides." });

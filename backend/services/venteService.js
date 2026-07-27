@@ -348,8 +348,8 @@ exports.annulerVente = async (id, user, req = null) => {
 
     if (vente.isCancelled) throw new Error("Cette vente est déjà annulée.");
 
-    // RESTAURATION DU STOCK : Uniquement si la vente a déjà déduit le stock (statut finalisée ou prêt)
-    if (vente.statut === 'finalisee' || vente.statut === 'en_preparation') {
+    // RESTAURATION DU STOCK : Pour tous les statuts (finalisée, prêt ou commande)
+    if (vente.statut === 'finalisee' || vente.statut === 'en_preparation' || vente.statut === 'commande') {
         await Article.findByIdAndUpdate(vente.article._id, { $inc: { quantite: vente.quantite } });
 
         // Restauration de la caisse (Session active ou passée)

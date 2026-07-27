@@ -10,13 +10,13 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 const { validatePerte } = require('../middleware/mouvementValidators'); // Import du nouveau middleware
 const validateObjectId = require('../middleware/validateObjectId');
 
-// Autorise l'Admin et le Gérant à consulter les mouvements (le contrôleur filtrera par boutique)
-router.get('/', protect, authorize('Admin', 'Gérant'), mouvementController.getAllMouvements);
-router.post('/:id/cancel', protect, authorize('Admin'), validateObjectId('id'), mouvementController.cancelMouvement);
+// Autorise l'Admin, AdminBar, Gérant et GérantBar à consulter les mouvements
+router.get('/', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), mouvementController.getAllMouvements);
+router.post('/:id/cancel', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validateObjectId('id'), mouvementController.cancelMouvement);
 
 // Route pour déclarer une perte/casse manuelle
-router.post('/perte', protect, authorize('Admin', 'Gérant'), validatePerte, mouvementController.declarerPerte);
+router.post('/perte', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validatePerte, mouvementController.declarerPerte);
 
-router.post('/:id/receive', protect, authorize('Admin', 'Gérant'), validateObjectId('id'), mouvementController.confirmerReception);
+router.post('/:id/receive', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validateObjectId('id'), mouvementController.confirmerReception);
 
 module.exports = router;

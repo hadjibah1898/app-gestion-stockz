@@ -56,7 +56,8 @@ const clientSchema = new mongoose.Schema({
     },
     createur: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
+        ref: 'User',
+        default: null
     },
     dernierModificateur: {
         type: mongoose.Schema.Types.ObjectId,
