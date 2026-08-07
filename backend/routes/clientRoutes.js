@@ -23,6 +23,15 @@ router.get('/debts', clientController.getDebts);
 router.get('/debt-evolution', clientController.getDebtEvolution);
 router.get('/debt-history', clientController.getDebtHistory);
 
+// --- Routes CRM (Comportement d'achat) ---
+router.get('/crm/analytics', clientController.getCrmAnalytics);
+router.get('/crm/quartiers', clientController.getCrmQuartiers);
+router.get('/crm/settings', clientController.getCrmSettings);
+router.put('/crm/settings', clientController.updateCrmSettings);
+router.get('/crm/segmentation-settings', clientController.getSegmentationSettings);
+router.put('/crm/segmentation-settings', clientController.updateSegmentationSettings);
+router.post('/:id/relance', validateObjectId('id'), clientController.relancerClient);
+
 // --- 2. Actions Spécifiques ---
 router.post('/pay-commission', authorize('Gérant'), validateCommission, clientController.payCommission);
 
@@ -44,6 +53,13 @@ router.post(
     validateObjectId('id'), 
     checkCaisseOuverte, 
     clientController.payDette
+);
+
+// --- 5. Envoi du reçu par email ---
+router.post(
+    '/payment/:paymentId/send-email',
+    validateObjectId('paymentId'),
+    clientController.sendReceiptEmail
 );
 
 module.exports = router;

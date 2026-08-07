@@ -11,7 +11,9 @@ const asyncHandler = require('../middleware/asyncHandler');
  * Récupère l'historique des ventes avec filtres
  */
 exports.getHistorique = asyncHandler(async (req, res) => {
-    const result = await venteService.listerVentes(req.query, req.user);
+    // Injecter le codeBoutique du middleware s'il est présent
+    const query = { ...req.query, codeBoutique: req.codeBoutique || req.query.codeBoutique || '' };
+    const result = await venteService.listerVentes(query, req.user);
     res.status(200).json({ success: true, data: result });
 });
 

@@ -20,8 +20,8 @@ const ClientModal = ({ show, onHide, clientToEdit, onSuccess }) => {
                 setCurrentClient(clientToEdit);
                 setEditMode(true);
             } else {
-                // Default for new client
-                setCurrentClient({ nom: '', email: '', telephone: '', type: 'Client', adresse: '', tauxCommission: 0 });
+// Default for new client
+                setCurrentClient({ nom: '', email: '', telephone: '', type: 'Client', adresse: '', quartier: '', ville: '', tauxCommission: 0 });
                 setEditMode(false);
             }
         }
@@ -80,10 +80,24 @@ const ClientModal = ({ show, onHide, clientToEdit, onSuccess }) => {
                         <Form.Label>Email</Form.Label>
                         <Form.Control type="email" name="email" value={currentClient.email} onChange={handleChange} placeholder="client@exemple.com" />
                     </Form.Group>
-                    <Form.Group className="mb-3">
+<Form.Group className="mb-3">
                         <Form.Label>Adresse</Form.Label>
                         <Form.Control type="text" name="adresse" value={currentClient.adresse} onChange={handleChange} />
                     </Form.Group>
+                    <Row>
+                        <Col md={6}>
+                            <Form.Group className="mb-3">
+                                <Form.Label>Quartier</Form.Label>
+                                <Form.Control type="text" name="quartier" value={currentClient.quartier} onChange={handleChange} placeholder="Ex: Madina" />
+                            </Form.Group>
+                        </Col>
+                        <Col md={6}>
+                            <Form.Group className="mb-3">
+                                <Form.Label>Ville</Form.Label>
+                                <Form.Control type="text" name="ville" value={currentClient.ville} onChange={handleChange} placeholder="Ex: Conakry" />
+                            </Form.Group>
+                        </Col>
+                    </Row>
                     <Form.Group className="mb-3">
                         <Form.Label>Type</Form.Label>
                         <Form.Select name="type" value={currentClient.type} onChange={handleChange}>

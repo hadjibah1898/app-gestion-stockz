@@ -19,6 +19,25 @@ const transporter = nodemailer.createTransport({
 // Define CLIENT_URL once to avoid repetition
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
 
+// Vérifier que le transporter est correctement configuré
+const verifyTransporter = async () => {
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        console.warn("⚠️ ATTENTION: Les variables EMAIL_USER ou EMAIL_PASS ne sont pas configurées dans .env");
+        return false;
+    }
+    try {
+        await transporter.verify();
+        console.log("✅ Transporteur email configuré avec succès");
+        return true;
+    } catch (error) {
+        console.error("❌ Erreur de configuration du transporteur email:", error.message);
+        return false;
+    }
+};
+
+// Vérifier au démarrage du service
+verifyTransporter();
+
 exports.transporter = transporter; // Exporter le transporteur
 
 /**
@@ -488,6 +507,12 @@ exports.sendDebtPaymentValidatedAlert = async (gerantId, client, montant) => {
 exports.sendDebtPaymentReceiptEmail = async (payment, client) => {
     if (!client || !client.email) return;
 
+    // Vérifier que les variables d'environnement sont configurées
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        console.error("❌ Email non envoyé: Les variables EMAIL_USER ou EMAIL_PASS ne sont pas configurées");
+        throw new Error("Configuration email manquante. Veuillez contacter l'administrateur.");
+    }
+
     try {
         const mailOptions = {
             from: process.env.EMAIL_USER,
@@ -531,9 +556,57 @@ exports.sendDebtPaymentReceiptEmail = async (payment, client) => {
         };
 
         await transporter.sendMail(mailOptions);
+        console.log(`📧 Reçu de paiement envoyé avec succès à ${client.email}`);
     } catch (error) {
         console.error("❌ Erreur lors de l'envoi du reçu par email:", error);
-        throw error;
+        
+        // Fournir un message d'erreur plus spécifique
+        if (error.code === 'EAUTH') {
+            throw new Error("Erreur d'authentification email: Vérifiez que l'email et le mot de passe sont corrects. Pour Gmail, utilisez un App Password au lieu de votre mot de passe.");
+        } else if (error.code === 'ENOTFOUND') {
+            throw new Error("Impossible de se connecter au serveur email. Vérifiez votre connexion internet.");
+        } else {
+            throw new Error(`Erreur lors de l'envoi de l'email: ${error.message}`);
+        }
+    }
+};
+
+// @desc    Envoyer un email de relance personnalisé à un client
+exports.sendRelanceClientEmail = async (client, message) => {
+    if (!client || !client.email) return;
+
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        console.error("❌ Email non envoyé: Les variables EMAIL_USER ou EMAIL_PASS ne sont pas configurées");
+        throw new Error("Configuration email manquante. Veuillez contacter l'administrateur.");
+    }
+
+    try {
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: client.email,
+            subject: `💌 Nous pensons à vous, ${client.nom} !`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #0d6efd; margin-top: 0;">💌 Une petite attention pour vous</h2>
+                    </div>
+                    <p>Bonjour <strong>${client.nom}</strong>,</p>
+                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; white-space: pre-line;">
+                        ${message}
+                    </div>
+                    <p style="text-align: center; color: #6c757d; font-size: 0.85em; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                        Nous serions ravis de vous revoir !<br/>
+                        <strong>Votre Boutique</strong>
+                    </p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+        console.log(`💌 Email de relance envoyé avec succès à ${client.email}`);
+    } catch (error) {
+        console.error("❌ Erreur lors de l'envoi de l'email de relance:", error);
+        throw new Error(`Erreur lors de l'envoi de l'email de relance: ${error.message}`);
     }
 };
 

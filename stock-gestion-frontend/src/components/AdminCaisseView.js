@@ -20,8 +20,6 @@ const AdminCaisseView = () => {
     const [rapports, setRapports] = useState([]);
     const [boutiques, setBoutiques] = useState([]);
     const [caisseAdmin, setCaisseAdmin] = useState(null);
-    const [hasOpenSessions, setHasOpenSessions] = useState(false);
-    const [tipPercentage, setTipPercentage] = useState(5); // Valeur locale pour l'UI
 
     // Filtres
     const [dateFilter, setDateFilter] = useState({ startDate: '', endDate: '' });
@@ -64,7 +62,6 @@ const AdminCaisseView = () => {
 
             setManagers((usersRes.data || []).filter(u => u.role === 'Gérant'));
             setBoutiques(boutiquesRes.data || []);
-            setHasOpenSessions((boutiquesRes.data || []).some(b => b.isSessionOpen));
             // Extraire le tableau de données du format paginé
             setRapports(rapportsRes.data.data || rapportsRes.data || []);
             // L'intercepteur Axios unwrap déjà : caisseAdminRes est directement l'objet
@@ -78,16 +75,6 @@ const AdminCaisseView = () => {
             setLoading(false);
         }
     }, [dateFilter, filterGerant]);
-
-    const handleUpdateTips = async () => {
-        try {
-            await venteAPI.updateTipSettings({ percentage: tipPercentage });
-            setSuccess(`Taux de pourboire mis à jour à ${tipPercentage}%`);
-            setTimeout(() => setSuccess(''), 3000);
-        } catch (err) {
-            setError("Erreur lors de la mise à jour du pourcentage.");
-        }
-    };
 
     useEffect(() => {
         fetchData();
@@ -146,7 +133,7 @@ const AdminCaisseView = () => {
         setError('');
         try {
             const res = await caisseAPI.getReportDetails(rapport._id);
-            setReportDetails(res.data);
+            setReportDetails(res);  // Directement res, pas res.data (interceptor déjà unwrapé les données)
         } catch (err) {
             setError("Impossible de charger les détails du rapport.");
             setShowDetailsModal(false); // Fermer la modale en cas d'erreur
@@ -178,7 +165,26 @@ const AdminCaisseView = () => {
             const digitalModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
 
             // On filtre uniquement les transactions Fintech (non annulées)
-            const filtered = (allSales || []).filter(v => digitalModes.includes(v.modePaiement) && !v.isCancelled);
+            // IMPORTANT : listerVentes groupe par orderGroupId, donc on doit parcourir les items de chaque groupe
+            const filtered = [];
+            (allSales || []).forEach(group => {
+                const items = group.items || [];
+                items.forEach(item => {
+                    if (digitalModes.includes(item.modePaiement) && !item.isCancelled) {
+                        filtered.push({
+                            ...item,
+                            // Hériter des infos du groupe si l'item ne les a pas
+                            // Utiliser populatedBoutique (objet peuplé) si disponible
+                            boutique: (item.boutique && typeof item.boutique === 'object' && item.boutique.nom)
+                                ? item.boutique
+                                : (group.populatedBoutique?.[0] || group.boutique),
+                            gerant: item.gerant || group.gerant,
+                            createdAt: item.createdAt || group.createdAt,
+                            transactionRef: item.transactionRef || group.transactionRef
+                        });
+                    }
+                });
+            });
             setFintechSales(filtered);
         } catch (err) {
             console.error(err);

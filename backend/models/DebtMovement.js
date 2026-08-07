@@ -6,9 +6,11 @@ const debtMovementSchema = new mongoose.Schema({
     montant: { type: Number, required: true },
     soldeAnterieur: { type: Number, required: true },
     nouveauSolde: { type: Number, required: true },
-    venteAssociee: { type: mongoose.Schema.Types.ObjectId, ref: 'Vente' },
+venteAssociee: { type: mongoose.Schema.Types.ObjectId, ref: 'Vente' },
     boutique: { type: mongoose.Schema.Types.ObjectId, ref: 'Boutique' },
-    operateur: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+    operateur: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    modePaiement: { type: String, default: 'Cash' },
+    transactionRef: { type: String }
 }, { timestamps: true });
 
 debtMovementSchema.index({ client: 1, createdAt: -1 });

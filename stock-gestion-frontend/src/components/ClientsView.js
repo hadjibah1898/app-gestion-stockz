@@ -4,13 +4,14 @@
 // Affiche l'historique des achats et les remises accordées
 // Contient les fonctionnalités de recherche et de filtres
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button, Form,  Alert, Spinner, Badge, Card, Tab, Tabs,  } from 'react-bootstrap';
+import { Button, Form, Alert, Spinner, Badge, Card, Tab, Tabs, Modal } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { clientAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
 import ClientModal from './common/ClientModal'; // Importer le composant réutilisable
+import CrmDashboard from './CrmDashboard'; // Tableau de bord CRM moderne
 
 const ClientsView = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -24,9 +25,18 @@ const ClientsView = () => {
   
   const [debtHistory, setDebtHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
-  // États pour Modale Création/Édition
+  const [crmData, setCrmData] = useState([]);
+  const [crmLoading, setCrmLoading] = useState(false);
+  const [crmQuartiers, setCrmQuartiers] = useState([]);
+// États pour Modale Création/Édition
   const [showModal, setShowModal] = useState(false);
   const [currentClient, setCurrentClient] = useState(null);
+  // États pour Modale de Relance (personnalisation du message)
+  const [showRelanceModal, setShowRelanceModal] = useState(false);
+  const [relanceClientId, setRelanceClientId] = useState(null);
+  const [relanceClientNom, setRelanceClientNom] = useState('');
+  const [relanceMessage, setRelanceMessage] = useState('');
+  const [relanceSending, setRelanceSending] = useState(false);
 
   const fetchClients = useCallback(async () => {
     try {
@@ -34,7 +44,8 @@ const ClientsView = () => {
       // Simulation de données si l'API n'est pas encore prête côté backend
       try {
           const res = await clientAPI.getAll();
-          setClients(res.data);
+          // L'intercepteur Axios unwrappe déjà : res est le tableau directement
+          setClients(Array.isArray(res) ? res : (res.data || []));
       } catch (e) {
           console.warn("API Clients non disponible, utilisation tableau vide");
           setClients([]);
@@ -50,7 +61,8 @@ const ClientsView = () => {
     try {
         setHistoryLoading(true);
         const res = await clientAPI.getDebtHistory();
-        setDebtHistory(res.data);
+        // L'intercepteur Axios unwrappe déjà : res est le tableau directement
+        setDebtHistory(Array.isArray(res) ? res : (res.data || []));
     } catch (err) {
         setError("Erreur lors du chargement de l'historique des dettes.");
     } finally {
@@ -58,10 +70,50 @@ const ClientsView = () => {
     }
   }, []);
 
+  const fetchCrmAnalytics = useCallback(async () => {
+    try {
+        setCrmLoading(true);
+        const [analyticsRes, quartiersRes] = await Promise.all([
+            clientAPI.getCrmAnalytics(),
+            clientAPI.getCrmQuartiers()
+        ]);
+        setCrmData(Array.isArray(analyticsRes) ? analyticsRes : (analyticsRes.data || []));
+        setCrmQuartiers(Array.isArray(quartiersRes) ? quartiersRes : (quartiersRes.data || []));
+    } catch (err) {
+        console.error("Erreur CRM:", err);
+    } finally {
+        setCrmLoading(false);
+    }
+  }, []);
+
+// Ouvre la modale de relance pour personnaliser le message avant envoi
+  const handleRelancerClient = (clientId, clientNom) => {
+    setRelanceClientId(clientId);
+    setRelanceClientNom(clientNom);
+    setRelanceMessage('');
+    setShowRelanceModal(true);
+  };
+
+  // Envoie effectivement l'email de relance avec le message personnalisé (ou le message par défaut)
+  const confirmRelance = async () => {
+    setRelanceSending(true);
+    try {
+        await clientAPI.relancerClient(relanceClientId, { message: relanceMessage });
+        setSuccessMessage(`Relance envoyée à ${relanceClientNom} par email.`);
+        setShowRelanceModal(false);
+        setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (err) {
+        setError(err.response?.data?.message || "Erreur lors de l'envoi de la relance.");
+    } finally {
+        setRelanceSending(false);
+    }
+  };
+
   useEffect(() => {
     fetchClients();
     fetchDebtHistory();
-  }, [fetchClients, fetchDebtHistory]);
+    fetchCrmAnalytics();
+  }, [fetchClients, fetchDebtHistory, fetchCrmAnalytics]);
 
   // Effet pour gérer l'ouverture via notification
   useEffect(() => {
@@ -109,7 +161,6 @@ const ClientsView = () => {
       'Type': c.type,
       'Total Achats (GNF)': c.totalAchats || 0,
       'Dette Actuelle (GNF)': c.dette || 0,
-      'Commission Due (Ouvriers)': c.commission || 0,
       'Date Création': new Date(c.createdAt).toLocaleDateString()
     }));
 
@@ -168,70 +219,80 @@ const ClientsView = () => {
       label: "Échéance Dette",
       render: (val, row) => row.dette > 0 && val ? new Date(val).toLocaleDateString() : <span className="text-muted">-</span>
     },
-    { 
-        key: 'commission', 
-        label: 'Commission Due',
-        render: (val, row) => (
-            row.type === 'Ouvrier' ? (
-                val > 0 ? <Badge bg="primary">{(val).toLocaleString()} GNF</Badge> : <span className="text-muted">0 GNF</span>
-            ) : <span className="text-muted small">N/A</span>
-        )
-    },
-    {
-        key: 'createur',
-        label: 'Créé par',
-        render: (user) => user?.nom || <span className="text-muted">N/A</span>
-    },
     {
         key: 'createdAt',
         label: 'Date Création',
         render: (date) => date ? new Date(date).toLocaleDateString('fr-FR') : <span className="text-muted">-</span>
-    },
-    { 
-  key: 'createur', 
-  label: 'Enregistré par', 
-  render: (createur) => (
-    <div className="d-flex align-items-center">
-      <iconify-icon icon="solar:user-id-bold" className="me-1 text-muted"></iconify-icon>
-      <span className="small">{createur?.nom || 'Admin / Système'}</span>
-    </div>
-  ) 
-}
-
+    }
   ];
+
+  // Regrouper les mouvements de dette par client pour un affichage cumulé
+  const groupedDebtHistory = useMemo(() => {
+    const map = {};
+    (debtHistory || []).forEach(mvt => {
+      const clientId = mvt.client?._id || mvt.client;
+      const clientNom = mvt.client?.nom || 'Client inconnu';
+      if (!map[clientId]) {
+        map[clientId] = {
+          client: mvt.client,
+          clientNom,
+          totalDettes: 0,
+          totalRemboursements: 0,
+          soldeActuel: 0,
+          dernierMouvement: mvt.createdAt,
+          nbMouvements: 0
+        };
+      }
+      if (mvt.type === 'CREATION') {
+        map[clientId].totalDettes += (mvt.montant || 0);
+        map[clientId].soldeActuel += (mvt.montant || 0);
+      } else if (mvt.type === 'REMBOURSEMENT') {
+        map[clientId].totalRemboursements += (mvt.montant || 0);
+        map[clientId].soldeActuel -= (mvt.montant || 0);
+      }
+      map[clientId].nbMouvements++;
+      if (new Date(mvt.createdAt) > new Date(map[clientId].dernierMouvement)) {
+        map[clientId].dernierMouvement = mvt.createdAt;
+      }
+    });
+    return Object.values(map).sort((a, b) => new Date(b.dernierMouvement) - new Date(a.dernierMouvement));
+  }, [debtHistory]);
 
   const debtHistoryColumns = [
     { 
-        key: 'createdAt', 
-        label: 'Date',
+        key: 'clientNom', 
+        label: 'Client',
+        render: (nom) => <span className="fw-bold">{nom}</span>
+    },
+    { 
+        key: 'nbMouvements', 
+        label: 'Nb Opérations',
+        render: (val) => <Badge bg="secondary">{val}</Badge>
+    },
+    { 
+        key: 'totalDettes', 
+        label: 'Total Dettes Créées',
+        render: (val) => <span className="fw-bold text-danger">+ {(val || 0).toLocaleString()} GNF</span>
+    },
+    { 
+        key: 'totalRemboursements', 
+        label: 'Total Remboursements',
+        render: (val) => <span className="fw-bold text-success">- {(val || 0).toLocaleString()} GNF</span>
+    },
+    { 
+        key: 'soldeActuel', 
+        label: 'Solde Actuel',
+        render: (val) => (
+            <span className={`fw-bold ${val > 0 ? 'text-danger' : 'text-success'}`}>
+                {(val || 0).toLocaleString()} GNF
+            </span>
+        )
+    },
+{ 
+        key: 'dernierMouvement', 
+        label: 'Dernière Opération',
         render: (date) => new Date(date).toLocaleString('fr-FR')
     },
-    { 
-        key: 'client', 
-        label: 'Client',
-        render: (client) => client?.nom || 'N/A'
-    },
-    { 
-        key: 'type', 
-        label: 'Type',
-        render: (type) => <Badge bg={type === 'CREATION' ? 'danger' : 'success'}>{type}</Badge>
-    },
-    { 
-        key: 'montant', 
-        label: 'Montant',
-        render: (val) => <span className="fw-bold">{(val || 0).toLocaleString()} GNF</span>
-    },
-    { 
-        key: 'soldeAnterieur', 
-        label: 'Solde Précédent',
-        render: (val) => <span className="text-muted">{(val || 0).toLocaleString()} GNF</span>
-    },
-    { 
-        key: 'nouveauSolde', 
-        label: 'Nouveau Solde',
-        render: (val) => <span className="fw-bold text-primary">{(val || 0).toLocaleString()} GNF</span>
-    },
-    { key: 'operateur', label: 'Opérateur', render: (op) => op?.nom || 'N/A' },
   ];
 
   if (loading) return <Spinner animation="border" />;
@@ -287,20 +348,66 @@ const ClientsView = () => {
                 <Tab eventKey="workers" title={<span className="text-warning"><iconify-icon icon="solar:users-group-two-rounded-bold" className="me-1"></iconify-icon>Ouvriers / Apporteurs</span>}>
                     <TableComponent columns={columns} data={workers} emptyMessage="Aucun ouvrier enregistré." />
                 </Tab>
-                <Tab eventKey="debt-history" title={<span className="text-info"><iconify-icon icon="solar:history-bold" className="me-1"></iconify-icon>Historique Dettes</span>}>
-                    <TableComponent columns={debtHistoryColumns} data={debtHistory} loading={historyLoading} emptyMessage="Aucun mouvement de dette enregistré." />
+<Tab eventKey="debt-history" title={<span className="text-info"><iconify-icon icon="solar:history-bold" className="me-1"></iconify-icon>Historique Dettes</span>}>
+                    <TableComponent columns={debtHistoryColumns} data={groupedDebtHistory} loading={historyLoading} emptyMessage="Aucun mouvement de dette enregistré." />
+                </Tab>
+<Tab eventKey="crm" title={<span className="text-primary"><iconify-icon icon="solar:widget-bold" className="me-1"></iconify-icon>Analyse CRM</span>}>
+                    <div className="p-3">
+<CrmDashboard
+                            crmData={crmData}
+                            crmQuartiers={crmQuartiers}
+                            loading={crmLoading}
+                            onRelancer={handleRelancerClient}
+                            onSettingsUpdated={fetchCrmAnalytics}
+                        />
+                    </div>
                 </Tab>
             </Tabs>
         </Card.Body>
       </Card>
 
-      {/* Modale Création / Édition */}
+{/* Modale Création / Édition */}
       <ClientModal
         show={showModal}
         onHide={() => setShowModal(false)}
         clientToEdit={currentClient}
         onSuccess={handleSaveClientSuccess}
       />
+
+      {/* Modale de Relance (message personnalisé) */}
+      <Modal show={showRelanceModal} onHide={() => setShowRelanceModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <iconify-icon icon="solar:mail-bold" className="me-2 align-middle"></iconify-icon>
+            Envoyer une relance à {relanceClientNom}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form.Group className="mb-2">
+            <Form.Label>Message de relance (personnalisé)</Form.Label>
+            <Form.Control
+              as="textarea"
+              rows={7}
+              value={relanceMessage}
+              onChange={(e) => setRelanceMessage(e.target.value)}
+              placeholder={"Laissez vide pour utiliser le message automatique personnalisé (basé sur l'historique d'achat du client)."}
+            />
+          </Form.Group>
+          <small className="text-muted">
+            Si vide, un message automatique sera généré en fonction des habitudes d'achat du client (jours d'inactivité, dépense totale, catégorie préférée).
+          </small>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowRelanceModal(false)} disabled={relanceSending}>
+            Annuler
+          </Button>
+          <Button variant="primary" onClick={confirmRelance} disabled={relanceSending}>
+            {relanceSending ? <Spinner as="span" size="sm" animation="border" /> : (
+              <><iconify-icon icon="solar:send-bold" className="me-1 align-middle"></iconify-icon> Envoyer la relance</>
+            )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   );
 };

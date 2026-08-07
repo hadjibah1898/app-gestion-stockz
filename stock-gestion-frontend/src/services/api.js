@@ -133,6 +133,7 @@ export const articleAPI = {
   createAdjustment: (data) => api.post('articles/adjustments', data),
     validateAdjustment: (id, data) => api.put(`articles/adjustments/${id}/validate`, data),
     corrigerTransfert: (id, data) => api.put(`articles/transfer/${id}/correct`, data),
+    annulerTransfert: (id) => api.post(`articles/transfer/${id}/cancel`),
 };
 
 // Cache global pour éviter les appels répétitifs (ex: boucle infinie dans useEffect)
@@ -184,6 +185,15 @@ export const clientAPI = {
   getDebtHistoryForClient: (id) => api.get(`clients/${id}/debt-history`),
   getDebtEvolution: () => api.get('clients/debt-evolution'),
   payerCommission: (data) => api.post('clients/pay-commission', data),
+  sendReceiptEmail: (paymentId) => api.post(`clients/payment/${paymentId}/send-email`),
+// CRM
+  getCrmAnalytics: () => api.get('clients/crm/analytics'),
+  getCrmQuartiers: () => api.get('clients/crm/quartiers'),
+  getCrmSettings: () => api.get('clients/crm/settings'),
+  updateCrmSettings: (data) => api.put('clients/crm/settings', data),
+  getSegmentationSettings: () => api.get('clients/crm/segmentation-settings'),
+  updateSegmentationSettings: (data) => api.put('clients/crm/segmentation-settings', data),
+  relancerClient: (id, data) => api.post(`clients/${id}/relance`, data),
 };
 
 export const caisseAPI = {
@@ -214,12 +224,14 @@ export const caisseAPI = {
 export const mouvementAPI = {
   getAll: (params) => api.get('mouvements', { params }),
   cancel: (id) => api.post(`mouvements/${id}/cancel`),
+  relancerGerant: (id) => api.post(`articles/transfer/${id}/remind`),
   confirmerReception: (id) => api.post(`mouvements/${id}/receive`),
 };
 
 export const dashboardAPI = {
   getStats: (params) => api.get('dashboard/stats', { params }),
   getGerantSummary: () => api.get('dashboard/gerant-summary'),
+  getSuperAdminStats: () => api.get('dashboard/superadmin'),
 };
 
 export const auditAPI = {

@@ -526,7 +526,7 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
     const page = parseInt(filter.page) || 1;
     const limit = filter.limit !== undefined ? parseInt(filter.limit) : 15;
     const query = {};
-    let codeBoutique = req?.codeBoutique || user?.codeBoutique; // Récupérer le codeBoutique
+    let codeBoutique = filter.codeBoutique || req?.codeBoutique || user?.codeBoutique; // Récupérer le codeBoutique
 
     // SÉCURITÉ : Si le code est manquant pour un Admin, on le récupère via sa boutique centrale
     if (!codeBoutique && user?.role === 'Admin') {
@@ -592,23 +592,20 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
     const isSuperAdmin = user?.role === 'SuperAdmin';
 
     if (user && isAdminLike) {
-        // Pour l'Admin (Marchand ou Bar), récupère toutes les boutiques de son organisation
-        if (!codeBoutique) {
-            const primaryBoutique = await Boutique.findOne({ createur: user.id, type: { $in: ['Centrale', 'Bar'] } });
-            if (primaryBoutique) {
-                codeBoutique = primaryBoutique.codeBoutique;
-            }
-        }
+        // Pour l'Admin (Marchand ou Bar), récupère toutes les boutiques DONT IL EST LE CRÉATEUR
+        // (approche robuste, ne dépend pas de codeBoutique)
+        const adminBoutiques = await Boutique.find({ createur: user.id }).select('_id');
+        const adminBoutiqueIds = adminBoutiques.map(b => b._id);
+
         if (filter.boutique) {
-            const targetBoutique = await Boutique.findById(filter.boutique);
-            if (targetBoutique && targetBoutique.codeBoutique === codeBoutique) {
+            // Vérifier que la boutique demandée appartient bien à l'Admin
+            if (adminBoutiqueIds.some(id => id.toString() === filter.boutique.toString())) {
                 query.boutique = filter.boutique;
             } else {
                 query.boutique = { $in: [] };
             }
-        } else if (codeBoutique) {
-            const adminBoutiques = await Boutique.find({ codeBoutique: codeBoutique }).select('_id');
-            query.boutique = { $in: adminBoutiques.map(b => b._id) };
+        } else if (adminBoutiqueIds.length > 0) {
+            query.boutique = { $in: adminBoutiqueIds };
         } else {
             query.boutique = { $in: [] };
         }
@@ -801,6 +798,14 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
             as: 'populatedClients'
         }
     });
+    pipeline.push({
+        $lookup: {
+            from: 'boutiques',
+            localField: 'boutique',
+            foreignField: '_id',
+            as: 'populatedBoutique'
+        }
+    });
 
     const groupedVentes = await Vente.aggregate(pipeline);
 
@@ -811,12 +816,15 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
             const articleObj = group.populatedArticles.find(a => a._id.toString() === item.article.toString());
             const gerantObj = group.populatedGerants.find(u => u._id.toString() === item.gerant.toString());
             const clientObj = group.populatedClients.find(c => c._id.toString() === (item.client || '').toString());
+            const boutiqueObj = group.populatedBoutique?.[0];
 
             const newItem = {
                 ...item,
                 article: articleObj,
                 gerant: gerantObj,
-                client: clientObj
+                client: clientObj,
+                // Peupler la boutique directement dans chaque item
+                boutique: boutiqueObj || item.boutique
             };
 
             // SÉCURITÉ : Cacher l'état de synchronisation pour l'Admin pour éviter les alertes inutiles

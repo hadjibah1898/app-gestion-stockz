@@ -247,18 +247,45 @@ const DebtManagementView = () => {
         doc.save(`recu_${payment.clientName.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
     };
 
-    const handleExportExcel = () => {
+const handleExportExcel = () => {
+        const workbook = XLSX.utils.book_new();
+
+        // Feuille 1 : Liste des dettes en cours
         const dataToExport = dettes.map(d => ({
             'Client': d.nom,
             'Téléphone': d.telephone || '-',
+            'Email': d.email || '-',
             'Dette Totale (GNF)': d.dette,
             'Échéance': d.echeanceDette ? new Date(d.echeanceDette).toLocaleDateString() : '-',
             'Statut': new Date(d.echeanceDette) < new Date() ? 'En retard' : 'OK'
         }));
-
         const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-        const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Dettes_Clients");
+
+        // Feuille 2 : Historique complet des paiements
+        const historyData = (history || []).map(p => ({
+            'Date': (p.datePaiement || p.createdAt) ? new Date(p.datePaiement || p.createdAt).toLocaleString('fr-FR') : '-',
+            'Client': p.client?.nom || 'Client supprimé',
+            'Type': p.type === 'REMBOURSEMENT' ? 'Paiement' : (p.type === 'ANNULATION' ? 'Annulation' : 'Création dette'),
+            'Montant (GNF)': p.montant || 0,
+            'Mode de Paiement': p.modePaiement || 'Cash',
+            'Réf. Transaction': p.transactionRef || '-',
+            'Ancien Solde (GNF)': p.soldeAnterieur ?? 0,
+            'Nouveau Solde (GNF)': p.nouveauSolde ?? 0,
+            'Boutique': p.boutique?.nom || '-',
+            'Encaissé par': p.operateur?.nom || p.gerant?.nom || 'N/A'
+        }));
+        const worksheet2 = XLSX.utils.json_to_sheet(historyData);
+        XLSX.utils.book_append_sheet(workbook, worksheet2, "Historique_Paiements");
+
+        // Ajuster la largeur des colonnes
+        const wscols = [
+            { wch: 20 }, { wch: 25 }, { wch: 20 }, { wch: 15 },
+            { wch: 20 }, { wch: 20 }, { wch: 18 }, { wch: 18 },
+            { wch: 20 }, { wch: 20 }
+        ];
+        worksheet2['!cols'] = wscols;
+
         XLSX.writeFile(workbook, `etat_creances_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
@@ -445,21 +472,13 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
     const [filterMode, setFilterMode] = useState('all');
     const itemsPerPage = 10;
 
-    // Revenir à la première page si la liste change ou si on lance une recherche
+// Revenir à la première page si la liste change ou si on lance une recherche
     useEffect(() => { setCurrentPage(1); }, [history, searchTerm, filterMode]);
 
-    const getStatusBadge = (status) => {
-        if (status === 'VALIDEE') {
-            return <Badge bg="success">Validé</Badge>;
-        }
-        if (status === 'REJETEE') {
-            return <Badge bg="danger">Rejeté</Badge>;
-        }
-        return <Badge bg="warning" text="dark">En attente</Badge>;
-    };
-
     // Helper pour le formatage de la devise dans le PDF
-    const formatCurrencyPdf = (amount) => safeNum(amount).toLocaleString('fr-FR') + ' GNF';
+    // IMPORTANT : on remplace les espaces insécables (\u00a0 \u202f) par des espaces normaux
+    // car jsPDF/Helvetica ne sait pas les afficher → montants illisibles sinon.
+    const formatCurrencyPdf = (amount) => (safeNum(amount).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ');
 
     const exportToPDF = () => {
         const doc = new jsPDF();
@@ -472,18 +491,17 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
         doc.setTextColor(100);
         doc.text(`Généré le : ${new Date().toLocaleString('fr-FR')}`, 14, 28);
 
-        // En-têtes du tableau manuel
+// En-têtes du tableau manuel
         let y = 40;
         doc.setFontSize(11);
         doc.setTextColor(0);
         doc.setFont("helvetica", "bold");
 
         doc.text("Date", 14, y);
-        doc.text("Client", 50, y);
-        doc.text("Montant", 110, y);
-        doc.text("Statut", 150, y);
-
-        // Ligne de séparation
+        doc.text("Client", 45, y);
+        doc.text("Type", 90, y);
+        doc.text("Mode", 120, y);
+        doc.text("Montant", 150, y);
         doc.line(14, y + 2, 196, y + 2);
         y += 10;
 
@@ -492,21 +510,69 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
 
         filteredHistory.forEach(p => {
             // Gestion du saut de page
-            if (y > 280) {
+            if (y > 250) {
                 doc.addPage();
                 y = 20;
+                doc.setFont("helvetica", "bold");
+                doc.text("Date", 14, y);
+                doc.text("Client", 45, y);
+                doc.text("Type", 90, y);
+                doc.text("Mode", 120, y);
+                doc.text("Montant", 150, y);
+                doc.line(14, y + 2, 196, y + 2);
+                y += 10;
+                doc.setFont("helvetica", "normal");
             }
 
-            const date = p.datePaiement ? new Date(p.datePaiement).toLocaleDateString('fr-FR') : '-';
+            const date = (p.datePaiement || p.createdAt) ? new Date(p.datePaiement || p.createdAt).toLocaleDateString('fr-FR') : '-';
             const client = p.client?.nom || 'Client inconnu';
             const montant = formatCurrencyPdf(p.montant);
-            const statut = p.statut === 'VALIDEE' ? 'Validé' : (p.statut === 'REJETEE' ? 'Rejeté' : 'En attente');
+            const type = p.type === 'REMBOURSEMENT' ? 'Paiement' : (p.type === 'ANNULATION' ? 'Annulé' : 'Dette');
+            const mode = p.modePaiement || 'Cash';
 
             doc.text(date, 14, y);
-            doc.text(client.substring(0, 25), 50, y); // Tronquer si trop long
-            doc.text(montant, 110, y);
-            doc.text(statut, 150, y);
+            doc.text(client.substring(0, 18), 45, y); // Tronquer si trop long
+            doc.text(type, 90, y);
+            doc.text(mode, 120, y);
+            doc.text(montant, 150, y);
 
+            y += 8;
+        });
+
+        // --- Informations détaillées par paiement (tableau détaillé) ---
+        y += 12;
+        if (y > 270) { doc.addPage(); y = 20; }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.text("DÉTAIL DES PAIEMENTS", 14, y);
+        y += 8;
+
+        filteredHistory.forEach(p => {
+            if (y > 240) { doc.addPage(); y = 20; doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("DÉTAIL DES PAIEMENTS (suite)", 14, y); y += 8; }
+
+            const date = (p.datePaiement || p.createdAt) ? new Date(p.datePaiement || p.createdAt).toLocaleString('fr-FR') : '-';
+            const client = p.client?.nom || 'Client inconnu';
+            const type = p.type === 'REMBOURSEMENT' ? 'Paiement' : (p.type === 'ANNULATION' ? 'Annulé' : 'Dette');
+            const mode = p.modePaiement || 'Cash';
+            const operateur = p.operateur?.nom || p.gerant?.nom || 'N/A';
+            const ref = p.transactionRef || '—';
+
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(10);
+            doc.setTextColor(0);
+            doc.text(`${client} — ${type}`, 14, y);
+            y += 5;
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(9);
+            doc.setTextColor(80);
+            doc.text(`Date : ${date}`, 18, y);
+            y += 5;
+            doc.text(`Montant : ${formatCurrencyPdf(p.montant)}    Mode : ${mode}    Réf : ${ref}`, 18, y);
+            y += 5;
+            doc.text(`Ancien solde : ${formatCurrencyPdf(p.soldeAnterieur ?? 0)}    Nouveau solde : ${formatCurrencyPdf(p.nouveauSolde ?? 0)}    Encaissé par : ${operateur}`, 18, y);
+            y += 5;
+            doc.setDrawColor(200);
+            doc.line(14, y, 196, y);
             y += 8;
         });
 
@@ -563,65 +629,87 @@ const DebtHistoryTab = ({ history, loading, onSendEmail, emailLoading, onPrint }
                     {currentItems.map(p => {
                         const datePaiement = p.datePaiement ? new Date(p.datePaiement) : new Date(p.createdAt);
                         return (
-                            <Card key={p._id} className="border-0 shadow-sm rounded-4">
-                                <Card.Body className="p-3">
-                                    <div className="d-flex flex-column flex-md-row align-items-start gap-3">
-                                        {/* Colonne 1: Client & Boutique */}
-                                        <div className="flex-grow-1">
-                                            <div className="d-flex align-items-center mb-2">
-                                                <iconify-icon icon="solar:user-bold-duotone" className="text-primary fs-4 me-2"></iconify-icon>
-                                                <span className="fw-bold fs-6">{p.client?.nom || 'Client supprimé'}</span>
-                                            </div>
-                                            <Badge bg="light" text="dark" className="border fw-normal">
-                                                <iconify-icon icon="solar:shop-2-bold" className="me-1"></iconify-icon>
-                                                {p.boutique?.nom || 'N/A'}
-                                            </Badge>
+<Card key={p._id} className="border-0 shadow-sm rounded-4 overflow-hidden">
+                                <Card.Body className="p-0">
+                                    <div className="d-flex flex-column flex-lg-row align-items-stretch">
+                                        {/* Bandeau type de mouvement */}
+                                        <div className={`d-flex flex-column justify-content-center align-items-center px-4 py-3 ${p.type === 'REMBOURSEMENT' ? 'bg-success-subtle text-success' : p.type === 'ANNULATION' ? 'bg-warning-subtle text-warning' : 'bg-danger-subtle text-danger'}`} style={{ minWidth: '110px' }}>
+                                            <iconify-icon icon={p.type === 'REMBOURSEMENT' ? 'solar:money-bag-bold' : p.type === 'ANNULATION' ? 'solar:close-circle-bold' : 'solar:wallet-money-bold'} className="fs-1"></iconify-icon>
+                                            <span className="fw-bold small text-uppercase mt-1">
+                                                {p.type === 'REMBOURSEMENT' ? 'Paiement' : p.type === 'ANNULATION' ? 'Annulé' : 'Dette'}
+                                            </span>
                                         </div>
 
-                                        {/* Colonne 2: Détails du paiement */}
-                                        <div className="flex-grow-1">
-                                            <div className="d-flex align-items-center mb-2">
-                                                <iconify-icon icon="solar:calendar-bold-duotone" className="text-muted fs-5 me-2"></iconify-icon>
-                                                <span className="small">{datePaiement.toLocaleString('fr-FR')}</span>
-                                            </div>
-                                            <div className="d-flex align-items-center">
-                                                <iconify-icon icon="solar:wallet-money-bold-duotone" className="text-success fs-4 me-2"></iconify-icon>
-                                                <span className="fw-bold text-success fs-5">+{p.montant.toLocaleString()} GNF</span>
-                                            </div>
-                                        </div>
-
-                                        {/* Colonne 3: Mode & Référence */}
-                                        <div className="flex-grow-1">
-                                            <div className="d-flex align-items-center mb-2">
-                                                {p.modePaiement === 'Orange Money' ? <Badge bg="warning" text="dark">OM</Badge> :
-                                                    p.modePaiement === 'MobiCash' ? <Badge bg="info">Mobi</Badge> :
-                                                        <Badge bg="success-subtle" text="success">Cash</Badge>}
-                                            </div>
-                                            {p.transactionRef && <div className="small text-muted font-monospace">Réf: {p.transactionRef}</div>}
-                                        </div>
-
-                                        {/* Colonne 4: Acteurs */}
-                                        <div className="flex-grow-1">
-                                            <div className="small text-muted">Encaissé par: <span className="fw-bold text-dark">{p.gerant?.nom || 'N/A'}</span></div>
-                                            <div className="small text-muted">Validé le: <span className="fw-bold text-dark">{p.dateValidation ? new Date(p.dateValidation).toLocaleDateString() : '-'}</span></div>
-                                        </div>
-
-                                        {/* Colonne 5: Statut & Actions */}
-                                        <div className="d-flex flex-column align-items-md-end gap-2">
-                                            {getStatusBadge(p.statut)}
-                                            <div className="d-flex gap-2">
-                                                <OverlayTrigger overlay={<Tooltip>Réimprimer le reçu</Tooltip>}>
-                                                    <Button variant="outline-secondary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => onPrint({ clientName: p.client?.nom, amount: p.montant, modePaiement: p.modePaiement, transactionRef: p.transactionRef, oldDebt: (p.client?.dette || 0) + p.montant })}>
-                                                        <iconify-icon icon="solar:printer-bold" style={{ fontSize: '18px' }}></iconify-icon>
-                                                    </Button>
-                                                </OverlayTrigger>
-                                                {p.client?.email && (
-                                                    <OverlayTrigger overlay={<Tooltip>Envoyer par email</Tooltip>}>
-                                                        <Button variant="outline-primary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => onSendEmail(p._id)} disabled={emailLoading}>
-                                                            <iconify-icon icon="solar:letter-bold" style={{ fontSize: '18px' }}></iconify-icon>
+                                        {/* Contenu principal */}
+                                        <div className="flex-grow-1 p-3">
+                                            {/* En-tête */}
+                                            <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                                <div>
+                                                    <div className="d-flex align-items-center gap-2">
+                                                        <span className="fw-bold fs-6">{p.client?.nom || 'Client supprimé'}</span>
+                                                        <Badge bg="light" text="dark" className="border fw-normal">
+                                                            <iconify-icon icon="solar:shop-2-bold" className="me-1 align-middle"></iconify-icon>
+                                                            {p.boutique?.nom || 'N/A'}
+                                                        </Badge>
+                                                    </div>
+<div className="small text-muted mt-1">
+                                                        <iconify-icon icon="solar:calendar-bold-duotone" className="me-1 align-middle"></iconify-icon>
+                                                        {datePaiement.toLocaleString('fr-FR')}
+                                                    </div>
+                                                    {p.type === 'REMBOURSEMENT' && (
+                                                        <div className="mt-1">
+                                                            {p.modePaiement === 'Orange Money' ? <Badge bg="warning" text="dark"><iconify-icon icon="logos:orange" className="me-1"></iconify-icon>Orange Money</Badge> :
+                                                                p.modePaiement === 'MobiCash' ? <Badge bg="info"><iconify-icon icon="logos:mtn" className="me-1"></iconify-icon>MobiCash</Badge> :
+                                                                    p.modePaiement === 'PayCard' ? <Badge bg="primary"><iconify-icon icon="solar:card-bold" className="me-1"></iconify-icon>PayCard</Badge> :
+                                                                        <Badge bg="success-subtle" text="success">💵 Cash</Badge>}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="d-flex gap-2">
+<OverlayTrigger overlay={<Tooltip>Réimprimer le reçu</Tooltip>}>
+                                                        <Button variant="outline-secondary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => onPrint({ id: p._id, clientName: p.client?.nom, amount: p.montant, modePaiement: p.modePaiement || 'Cash', transactionRef: p.transactionRef, oldDebt: p.soldeAnterieur ?? ((p.client?.dette || 0) + p.montant) })}>
+                                                            <iconify-icon icon="solar:printer-bold" style={{ fontSize: '18px' }}></iconify-icon>
                                                         </Button>
                                                     </OverlayTrigger>
-                                                )}
+                                                    {p.client?.email && (
+                                                        <OverlayTrigger overlay={<Tooltip>Envoyer par email</Tooltip>}>
+                                                            <Button variant="outline-primary" size="sm" className="rounded-circle p-1 d-flex" onClick={() => onSendEmail(p._id)} disabled={emailLoading}>
+                                                                <iconify-icon icon="solar:letter-bold" style={{ fontSize: '18px' }}></iconify-icon>
+                                                            </Button>
+                                                        </OverlayTrigger>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Statistiques */}
+                                            <div className="row g-2">
+                                                <div className="col-sm-6 col-lg-3">
+                                                    <div className="bg-light rounded-3 p-2 h-100">
+                                                        <div className="small text-muted">Montant versé</div>
+                                                        <div className="fw-bold text-success">+{safeNum(p.montant).toLocaleString()} GNF</div>
+                                                    </div>
+                                                </div>
+                                                <div className="col-sm-6 col-lg-3">
+                                                    <div className="bg-light rounded-3 p-2 h-100">
+                                                        <div className="small text-muted">Ancien solde</div>
+                                                        <div className="fw-bold text-dark">{safeNum(p.soldeAnterieur).toLocaleString()} GNF</div>
+                                                    </div>
+                                                </div>
+                                                <div className="col-sm-6 col-lg-3">
+                                                    <div className="bg-light rounded-3 p-2 h-100">
+                                                        <div className="small text-muted">Solde restant à payer</div>
+                                                        <div className={`fw-bold ${p.nouveauSolde > 0 ? 'text-danger' : 'text-success'}`}>
+                                                            {safeNum(p.nouveauSolde).toLocaleString()} GNF
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="col-sm-6 col-lg-3">
+                                                    <div className="bg-light rounded-3 p-2 h-100">
+                                                        <div className="small text-muted">Encaissé par</div>
+                                                        <div className="fw-bold text-primary">{p.operateur?.nom || p.gerant?.nom || 'N/A'}</div>
+                                                        {p.transactionRef && <div className="small text-muted font-monospace">Réf: {p.transactionRef}</div>}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

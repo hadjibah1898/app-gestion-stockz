@@ -672,6 +672,18 @@ exports.corrigerTransfert = async (mouvementId, articles, user) => {
         }
     }
 
+    // CRÉER UN NOUVEAU MOUVEMENT VISIBLE DANS "MOUVEMENT DE STOCK"
+    await Mouvement.create({
+        type: 'Transfert',
+        details: `RELANCÉ depuis correction du transfert #${mouvementId.toString().slice(-6).toUpperCase()} par ${user.nom} le ${new Date().toLocaleDateString('fr-FR')}`,
+        boutiqueSource: mouvement.boutiqueSource,
+        boutiqueDestination: mouvement.boutiqueDestination,
+        articles: articlesMisAJour,
+        operateur: user.id || user._id,
+        statutTransfert: 'EXPEDIE',
+        isCancelled: false
+    });
+
     return { success: true, message: "Transfert corrigé et relancé avec succès.", data: mouvement };
 };
 

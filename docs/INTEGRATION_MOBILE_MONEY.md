@@ -125,7 +125,7 @@ MOBICASH_MERCHANT_SECRET=votre_secret_mobicash
 
 ---
 
-## 📝 Étapes pour le professeur
+## 📝 Étapes
 
 1. **Lire ce document**
 2. **Ouvrir `backend/services/fintechService.js`** (template fourni)

@@ -92,42 +92,6 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     </div>
                 </div>
             </div>
-{/* Section pour le SuperAdmin uniquement */}
-{userRole === 'SuperAdmin' && (
-    <div className="nav-section mt-3">
-        <small className="text-muted text-uppercase ps-3 fw-bold" style={{ fontSize: '0.65rem' }}>
-            Administration Globale
-        </small>
-        <Nav.Link 
-            as={Link} 
-            to="/admin/audit" 
-            className={`d-flex align-items-center gap-2 px-3 py-2 mt-1 rounded-3 ${location.pathname === '/admin/audit' ? 'active bg-primary text-white' : 'text-dark'}`}
-            onClick={handleNavLinkClick}
-        >
-            <iconify-icon icon="solar:clipboard-list-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
-            <span>Journal d'Audit Global</span>
-        </Nav.Link>
-        <Nav.Link 
-            as={Link} 
-            to="/admin/shops" 
-            className={`d-flex align-items-center gap-2 px-3 py-2 rounded-3 ${location.pathname === '/admin/shops' ? 'active bg-primary text-white' : 'text-dark'}`}
-            onClick={handleNavLinkClick}
-        >
-            <iconify-icon icon="solar:globus-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
-            <span>Vue Multi-Entreprises</span>
-        </Nav.Link>
-        <Nav.Link 
-            as={Link} 
-            to="/admin/users" 
-            className={`d-flex align-items-center gap-2 px-3 py-2 rounded-3 ${location.pathname === '/admin/users' ? 'active bg-primary text-white' : 'text-dark'}`}
-            onClick={handleNavLinkClick}
-        >
-            <iconify-icon icon="solar:users-group-two-rounded-bold-duotone" style={{ fontSize: '20px' }}></iconify-icon>
-            <span>Gestion Utilisateurs</span>
-        </Nav.Link>
-    </div>
-)}
-
             {/* Navigation Section */}
             <nav className="sidebar-nav scroll-sidebar">
                 {['Admin', 'AdminBar'].includes(userRole) ? (
@@ -263,12 +227,14 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                             </NavLink>
                         </li>
                         )}
+                        {userRole === 'AdminBar' && (
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to={userRole === 'AdminBar' ? "/admin-bar/bar-config" : "/admin/bar-config"} onClick={handleNavLinkClick}>
+                            <NavLink className="sidebar-link" to="/admin-bar/bar-config" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:settings-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Configuration Bar</span>
                             </NavLink>
                         </li>
+                        )}
 
                         <li className="sidebar-item mt-3 border-top pt-3 d-none d-lg-block">
                             <div className="sidebar-link text-danger" onClick={handleLogout} style={{ cursor: 'pointer' }}>
@@ -279,95 +245,29 @@ const Sidebar = ({ userRole, isSidebarOpen, toggleSidebar, userName, handleLogou
                     </ul>
                 ) : userRole === 'SuperAdmin' ? (
                     <ul id="sidebarnav">
-                        <li className="nav-small-cap"><span className="hide-menu">Accueil</span></li>
+                        <li className="nav-small-cap"><span className="hide-menu">Administration Globale</span></li>
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin" end onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:home-smile-angle-bold-duotone"></iconify-icon>
                                 <span className="hide-menu">Dashboard</span>
                             </NavLink>
                         </li>
-
-                        <li className="nav-small-cap"><span className="hide-menu">Gestion</span></li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/caisse" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:cash-out-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Finances & Caisse</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/creances" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:bill-check-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Créances</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/articles" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:archive-check-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Articles</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/etat-stock" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:chart-square-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">État des stocks</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/fournisseurs" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Fournisseurs</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/centrale" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:box-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Dépôt Principal</span>
+                            <NavLink className="sidebar-link" to="/admin/audit" onClick={handleNavLinkClick}>
+                                <iconify-icon icon="solar:clipboard-list-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Journal d'Audit Global</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
                             <NavLink className="sidebar-link" to="/admin/shops" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:shop-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Boutiques</span>
-                            </NavLink>
-                        </li>
-
-                        <li className="nav-small-cap"><span className="hide-menu">Opérations</span></li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/mouvements" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:graph-up-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Mouvements Stock</span>
+                                <iconify-icon icon="solar:globus-bold-duotone"></iconify-icon>
+                                <span className="hide-menu">Vue Multi-Entreprises</span>
                             </NavLink>
                         </li>
                         <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/ventes" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:bill-list-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Historique Ventes</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/clients" onClick={handleNavLinkClick}>
+                            <NavLink className="sidebar-link" to="/admin/users" onClick={handleNavLinkClick}>
                                 <iconify-icon icon="solar:users-group-two-rounded-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Clients & Ouvriers</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/notifications" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:bell-bing-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Notifications</span>
-                            </NavLink>
-                        </li>
-
-                        <li className="nav-small-cap"><span className="hide-menu">Administration</span></li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/managers" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:user-plus-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Gérants</span>
-                            </NavLink>
-                        </li>
-                        <li className="sidebar-item">
-                            <NavLink className="sidebar-link" to="/admin/audit" onClick={handleNavLinkClick}>
-                                <iconify-icon icon="solar:shield-check-bold-duotone"></iconify-icon>
-                                <span className="hide-menu">Journal d'Audit</span>
+                                <span className="hide-menu">Gestion des Utilisateurs</span>
                             </NavLink>
                         </li>
 

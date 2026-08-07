@@ -59,7 +59,7 @@ router.put('/rapports/caissier/:id/corriger', authorize('Caissier'), caisseContr
 
 // CORRECTION : L'Admin ET le Gérant ont le droit de voir le détail profond d'un rapport
 // (Supprime l'erreur 403 dans CaisseView.js lors du clic sur un rapport)
-router.get('/rapports/:id/details', authorize('Admin', 'Gérant'), validateObjectId('id'), caisseController.getReportDetails);
+router.get('/rapports/:id/details', authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validateObjectId('id'), caisseController.getReportDetails);
 
 
 // ==========================================

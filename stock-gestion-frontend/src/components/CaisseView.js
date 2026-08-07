@@ -1214,9 +1214,11 @@ const RapportsTab = ({ onCorrect }) => {
         let y = 10;
 
         // Helper robuste anti-NaN et anti-Decimal128
+        // IMPORTANT : on remplace les espaces insécables (\u00a0 \u202f) par des espaces normaux
+        // car jsPDF/Helvetica ne sait pas les afficher → montants illisibles sinon.
         const formatCurrency = (value) => {
             const num = value?.$numberDecimal ? parseFloat(value.$numberDecimal) : parseFloat(value);
-            return (isNaN(num) ? 0 : num).toLocaleString('fr-FR') + ' GNF';
+            return (isNaN(num) ? 0 : num).toLocaleString('fr-FR').replace(/[\u00a0\u202f]/g, ' ') + ' GNF';
         };
 
         const v = rapport.totalVentes?.$numberDecimal ? parseFloat( rapport.totalVentes.$numberDecimal) : (parseFloat(rapport.totalVentes) || 0);
@@ -1242,11 +1244,9 @@ const RapportsTab = ({ onCorrect }) => {
             startY: y,
             head: [['Description', 'Montant']],
             body: [
-                ['Fond Initial', formatCurrency(rapport.fondInitial)],
+['Fond Initial', formatCurrency(rapport.fondInitial)],
                 ['Total Ventes', formatCurrency(rapport.totalVentes)],
                 ['Paiements Numériques', formatCurrency(rapport.totalMobileMoney)],
-                ['Total Dépenses Approuvées', formatCurrency(rapport.totalDepensesApprouvees)],
-                ['Recouvrements Dettes', formatCurrency(rapport.totalRecouvrement || 0)],
                 ['Total Ventes (Chiffre d\'Affaires)', formatCurrency(rapport.totalVentes)],
                 ['Dettes accordées (Crédit)', `- ${formatCurrency(rapport.totalDettes)}`],
                 ['Ventes au comptant (Net Cash)', formatCurrency(totalVentesCash)],
@@ -1255,14 +1255,27 @@ const RapportsTab = ({ onCorrect }) => {
                 ['Solde Théorique', formatCurrency(rapport.soldeTheorique)],
                 ['Montant Clôturé', formatCurrency(rapport.montantCloture)],
                 ['Écart', formatCurrency(rapport.ecart)],
-                ['Statut', rapport.statut],
-                ['Commentaires Gérant', rapport.commentairesGérant || 'N/A'],
-                ['Commentaires Admin', rapport.commentairesAdmin || 'N/A']
+['Statut', rapport.statut],
+                ['Commentaires Gérant', (rapport.commentairesGérant || rapport.commentairesGerant || '').trim() || 'Aucun commentaire'],
+                ['Commentaires Admin', (rapport.commentairesAdmin || '').trim() || 'Aucun commentaire']
             ],
-            theme: 'grid',
+theme: 'grid',
             styles: { fontSize: 10, cellPadding: 2 },
             headStyles: { fillColor: [41, 128, 185], textColor: 255 },
-            columnStyles: { 1: { halign: 'right' } }
+            columnStyles: { 1: { halign: 'right' } },
+            didParseCell: (data) => {
+                // Colorer la valeur (2e colonne) selon la nature de la ligne
+                if (data.section === 'body' && data.column.index === 1) {
+                    const label = (data.row.raw && data.row.raw[0] || '').toString();
+                    if (label.includes('Écart') || label.includes('Dettes accordées')) {
+                        data.cell.styles.textColor = [220, 53, 69]; // Rouge
+                    } else if (label.includes('Recouvrements Dettes')) {
+                        data.cell.styles.textColor = [40, 167, 69]; // Vert
+                    } else if (label.includes('Total Dépenses Approuvées')) {
+                        data.cell.styles.textColor = [217, 164, 6]; // Jaune (lisible)
+                    }
+                }
+            }
         });
 
         y = (doc.lastAutoTable?.finalY || y) + 10;
@@ -1279,13 +1292,19 @@ const RapportsTab = ({ onCorrect }) => {
             autoTable(doc, {
                 startY: y,
                 head: [['Article', 'Code', 'Quantité', 'Prix Unitaire', 'Prix Total']],
-                body: ventes.map(v => [
-                    v.article?.nom || 'N/A',
-                    v.article?.code || 'N/A',
-                    v.quantite,
-                    formatCurrency(v.prixTotal / v.quantite),
-                    formatCurrency(v.prixTotal)
-                ]),
+body: ventes.map(v => {
+                    // Prix unitaire robuste : évite NaN/Infinity si la quantité est 0 ou absente
+                    const qte = Number(v?.quantite) || 0;
+                    const total = Number(v?.prixTotal) || 0;
+                    const prixUnitaire = qte > 0 ? total / qte : (v?.article?.prixVente || total);
+                    return [
+                        v.article?.nom || 'N/A',
+                        v.article?.code || 'N/A',
+                        qte,
+                        formatCurrency(prixUnitaire),
+                        formatCurrency(total)
+                    ];
+                }),
                 theme: 'striped',
                 styles: { fontSize: 9, cellPadding: 2 },
                 headStyles: { fillColor: [60, 179, 113], textColor: 255 },

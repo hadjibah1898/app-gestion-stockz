@@ -60,12 +60,24 @@ export const generateReceiptPDF = (ticketData) => {
     doc.text("------------------------------------------------", 40, 30, { align: 'center' });
 
     // --- Infos Transaction ---
-    doc.text(`Ticket: ${transactionId}`, 5, 35);
-    doc.text(`Date: ${new Date(date).toLocaleString('fr-FR')}`, 5, 39);
-    doc.text(`Client: ${clientName}`, 5, 43);
-    doc.text(`Serveur: ${serverName}`, 5, 47);
-    doc.text(`Caissier: ${cashierName}`, 5, 51);
-    doc.text(`Mode: ${modePaiement}`, 40, 51);
+    let currentY = 35;
+    doc.text(`Ticket: ${transactionId}`, 5, currentY);
+    currentY += 4;
+    doc.text(`Date: ${new Date(date).toLocaleString('fr-FR')}`, 5, currentY);
+    currentY += 4;
+    doc.text(`Client: ${clientName}`, 5, currentY);
+    currentY += 4;
+    // N'afficher "Serveur" que s'il y en a un (pas "N/A")
+    if (serverName && serverName !== 'N/A') {
+        doc.text(`Serveur: ${serverName}`, 5, currentY);
+        currentY += 4;
+    }
+    // Caissier sur sa ligne
+    doc.text(`Caissier: ${cashierName}`, 5, currentY);
+    currentY += 4;
+    // Mode en bas
+    doc.text(`Mode: ${modePaiement}`, 5, currentY);
+    currentY += 4;
 
     // --- Tableau Articles ---
     const tableRows = items.map(item => [
@@ -78,7 +90,7 @@ export const generateReceiptPDF = (ticketData) => {
     autoTable(doc, {
         head: [["Article", "Qté", "P.U.", "Total"]],
         body: tableRows,
-        startY: 55,
+        startY: currentY,
         theme: 'plain',
         styles: { fontSize: 7, cellPadding: 1 },
         headStyles: { fontStyle: 'bold', halign: 'center' },

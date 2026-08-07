@@ -14,6 +14,69 @@ const Depense = require('../models/Depense');
 const mongoose = require('mongoose');
 const asyncHandler = require('../middleware/asyncHandler');
 
+exports.getSuperAdminStats = asyncHandler(async (req, res) => {
+    const [totalBoutiques, totalUsers, totalVentes, totalAdmins, totalGerants, totalMarchands, totalBars] = await Promise.all([
+        Boutique.countDocuments(),
+        User.countDocuments({ role: { $ne: 'SuperAdmin' } }),
+        Vente.countDocuments(),
+        User.countDocuments({ role: { $in: ['Admin', 'AdminBar'] } }),
+        User.countDocuments({ role: { $in: ['Gérant', 'GérantBar'] } }),
+        Boutique.countDocuments({ type: { $in: ['Centrale', 'Secondaire'] } }),
+        Boutique.countDocuments({ type: 'Bar' })
+    ]);
+
+    // La somme des ventes non annulées
+    const ventesAgg = await Vente.aggregate([
+        { $match: { isCancelled: { $ne: true } } },
+        { $group: { _id: null, total: { $sum: '$prixTotal' } } }
+    ]);
+    const totalCA = ventesAgg.length > 0 ? ventesAgg[0].total : 0;
+
+    // Les 10 dernières entreprises créées (Admins)
+    const recentAdmins = await User.find({ role: { $in: ['Admin', 'AdminBar'] } })
+        .select('nom email role typeCompte active boutique createdAt')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+    // Statistiques par entreprise (Admin)
+    const entreprises = await User.aggregate([
+        { $match: { role: { $in: ['Admin', 'AdminBar'] }, deleted: { $ne: true } } },
+        {
+            $lookup: {
+                from: 'boutiques',
+                localField: '_id',
+                foreignField: 'createur',
+                as: 'boutiques'
+            }
+        },
+        {
+            $addFields: {
+                nbBoutiques: { $size: '$boutiques' }
+            }
+        },
+        { $project: { nom: 1, email: 1, role: 1, typeCompte: 1, active: 1, nbBoutiques: 1, createdAt: 1 } },
+        { $sort: { createdAt: -1 } },
+        { $limit: 15 }
+    ]);
+
+    res.status(200).json({
+        success: true,
+        data: {
+            totalBoutiques,
+            totalUsers,
+            totalVentes,
+            totalAdmins,
+            totalGerants,
+            totalMarchands,
+            totalBars,
+            totalCA: Math.round(totalCA),
+            recentAdmins,
+            entreprises
+        }
+    });
+});
+
 exports.getDashboardStats = asyncHandler(async (req, res) => {
         const { range } = req.query; // 'monthly' ou 'yearly' reçu du frontend
         const now = new Date();

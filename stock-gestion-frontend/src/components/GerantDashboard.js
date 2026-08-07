@@ -59,6 +59,19 @@ const GerantDashboardSkeleton = () => (
     </div>
 );
 
+// Helper : formater les montants en GNF de façon lisible (abrège les grands nombres)
+// Utilise des espaces ASCII normales (pas d'espace insécable étroite U+202F que jsPDF ne render pas)
+const fmtGNF = (value) => {
+    const n = safeNum(value);
+    const decimal = (v) => v.toFixed(1).replace('.', ',');
+    if (n >= 1000000000) return `${decimal(n / 1000000000)} Md`;
+    if (n >= 1000000) return `${decimal(n / 1000000)} M`;
+    // Groupement des milliers avec des espaces ASCII simples
+    const int = String(Math.round(n));
+    const grouped = int.length > 3 ? int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : int;
+    return grouped;
+};
+
 const GerantDashboard = () => {
     const { theme } = useOutletContext(); // Récupération du thème
     const navigate = useNavigate();
@@ -178,43 +191,276 @@ const GerantDashboard = () => {
         }
     };
 
-    const handleExportPDF = () => {
+const handleExportPDF = () => {
         const doc = new jsPDF();
+        const pageWidth = 210;
+        const margin = 14;
+const contentWidth = pageWidth - margin * 2;
+        let y = 0;
 
-        // En-tête du rapport avec fond coloré
+        // Helper : gérer le saut de page
+        const ensureSpace = (needed) => {
+            const pageSize = doc.internal.pageSize;
+            const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
+            if (y + needed > pageHeight - 20) {
+                doc.addPage();
+                y = 20;
+            }
+        };
+
+        // Helper : titre de section
+        const sectionTitle = (text) => {
+            ensureSpace(14);
+            y += 6;
+            doc.setFillColor(41, 128, 185);
+            doc.rect(margin, y - 4, 4, 5, 'F');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(13);
+            doc.setTextColor(41, 128, 185);
+            doc.text(text, margin + 7, y);
+            doc.setDrawColor(200, 200, 200);
+            doc.line(margin, y + 2, pageWidth - margin, y + 2);
+            y += 8;
+        };
+
+        // ===== EN-TÊTE =====
         doc.setFillColor(41, 128, 185);
-        doc.rect(0, 0, 210, 25, 'F');
+        doc.rect(0, 0, pageWidth, 28, 'F');
+        doc.setFillColor(52, 152, 219);
+        doc.rect(0, 28, pageWidth, 2, 'F');
 
+        doc.setFont("helvetica", "bold");
         doc.setFontSize(18);
         doc.setTextColor(255, 255, 255);
-        doc.text("Rapport Quotidien Gérant", 14, 16);
-
-        doc.setFontSize(10);
-        doc.setTextColor(220, 220, 220);
-        doc.text(`Généré le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, 14, 22);
-
-        // Résumé des stats
-        doc.setFillColor(245, 247, 250);
-        doc.setDrawColor(200, 200, 200);
-        doc.roundedRect(14, 30, 182, 25, 2, 2, 'FD');
-
-        doc.setFontSize(10);
-        doc.setTextColor(50);
-
-        doc.text(`Revenu du Jour :`, 20, 40);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${(safeNum(stats.revenuAujourdhui).toLocaleString('fr-FR') + ' GNF').replace(/[\u00a0\u202f]/g, ' ')}`, 60, 40);
+        doc.text("RAPPORT QUOTIDIEN DU GERANT", margin, 16);
 
         doc.setFont("helvetica", "normal");
-        doc.text(`Ventes du Jour :`, 110, 40);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${safeNum(stats.ventesAujourdhui)}`, 150, 40);
+        doc.setFontSize(10);
+        doc.setTextColor(230, 240, 250);
+        const boutiqueNom = boutiqueConfig?.nom || 'Boutique';
+        doc.text(`Boutique : ${boutiqueNom}`, margin, 24);
+        doc.text(
+            `Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+            pageWidth - margin, 24, { align: 'right' }
+        );
 
-        // Ventes Récentes
-        doc.setFontSize(14);
-        doc.setTextColor(41, 128, 185);
+        y = 40;
 
-        // Pied de page
+        // ===== RÉSUMÉ DES PERFORMANCES =====
+        sectionTitle("Résumé des Performances");
+
+const kpis = [
+            { label: 'Revenu du Jour', value: `${fmtGNF(stats.revenuAujourdhui)} GNF`, color: [39, 174, 96] },
+            { label: 'Ventes du Jour', value: `${fmtGNF(stats.ventesAujourdhui)}`, color: [41, 128, 185] },
+            { label: 'Articles en Stock', value: `${fmtGNF(stats.totalArticles)}`, color: [155, 89, 182] },
+            { label: 'Stock Faible (<10)', value: `${fmtGNF(stats.articlesPeuStock)}`, color: [231, 76, 60] },
+        ];
+
+        // 2 cartes par ligne pour laisser plus de largeur aux montants
+        const cardW = (contentWidth - 12) / 2;
+        kpis.forEach((kpi, i) => {
+            const col = i % 2;
+            const row = Math.floor(i / 2);
+            const x = margin + col * (cardW + 4);
+            const cardY = y + row * 30;
+            ensureSpace(30);
+            doc.setFillColor(245, 247, 250);
+            doc.setDrawColor(210, 210, 210);
+            doc.roundedRect(x, cardY, cardW, 24, 2, 2, 'FD');
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(9);
+            doc.setTextColor(120);
+            doc.text(kpi.label, x + 6, cardY + 8);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(14);
+            doc.setTextColor(kpi.color[0], kpi.color[1], kpi.color[2]);
+            doc.text(kpi.value, x + 6, cardY + 18);
+        });
+        y += 64;
+
+        // ===== PERFORMANCE DES CAISSIERS =====
+        const caissiers = stats.performanceCaissiers || [];
+        if (caissiers.length > 0) {
+            sectionTitle("Performance des Caissiers");
+            ensureSpace(20 + caissiers.length * 8);
+// En-tête de tableau
+            const colHead = [
+                { label: '#', w: 10 },
+                { label: 'Caissier', w: 48 },
+                { label: 'Chiffre d\'Affaires', w: 42 },
+                { label: 'Nb Ventes', w: 20 },
+                { label: 'Panier Moyen', w: 36 },
+                { label: 'Dettes', w: 16 },
+                { label: 'Recouvrements', w: 42 },
+            ];
+            doc.setFillColor(41, 128, 185);
+            doc.rect(margin, y - 4, contentWidth, 7, 'F');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(255, 255, 255);
+            let cx = margin;
+            colHead.forEach(c => {
+                doc.text(c.label, cx + 2, y);
+                cx += c.w;
+            });
+            y += 8;
+
+            // Parcourir les caissiers
+            caissiers.forEach((c, index) => {
+                ensureSpace(7);
+                if (index % 2 === 0) {
+                    doc.setFillColor(248, 250, 252);
+                    doc.rect(margin, y - 4, contentWidth, 6, 'F');
+                }
+                doc.setFont("helvetica", index === 0 ? "bold" : "normal");
+                doc.setFontSize(8);
+                doc.setTextColor(40);
+const rowData = [
+                    String(index + 1),
+                    c.nom || '-',
+                    `${fmtGNF(c.chiffreAffaires)} GNF`,
+                    String(c.nbVentes || 0),
+                    `${fmtGNF(c.panierMoyen)} GNF`,
+                    String(c.nbDettes || 0),
+                    `${fmtGNF(c.totalRecouvrements)} GNF`,
+                ];
+                cx = margin;
+                rowData.forEach((val, i) => {
+                    doc.text(val, cx + 2, y);
+                    cx += colHead[i].w;
+                });
+                y += 7;
+            });
+
+            // Total
+            ensureSpace(7);
+            doc.setFillColor(235, 240, 245);
+            doc.rect(margin, y - 4, contentWidth, 6, 'F');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(20);
+            const totCA = safeNum(caissiers.reduce((s, c) => s + c.chiffreAffaires, 0));
+            const totNV = caissiers.reduce((s, c) => s + (c.nbVentes || 0), 0);
+            const totRec = safeNum(caissiers.reduce((s, c) => s + (c.totalRecouvrements || 0), 0));
+doc.text("TOTAL", margin + 2, y);
+            doc.text(`${fmtGNF(totCA)} GNF`, margin + 72 + 2, y);
+            doc.text(String(totNV), margin + 72 + 50 + 2, y);
+            doc.text(`${fmtGNF(totRec)} GNF`, margin + 72 + 50 + 22 + 40 + 2, y);
+            y += 10;
+        }
+
+        // ===== TOP ARTICLES VENDUS =====
+        const productLabels = stats.productSales?.labels || [];
+        const productSeries = Array.isArray(stats.productSales?.series) ? stats.productSales.series.map(safeNum) : [];
+        if (productLabels.length > 0) {
+            sectionTitle("Top Articles Vendus");
+            ensureSpace(20 + productLabels.length * 8);
+            // En-tête
+            doc.setFillColor(41, 128, 185);
+            doc.rect(margin, y - 4, contentWidth, 7, 'F');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(255, 255, 255);
+            doc.text("Article", margin + 2, y);
+            doc.text("Quantité Vendue", margin + 100, y);
+            doc.text("% du Total", margin + 160, y);
+            y += 8;
+
+            const total = productSeries.reduce((s, v) => s + v, 0) || 1;
+            productLabels.slice(0, 10).forEach((label, i) => {
+                ensureSpace(7);
+                if (i % 2 === 0) {
+                    doc.setFillColor(248, 250, 252);
+                    doc.rect(margin, y - 4, contentWidth, 6, 'F');
+                }
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(8);
+                doc.setTextColor(40);
+                doc.text(String(label || '-'), margin + 2, y);
+                doc.text(String(productSeries[i] || 0), margin + 100, y);
+                doc.text(`${Math.round(((productSeries[i] || 0) / total) * 100)}%`, margin + 160, y);
+                y += 7;
+            });
+            y += 6;
+        }
+
+        // ===== ARTICLES RÉCEMMENT AJOUTÉS =====
+        if (recentArticles.length > 0) {
+            sectionTitle("Articles Récemment Ajoutés au Stock");
+            ensureSpace(20 + recentArticles.length * 8);
+
+            doc.setFillColor(41, 128, 185);
+            doc.rect(margin, y - 4, contentWidth, 7, 'F');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(255, 255, 255);
+            doc.text("Article", margin + 2, y);
+            doc.text("Stock", margin + 120, y);
+            doc.text("Date d'Ajout", margin + 160, y);
+            y += 8;
+
+            recentArticles.forEach((a, i) => {
+                ensureSpace(7);
+                if (i % 2 === 0) {
+                    doc.setFillColor(248, 250, 252);
+                    doc.rect(margin, y - 4, contentWidth, 6, 'F');
+                }
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(8);
+                doc.setTextColor(40);
+                doc.text(a.nom || '-', margin + 2, y);
+                doc.text(String(a.quantite ?? 0), margin + 120, y);
+                doc.text(a.createdAt ? new Date(a.createdAt).toLocaleDateString('fr-FR') : '-', margin + 160, y);
+                y += 7;
+            });
+            y += 6;
+        }
+
+        // ===== ÉVOLUTION DES REVENUS (extrait) =====
+        const categories = stats.salesProfit?.categories || [];
+        const revenuSeries = stats.salesProfit?.series?.[0]?.data?.map(safeNum) || [];
+        if (categories.length > 0) {
+            sectionTitle("Évolution des Revenus");
+            ensureSpace(20 + categories.length * 8);
+            doc.setFillColor(41, 128, 185);
+            doc.rect(margin, y - 4, contentWidth, 7, 'F');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(255, 255, 255);
+            doc.text("Période", margin + 2, y);
+            doc.text("Revenu (GNF)", margin + 120, y);
+            y += 8;
+
+            categories.slice(-12).forEach((cat, i) => {
+                ensureSpace(7);
+                if (i % 2 === 0) {
+                    doc.setFillColor(248, 250, 252);
+                    doc.rect(margin, y - 4, contentWidth, 6, 'F');
+                }
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(8);
+                doc.setTextColor(40);
+doc.text(String(cat || '-'), margin + 2, y);
+                doc.text(fmtGNF(revenuSeries[i]), margin + 120, y);
+                y += 7;
+            });
+            y += 6;
+        }
+
+        // ===== SIGNATURE =====
+        ensureSpace(40);
+        y += 10;
+        doc.setDrawColor(150);
+        doc.line(margin, y, margin + 70, y);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(80);
+        doc.text("Signature du Gérant", margin, y + 5);
+
+        doc.line(pageWidth - margin - 70, y, pageWidth - margin, y);
+        doc.text("Cachet & Date", pageWidth - margin - 70, y + 5);
+
+        // ===== PIED DE PAGE =====
         const pageCount = doc.internal.getNumberOfPages();
         for (let i = 1; i <= pageCount; i++) {
             doc.setPage(i);
@@ -222,11 +468,11 @@ const GerantDashboard = () => {
             doc.setTextColor(150);
             const pageSize = doc.internal.pageSize;
             const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
-            doc.text(`StockDash - Gérant`, 14, pageHeight - 10);
-            doc.text(`Page ${i} sur ${pageCount}`, pageSize.width - 20, pageHeight - 10, { align: 'right' });
+            doc.text(`StockDash - Rapport Gérant - ${boutiqueNom}`, margin, pageHeight - 10);
+            doc.text(`Page ${i} sur ${pageCount}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
         }
 
-        doc.save("dashboard_gerant.pdf");
+        doc.save("rapport_gerant.pdf");
     };
 
     // Couleurs dynamiques pour le graphique
@@ -348,10 +594,10 @@ const GerantDashboard = () => {
 
             <Row className="g-4 mb-4">
                 {[
-                    { title: 'Revenu Session', value: `${safeNum(stats.revenuAujourdhui).toLocaleString()} GNF`, color: 'success', link: '/gerant/caisse', live: true },
-                    { title: 'Ventes Session', value: safeNum(stats.ventesAujourdhui).toLocaleString(), color: 'primary', link: '/gerant/ventes?tab=history', live: true },
-                    { title: 'Articles en Stock', value: safeNum(stats.totalArticles).toLocaleString(), color: 'info', link: '/gerant/articles' },
-                    { title: 'Stock Faible (<10)', value: safeNum(stats.articlesPeuStock).toLocaleString(), color: 'danger', link: '/gerant/articles' },
+                    { title: 'Revenu Session', value: `${fmtGNF(stats.revenuAujourdhui)} GNF`, color: 'success', link: '/gerant/caisse', live: true },
+                    { title: 'Ventes Session', value: fmtGNF(stats.ventesAujourdhui), color: 'primary', link: '/gerant/ventes?tab=history', live: true },
+                    { title: 'Articles en Stock', value: fmtGNF(stats.totalArticles), color: 'info', link: '/gerant/articles' },
+                    { title: 'Stock Faible (<10)', value: fmtGNF(stats.articlesPeuStock), color: 'danger', link: '/gerant/articles' },
                 ].map(stat => (
                     <Col lg={3} md={6} xs={12} key={stat.title}>
                         <Card as={Link} to={stat.link} className={`stat-card text-decoration-none border-0 shadow-sm h-100 bg-${stat.color}-subtle`}>
@@ -364,7 +610,7 @@ const GerantDashboard = () => {
                                         </Badge>
                                     )}
                                 </h6>
-                                <h4 className="fw-bold mb-0">{stat.value}</h4>
+                                <h4 className="fw-bold mb-0 text-nowrap" title={stat.value}>{stat.value}</h4>
                             </Card.Body>
                         </Card>
                     </Col>
@@ -465,13 +711,13 @@ const GerantDashboard = () => {
                                                     <td>
                                                         <div className="fw-bold">{caissier.nom}</div>
                                                     </td>
-                                                    <td className="text-end">
+<td className="text-end">
                                                         <strong className="text-success">
-                                                            {safeNum(caissier.chiffreAffaires).toLocaleString()} GNF
+                                                            {fmtGNF(caissier.chiffreAffaires)} GNF
                                                         </strong>
                                                     </td>
                                                     <td className="text-end">{caissier.nbVentes}</td>
-                                                    <td className="text-end">{safeNum(caissier.panierMoyen).toLocaleString()} GNF</td>
+                                                    <td className="text-end">{fmtGNF(caissier.panierMoyen)} GNF</td>
                                                     <td className="text-end">
                                                         {caissier.nbDettes > 0 ? (
                                                             <Badge bg="warning" pill>{caissier.nbDettes}</Badge>
@@ -479,9 +725,9 @@ const GerantDashboard = () => {
                                                             <Badge bg="success" pill>0</Badge>
                                                         )}
                                                     </td>
-                                                    <td className="text-end">
+<td className="text-end">
                                                         <strong className="text-primary">
-                                                            {safeNum(caissier.totalRecouvrements).toLocaleString()} GNF
+                                                            {fmtGNF(caissier.totalRecouvrements)} GNF
                                                         </strong>
                                                     </td>
                                                 </tr>
@@ -490,15 +736,15 @@ const GerantDashboard = () => {
                                         <tfoot className="table-active">
                                             <tr>
                                                 <td colSpan="2" className="fw-bold">TOTAL</td>
-                                                <td className="text-end fw-bold">
-                                                    {safeNum(stats.performanceCaissiers.reduce((sum, c) => sum + c.chiffreAffaires, 0)).toLocaleString()} GNF
+<td className="text-end fw-bold">
+                                                    {fmtGNF(stats.performanceCaissiers.reduce((sum, c) => sum + c.chiffreAffaires, 0))} GNF
                                                 </td>
                                                 <td className="text-end fw-bold">
                                                     {stats.performanceCaissiers.reduce((sum, c) => sum + c.nbVentes, 0)}
                                                 </td>
                                                 <td colSpan="2"></td>
                                                 <td className="text-end fw-bold">
-                                                    {safeNum(stats.performanceCaissiers.reduce((sum, c) => sum + (c.totalRecouvrements || 0), 0)).toLocaleString()} GNF
+                                                    {fmtGNF(stats.performanceCaissiers.reduce((sum, c) => sum + (c.totalRecouvrements || 0), 0))} GNF
                                                 </td>
                                             </tr>
                                         </tfoot>

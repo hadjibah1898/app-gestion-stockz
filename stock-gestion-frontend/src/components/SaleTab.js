@@ -74,6 +74,12 @@ const SaleTab = ({
     const [modalRemiseType, setModalRemiseType] = useState('montant');
     const [showNextItemDiscountModal, setShowNextItemDiscountModal] = useState(false);
 
+    // Fonction helper pour formater les nombres de manière sécurisée
+    const formatPrice = (value) => {
+        const num = parseFloat(value) || 0;
+        return isNaN(num) ? '0' : num.toLocaleString('fr-FR');
+    };
+
     // Effet pour pré-remplir le numéro de téléphone pour les paiements Fintech
     useEffect(() => {
         const fintechModes = ['Orange Money', 'MobiCash', 'PayCard', 'Virement'];
@@ -105,7 +111,8 @@ const SaleTab = ({
                 };
             }
             groups[key].items.push(vente);
-            groups[key].totalTicket += vente.prixTotal;
+            // Sécuriser l'accès à prixTotal (peut être undefined ou null)
+            groups[key].totalTicket += (vente.prixTotal || 0);
         });
         return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
     }, [historique]);
@@ -196,7 +203,7 @@ const SaleTab = ({
                                             <div className="text-muted x-small">Stock boutique: <Badge bg="light" text="dark" className="border ms-1">{item.article.quantite}</Badge></div>
                                             {item.remiseTemp > 0 && (
                                                 <Badge bg="warning" text="dark" className="ms-2" style={{ fontSize: '0.65rem' }}>
-                                                    Remise: -{parseFloat(item.remiseTemp).toLocaleString()} {item.remiseType === 'pourcentage' ? '%' : 'GNF'}
+                                                    Remise: -{formatPrice(item.remiseTemp)} {item.remiseType === 'pourcentage' ? '%' : 'GNF'}
                                                 </Badge>
                                             )}
                                         </div>
@@ -216,13 +223,13 @@ const SaleTab = ({
                                                     onClick={(e) => openItemDiscountModal(e, item)}
                                                 >
                                                     <iconify-icon icon="solar:tag-price-bold" className="me-1"></iconify-icon>
-                                                    {item.remiseTemp > 0 ? `${parseFloat(item.remiseTemp).toLocaleString()} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
+                                                    {item.remiseTemp > 0 ? `${formatPrice(item.remiseTemp)} ${item.remiseType === 'pourcentage' ? '%' : 'GNF'}` : 'Remise'}
                                                 </Button>
                                             )}
                                         </div>
                                     </div>
                                     <div className="text-end d-flex flex-column justify-content-between h-100" style={{ minWidth: '80px' }}>
-                                        <div className="fw-bold text-primary small">{item.prixTotal.toLocaleString()}</div>
+                                        <div className="fw-bold text-primary small">{formatPrice(item.prixTotal)}</div>
                                         <Button variant="outline-danger" size="sm" className="rounded-pill mt-2" onClick={() => retirerDuPanier(item.article._id)}><iconify-icon icon="solar:trash-bin-trash-bold"></iconify-icon></Button>
                                     </div>
                                 </div>
@@ -336,7 +343,7 @@ const SaleTab = ({
                         {selectedClientId && (
                             <Form.Group className="mt-2">
                                 <Form.Label className="fw-bold">Montant Payé</Form.Label>
-                                <InputGroup><Form.Control type="number" placeholder={`Total : ${calculerTotal().toLocaleString()} GNF`} value={montantPaye} onChange={e => setMontantPaye(e.target.value)} className="rounded-pill" /><InputGroup.Text>GNF</InputGroup.Text></InputGroup>
+                                <InputGroup><Form.Control type="number" placeholder={`Total : ${formatPrice(calculerTotal())} GNF`} value={montantPaye} onChange={e => setMontantPaye(e.target.value)} className="rounded-pill" /><InputGroup.Text>GNF</InputGroup.Text></InputGroup>
                             </Form.Group>
                         )}
 
@@ -358,20 +365,20 @@ const SaleTab = ({
                             <div className="d-flex justify-content-between mb-1">
                                 <span className="text-muted small">Sous-total (Hors remise)</span>
                                 <span className="small">
-                                    {panier.reduce((acc, item) => acc + ((item.article?.prixVente || 0) * (item.quantite || 0)), 0).toLocaleString()} GNF
+                                    {formatPrice(panier.reduce((acc, item) => acc + ((item.article?.prixVente || 0) * (item.quantite || 0)), 0))} GNF
                                 </span>
                             </div>
                             {panier.some(item => item.remiseTemp > 0) && (
                                 <div className="d-flex justify-content-between mb-1">
                                     <span className="text-muted small">Total des remises</span>
                                     <span className="text-danger small fw-bold">
-                                        -{(panier.reduce((acc, item) => acc + ((item.article?.prixVente || 0) * item.quantite), 0) - calculerTotal()).toLocaleString()} GNF
+                                        -{formatPrice(panier.reduce((acc, item) => acc + ((item.article?.prixVente || 0) * item.quantite), 0) - calculerTotal())} GNF
                                     </span>
                                 </div>
                             )}
                             <div className="d-flex justify-content-between align-items-center mt-2">
                                 <span className="fw-bold fs-5">Total TTC</span>
-                                <span className="fw-bold fs-4 text-success">{calculerTotal().toLocaleString()} GNF</span>
+                                <span className="fw-bold fs-4 text-success">{formatPrice(calculerTotal())} GNF</span>
                             </div>
                             {userRole === 'Serveur' && (
                                 <div className="d-flex justify-content-between mt-1 text-primary">
@@ -381,7 +388,7 @@ const SaleTab = ({
                                                 Pourboire ({articles[0]?.boutique?.tipPercentage || 5}%) estimé
                                             </span>
                                             <span className="small fw-bold">
-                                                +{Math.round(calculerTotal() * ((articles[0]?.boutique?.tipPercentage || 5) / 100)).toLocaleString()} GNF
+                                                +{formatPrice(Math.round(calculerTotal() * ((articles[0]?.boutique?.tipPercentage || 5) / 100)))} GNF
                                             </span>
                                         </>
                                     ) : (
@@ -443,7 +450,7 @@ const SaleTab = ({
                                     {userRole !== 'Serveur' ? (
                                         <OverlayTrigger
                                             placement="top"
-                                            overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {totalStockValue.toLocaleString()} GNF</Tooltip>}
+                                            overlay={<Tooltip id={`tooltip-stock-value-${cat.key}`}>Valeur stock: {formatPrice(totalStockValue)} GNF</Tooltip>}
                                         >
                                             <Badge bg={activeCategory === cat.key ? 'light' : 'primary'} text={activeCategory === cat.key ? 'dark' : 'white'} pill>
                                                 {count}
@@ -502,11 +509,11 @@ const SaleTab = ({
                                         <div className="mb-2">
                                             {getEffectivePrice(article) < article.prixVente ? (
                                                 <>
-                                                    <span className="text-decoration-line-through text-muted me-1 small">{article.prixVente.toLocaleString()}</span>
-                                                    <span className="text-danger fw-bold">{getEffectivePrice(article).toLocaleString()} GNF</span>
+                                                    <span className="text-decoration-line-through text-muted me-1 small">{formatPrice(article.prixVente)}</span>
+                                                    <span className="text-danger fw-bold">{formatPrice(getEffectivePrice(article))} GNF</span>
                                                 </>
                                             ) : (
-                                                <span className="fw-bold text-primary">{article.prixVente.toLocaleString()} GNF</span>
+                                                <span className="fw-bold text-primary">{formatPrice(article.prixVente)} GNF</span>
                                             )}
                                         </div>
                                         <InputGroup size="sm" className="mb-2">
@@ -584,7 +591,7 @@ const SaleTab = ({
                                             Client : {ticket.client}
                                         </div>
                                         <Badge bg="success-subtle" text="success" pill className="mt-1">
-                                            {ticket.totalTicket.toLocaleString()} GNF
+                                            {(ticket.totalTicket || 0).toLocaleString('fr-FR')} GNF
                                         </Badge>
                                     </div>
                                     <div className="text-end">
@@ -618,7 +625,7 @@ const SaleTab = ({
                                                             {item.article?.nom || 'Article supprimé'}
                                                             <Badge bg="light" text="dark" className="ms-2">x{item.quantite}</Badge>
                                                         </span>
-                                                        <span className="fw-bold">{item.prixTotal.toLocaleString()} GNF</span>
+                                                        <span className="fw-bold">{(item.prixTotal || 0).toLocaleString('fr-FR')} GNF</span>
                                                     </li>
                                                 ))}
                                             </ul>
@@ -651,7 +658,7 @@ const SaleTab = ({
                                 <div className="d-flex justify-content-between align-items-start mb-2">
                                     <div>
                                         <div className="fw-bold text-dark">{draft.clientName}</div>
-                                        <Badge bg="warning-subtle" text="warning" pill>{draft.total.toLocaleString()} GNF</Badge>
+                                        <Badge bg="warning-subtle" text="warning" pill>{formatPrice(draft.total)} GNF</Badge>
                                         <div className="small text-muted mt-1">{draft.panier.length} article(s)</div>
                                     </div>
                                     <div className="text-end">
@@ -716,7 +723,7 @@ const SaleTab = ({
                     <div className="d-flex justify-content-between align-items-center mb-3">
                         <span className="fw-bold small text-primary text-truncate" style={{ maxWidth: '60%' }}>{discountModalItem?.article.nom}</span>
                         <Badge bg="info-subtle" text="info-emphasis" className="border border-info-subtle py-2 px-3">
-                            Prix: {discountModalItem?.article.prixVente.toLocaleString()} GNF
+                            Prix: {formatPrice(discountModalItem?.article.prixVente)} GNF
                         </Badge>
                     </div>
                     <Form.Group className="mb-3">
@@ -747,7 +754,7 @@ const SaleTab = ({
                                     modalRemiseType === 'montant' && parseFloat(modalRemiseValue) > discountModalItem?.article.prixVente ? 'Montant supérieur au prix de vente' :
                                         modalRemiseType === 'pourcentage' && parseFloat(modalRemiseValue) > 100 ? 'Le pourcentage max est 100%' :
                                             parseFloat(modalRemiseValue) > 0 && getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType) < discountModalItem?.article.prixAchat ?
-                                                `Prix final (${getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${discountModalItem?.article.prixAchat.toLocaleString()} GNF)` : ''
+                                                `Prix final (${formatPrice(getEffectivePrice(discountModalItem?.article, parseFloat(modalRemiseValue), modalRemiseType))} GNF) inférieur au prix d'achat (${formatPrice(discountModalItem?.article.prixAchat)} GNF)` : ''
                                 }
                             </Form.Control.Feedback>
                         </InputGroup>
@@ -780,7 +787,7 @@ const SaleTab = ({
                                 {articles.find(a => a._id === selectedArticle)?.nom}
                             </span>
                             <Badge bg="info-subtle" text="info-emphasis" className="border border-info-subtle py-2 px-3">
-                                Prix: {articles.find(a => a._id === selectedArticle)?.prixVente.toLocaleString()} GNF
+                                Prix: {formatPrice(articles.find(a => a._id === selectedArticle)?.prixVente)} GNF
                             </Badge>
                         </div>
                     )}
@@ -812,7 +819,7 @@ const SaleTab = ({
                                     itemRemiseType === 'montant' && parseFloat(itemRemiseInput) > articles.find(a => a._id === selectedArticle)?.prixVente ? 'Montant supérieur au prix de vente' :
                                         itemRemiseType === 'pourcentage' && parseFloat(itemRemiseInput) > 100 ? 'Le pourcentage max est 100%' :
                                             parseFloat(itemRemiseInput) > 0 && getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType) < articles.find(a => a._id === selectedArticle)?.prixAchat ?
-                                                `Prix final (${getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType).toLocaleString()} GNF) inférieur au prix d'achat (${articles.find(a => a._id === selectedArticle)?.prixAchat.toLocaleString()} GNF)` : ''
+                                                `Prix final (${formatPrice(getEffectivePrice(articles.find(a => a._id === selectedArticle), parseFloat(itemRemiseInput), itemRemiseType))} GNF) inférieur au prix d'achat (${formatPrice(articles.find(a => a._id === selectedArticle)?.prixAchat)} GNF)` : ''
                                 }
                             </Form.Control.Feedback>
                         </InputGroup>

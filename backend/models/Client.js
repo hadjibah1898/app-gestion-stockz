@@ -21,6 +21,16 @@ const clientSchema = new mongoose.Schema({
         type: String,
         trim: true,
     },
+    quartier: {
+        type: String,
+        trim: true,
+        default: '',
+    },
+    ville: {
+        type: String,
+        trim: true,
+        default: '',
+    },
    
     type: {
         type: String,

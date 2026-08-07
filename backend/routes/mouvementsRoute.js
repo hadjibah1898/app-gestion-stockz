@@ -12,11 +12,12 @@ const validateObjectId = require('../middleware/validateObjectId');
 
 // Autorise l'Admin, AdminBar, Gérant et GérantBar à consulter les mouvements
 router.get('/', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), mouvementController.getAllMouvements);
-router.post('/:id/cancel', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validateObjectId('id'), mouvementController.cancelMouvement);
 
-// Route pour déclarer une perte/casse manuelle
+// Routes FIXES (statiques) AVANT les routes paramétrées
 router.post('/perte', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validatePerte, mouvementController.declarerPerte);
 
+// Routes PARAMÉTRÉES
+router.post('/:id/cancel', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validateObjectId('id'), mouvementController.cancelMouvement);
 router.post('/:id/receive', protect, authorize('Admin', 'AdminBar', 'Gérant', 'GérantBar'), validateObjectId('id'), mouvementController.confirmerReception);
 
 module.exports = router;

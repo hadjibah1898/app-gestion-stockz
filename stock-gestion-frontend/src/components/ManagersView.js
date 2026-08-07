@@ -12,6 +12,7 @@ const ManagersView = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterBoutique, setFilterBoutique] = useState('');
   
   // --- Pagination Gérants ---
   const [currentPage, setCurrentPage] = useState(1);
@@ -36,7 +37,7 @@ const ManagersView = () => {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const params = { page: currentPage, limit: itemsPerPage, search: searchTerm, role: 'Gérant' };
+      const params = { page: currentPage, limit: itemsPerPage, search: searchTerm, role: 'Gérant', boutique: filterBoutique || undefined };
       const [managersRes, boutiquesRes] = await Promise.all([
         authAPI.getUsers(params),
         boutiqueAPI.getAll()
@@ -49,13 +50,16 @@ const ManagersView = () => {
         setManagers(managersRes.data || []);
         setTotalPages(1);
       }
-      setBoutiques(boutiquesRes.data || []);
+      // L'intercepteur Axios unwrappe déjà : boutiquesRes est le tableau directement
+      const boutiquesList = Array.isArray(boutiquesRes) ? boutiquesRes : (boutiquesRes.data || []);
+      // Filtrer pour exclure le Dépôt Principal (Centrale) - les gérants ne peuvent pas y être assignés
+      setBoutiques(boutiquesList.filter(b => b.type !== 'Centrale'));
     } catch (err) {
       setError('Erreur lors du chargement des données.');
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm]);
+  }, [currentPage, searchTerm, filterBoutique]);
 
   useEffect(() => {
     fetchData();
@@ -66,10 +70,12 @@ const ManagersView = () => {
     if (manager) {
       setEditMode(true);
       setCurrentManagerId(manager._id);
-      setFormData({ nom: manager.nom, email: manager.email, password: '', boutique: manager.boutique?._id || '' });
+      const boutiqueId = typeof manager.boutique === 'object' ? manager.boutique?._id : manager.boutique;
+      setFormData({ nom: manager.nom, email: manager.email, password: '', boutique: boutiqueId || '' });
     } else {
       setEditMode(false);
-      setFormData({ nom: '', email: '', password: '', boutique: '' });
+      // Pré-remplir la boutique avec le filtre sélectionné si présent
+      setFormData({ nom: '', email: '', password: '', boutique: filterBoutique || '' });
     }
     setShowModal(true);
   };
@@ -157,12 +163,22 @@ const ManagersView = () => {
         </Button>
       </div>
 
-      <Form.Control 
-        className="mb-4 w-25 shadow-sm" 
-        placeholder="Rechercher..." 
-        value={searchTerm}
-        onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} 
-      />
+      <div className="d-flex gap-3 mb-4 align-items-center">
+        <Form.Control 
+          className="w-25 shadow-sm" 
+          placeholder="Rechercher..." 
+          value={searchTerm}
+          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} 
+        />
+        <Form.Select 
+          className="w-25 shadow-sm" 
+          value={filterBoutique}
+          onChange={(e) => { setFilterBoutique(e.target.value); setCurrentPage(1); }}
+        >
+          <option value="">Toutes les boutiques</option>
+          {boutiques.map(b => <option key={b._id} value={b._id}>{b.nom}</option>)}
+        </Form.Select>
+      </div>
 
       {successMessage && <Alert variant="success" dismissible onClose={() => setSuccessMessage('')}>{successMessage}</Alert>}
       {error && <Alert variant="danger" dismissible onClose={() => setError('')}>{error}</Alert>}

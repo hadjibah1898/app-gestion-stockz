@@ -440,6 +440,17 @@ exports.getUsers = async (req, res) => {
                 { createur: currentUserId }
             ];
             query.role = { $in: ['Gérant', 'Serveur'] };
+
+            // Filtre par boutique spécifique si demandé
+            if (req.query.boutique) {
+                // Vérifier que la boutique appartient bien à l'Admin
+                if (myBoutiqueIds.some(id => id.toString() === req.query.boutique.toString())) {
+                    query.boutique = req.query.boutique;
+                    delete query.$or;
+                } else {
+                    query._id = { $in: [] };
+                }
+            }
         }
 
         const users = await User.find(query).populate('boutique', 'nom');

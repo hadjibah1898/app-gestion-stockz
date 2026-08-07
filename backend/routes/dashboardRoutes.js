@@ -11,4 +11,7 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 // Route principale pour récupérer toutes les stats du dashboard central (Admin uniquement)
 router.get('/stats', protect, authorize('Admin', 'Gérant', 'Serveur', 'Caissier','AdminBar', 'GérantBar', 'ServeurBar', 'CaissierBar'), dashboardController.getDashboardStats);
 
+// Route pour les statistiques globales du SuperAdmin
+router.get('/superadmin', protect, authorize('SuperAdmin'), dashboardController.getSuperAdminStats);
+
 module.exports = router;

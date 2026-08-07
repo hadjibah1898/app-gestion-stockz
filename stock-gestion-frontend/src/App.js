@@ -41,6 +41,7 @@ import ManagersView from './components/ManagersView'; // Importation du composan
 import OnboardingSuccess from './components/OnboardingSuccess'; // Page de confirmation post-inscription
 import OnboardingTour from './components/OnboardingTour'; // Guide interactif première connexion
 import BarConfigView from './components/BarConfigView'; // Configuration QR codes Bar (Admin)
+import SuperAdminDashboard from './components/SuperAdminDashboard'; // Dashboard SuperAdmin
 
 function MainLayout({ userName, userRole, handleLogout, theme, toggleTheme, isSidebarOpen, toggleSidebar }) {
   return (
@@ -208,9 +209,9 @@ function App() {
           {/* Page de succès post-inscription */}
           <Route path="/register/success" element={<OnboardingSuccess />} />
 
-          {/* Routes Protégées pour l'Admin */}
+          {/* Routes Protégées pour l'Admin et le SuperAdmin */}
           <Route path="/admin" element={
-            <ProtectedRoute userRole={userRole} requiredRole="Admin">
+            <ProtectedRoute userRole={userRole} requiredRole={['Admin', 'SuperAdmin']}>
               {!mustChangePassword ? (
                 <MainLayout userName={userName} userRole={userRole} handleLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} isSidebarOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
               ) : (
@@ -218,7 +219,7 @@ function App() {
               )}
             </ProtectedRoute>
           } >
-            <Route index element={<Dashboard />} />
+            <Route index element={userRole === 'SuperAdmin' ? <SuperAdminDashboard /> : <Dashboard />} />
             <Route path="users" element={<UsersView />} />
             <Route path="managers" element={<ManagersView />} /> {/* Gestion dédiée des gérants (création/édition/assignation boutique) */}
             <Route path="shops" element={<ShopsView />} />
