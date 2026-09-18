@@ -458,6 +458,113 @@ const AdminCaisseView = () => {
         doc.save(`historique_encaissements_${new Date().toISOString().split('T')[0]}.pdf`);
     };
 
+    // --- Export PDF du détail d'un rapport de gérant (modale Détails) ---
+    const handleExportReportDetailsPDF = () => {
+        if (!reportDetails?.rapport) return;
+        const doc = new jsPDF('portrait');
+        const formatCurrencyPdf = (amount) => {
+            const value = safeNum(amount).toLocaleString('fr-FR') + ' GNF';
+            return value.replace(/[  ]/g, ' ');
+        };
+        const r = reportDetails.rapport;
+
+        // En-tête
+        doc.addImage(logo, 'PNG', 14, 8, 40, 15);
+        doc.setFontSize(18);
+        doc.setTextColor(41, 128, 185);
+        doc.setFont('helvetica', 'bold');
+        doc.text('RAPPORT DE CAISSE - DETAIL', 60, 18);
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Gerant: ${r.gerant?.nom || 'N/A'}  |  Boutique: ${r.boutique?.nom || 'N/A'}`, 14, 30);
+        doc.text(`Date: ${new Date(r.createdAt).toLocaleString('fr-FR')}  |  Statut: ${r.statut || 'N/A'}`, 14, 36);
+        if (r.adminValidateur?.nom) doc.text(`Valide par: ${r.adminValidateur.nom}`, 14, 42);
+
+        // Tableau récapitulatif des montants
+        autoTable(doc, {
+            body: [
+                ['Ventes (CA)', formatCurrencyPdf(r.totalVentes)],
+                ['Mobile Money', formatCurrencyPdf(r.totalMobileMoney)],
+                ['Recouvrements', formatCurrencyPdf(r.totalRecouvrement)],
+                ['Dettes', formatCurrencyPdf(r.totalDettes)],
+                ['Depenses', formatCurrencyPdf(r.totalDepensesApprouvees)],
+                ['Solde theorique (attendu)', formatCurrencyPdf(r.soldeTheorique)],
+                ['Montant recu', formatCurrencyPdf(r.montantCloture)],
+                ['Ecart', formatCurrencyPdf(r.ecart)],
+            ],
+            startY: r.adminValidateur?.nom ? 46 : 40,
+            theme: 'grid',
+            styles: { fontSize: 10 },
+            columnStyles: { 0: { fontStyle: 'bold', cellWidth: 80 }, 1: { halign: 'right' } },
+        });
+
+        let cursorY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : 100;
+
+        // Tableau des ventes
+        doc.setFontSize(12);
+        doc.setTextColor(0);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Ventes (${(reportDetails.ventes || []).length})`, 14, cursorY);
+        cursorY += 4;
+        autoTable(doc, {
+            head: [['Heure', 'Article', 'Mode', 'Qte', 'Total']],
+            body: (reportDetails.ventes || []).map(v => [
+                v.createdAt ? new Date(v.createdAt).toLocaleTimeString('fr-FR') : '-',
+                v.article?.nom || 'Article supprime',
+                v.modePaiement || 'Cash',
+                String(v.quantite ?? '-'),
+                formatCurrencyPdf(v.prixTotal),
+            ]),
+            startY: cursorY,
+            theme: 'grid',
+            headStyles: { fillColor: [41, 128, 185], halign: 'center' },
+            columnStyles: { 3: { halign: 'center' }, 4: { halign: 'right' } },
+        });
+        cursorY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : cursorY + 10;
+
+        // Tableau des dépenses
+        if (cursorY > 250) { doc.addPage(); cursorY = 20; }
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Depenses (${(reportDetails.depenses || []).length})`, 14, cursorY);
+        cursorY += 4;
+        autoTable(doc, {
+            head: [['Heure', 'Motif', 'Montant']],
+            body: (reportDetails.depenses || []).map(d => [
+                d.createdAt ? new Date(d.createdAt).toLocaleTimeString('fr-FR') : '-',
+                d.motif || '-',
+                formatCurrencyPdf(d.montant),
+            ]),
+            startY: cursorY,
+            theme: 'grid',
+            headStyles: { fillColor: [220, 53, 69], halign: 'center' },
+            columnStyles: { 2: { halign: 'right' } },
+        });
+        cursorY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : cursorY + 10;
+
+        // Tableau des recouvrements (si présents)
+        if ((reportDetails.remboursements || []).length > 0) {
+            if (cursorY > 250) { doc.addPage(); cursorY = 20; }
+            doc.setFont('helvetica', 'bold');
+            doc.text(`Recouvrements (${reportDetails.remboursements.length})`, 14, cursorY);
+            cursorY += 4;
+            autoTable(doc, {
+                head: [['Client', 'Montant']],
+                body: reportDetails.remboursements.map(p => [
+                    p.client?.nom || 'Client',
+                    formatCurrencyPdf(p.montant),
+                ]),
+                startY: cursorY,
+                theme: 'grid',
+                headStyles: { fillColor: [23, 162, 184], halign: 'center' },
+                columnStyles: { 1: { halign: 'right' } },
+            });
+        }
+
+        const fileName = `rapport_${r.gerant?.nom || 'gerant'}_${new Date(r.createdAt).toISOString().split('T')[0]}.pdf`;
+        doc.save(fileName.replace(/\s+/g, '_'));
+    };
+
     const handleExportExcel = () => {
         let dataToExport = [];
         let fileName = "";
@@ -1197,7 +1304,16 @@ const AdminCaisseView = () => {
                         </>
                     ) : <Alert variant="info">Aucun détail à afficher.</Alert>}
                 </Modal.Body>
-                <Modal.Footer>
+                <Modal.Footer className="d-flex justify-content-between">
+                    <Button
+                        variant="outline-danger"
+                        onClick={handleExportReportDetailsPDF}
+                        disabled={detailsLoading || !reportDetails?.rapport}
+                        title="Exporter le détail de ce rapport en PDF"
+                    >
+                        <iconify-icon icon="solar:file-pdf-bold" className="me-2 align-middle"></iconify-icon>
+                        Exporter PDF
+                    </Button>
                     <Button variant="secondary" onClick={handleCloseDetailsModal}>Fermer</Button>
                 </Modal.Footer>
             </Modal>

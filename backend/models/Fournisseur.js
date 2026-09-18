@@ -4,7 +4,6 @@ const fournisseurSchema = new mongoose.Schema({
     nom: { 
         type: String, 
         required: [true, 'Le nom du fournisseur est requis'], 
-        unique: true, 
         trim: true 
     },
     telephone: { 
@@ -27,5 +26,8 @@ const fournisseurSchema = new mongoose.Schema({
 }, {
     timestamps: true
 });
+
+// Unicité par créateur (par boutique) : même nom autorisé entre boutiques différentes
+fournisseurSchema.index({ nom: 1, createur: 1 }, { unique: true });
 
 module.exports = mongoose.model('Fournisseur', fournisseurSchema);

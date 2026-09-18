@@ -16,7 +16,7 @@
     "html5-qrcode": "^2.3.8",
     "iconify-icon": "^3.0.2",
     "jspdf": "^4.1.0",
-    "jspdf-autotable": "^5.0.7",
+    "jspdf-autotable": "^5.0.8",
     "leaflet": "^1.9.4",
     "react": "^19.2.4",
     "react-apexcharts": "^1.9.0",
@@ -33,11 +33,13 @@
     "xlsx-js-style": "^1.2.0"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "set HOST=0.0.0.0&& set BROWSER=none&& react-scripts start",
+    "start:local": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
+  
   "eslintConfig": {
     "extends": [
       "react-app",

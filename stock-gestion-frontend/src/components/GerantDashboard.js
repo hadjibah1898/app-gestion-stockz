@@ -8,7 +8,7 @@ import { Row, Col, Card, Alert, Table, Badge, Button, Placeholder, Spinner, Form
 import { Link, useOutletContext, useNavigate } from 'react-router-dom';
 import { articleAPI, caisseAPI, mouvementAPI, dashboardAPI, boutiqueAPI } from '../services/api';
 import Chart from 'react-apexcharts';
-import NotificationPopover from './NotificationPopover';
+
 import { toast } from 'react-toastify';
 import jsPDF from 'jspdf';
 
@@ -563,17 +563,14 @@ doc.text(String(cat || '-'), margin + 2, y);
                     <h3 className="fw-bold  mb-0">Tableau de Bord Gérant</h3>
                     <p className="text-muted">Aperçu de vos performances et de votre stock.</p>
                 </Col>
-                <Col xs="auto" md="auto"><NotificationPopover /></Col>
+               
                 <Col xs={12} md="auto" className="d-flex flex-wrap gap-2 justify-content-start justify-content-md-end">
                     <Button variant="outline-secondary" onClick={handleExportPDF} className="rounded-pill px-4 shadow-sm">
                         <iconify-icon icon="solar:printer-bold" class="me-2 align-middle"></iconify-icon>
                         Rapport
                     </Button>
 
-                    <Button as={Link} to="/gerant/equipe" variant="outline-primary" className="rounded-pill px-4 shadow-sm">
-                        <iconify-icon icon="solar:users-group-rounded-bold" className="me-2 align-middle" style={{ fontSize: '20px' }}></iconify-icon>
-                        Mon Équipe
-                    </Button>
+                   
                     {!isCaisseOpen ? (
                         <Button as={Link} to="/gerant/caisse" variant="success" className="rounded-pill px-4 shadow-sm">
                             <iconify-icon icon="solar:key-bold" className="me-2 align-middle" style={{ fontSize: '20px' }}></iconify-icon>

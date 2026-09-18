@@ -232,10 +232,14 @@ exports.modifierArticle = async (id, inputData, user, req) => {
         }
     }
 
-    // Validation de l'existence de la boutique si elle est modifiée ou fournie
+    // Validation de l'existence et de l'appartenance de la boutique si elle est modifiée
     if (data.boutique) {
         const boutiqueCheck = await Boutique.findById(data.boutique);
         if (!boutiqueCheck) throw new Error("La boutique spécifiée est introuvable.");
+        // SÉCURITÉ MULTI-TENANT : Un Admin ne peut déplacer un article que vers SES propres boutiques
+        if (user.role === 'Admin' && boutiqueCheck.createur?.toString() !== (user._id || user.id).toString()) {
+            throw new Error("Accès refusé : vous ne pouvez déplacer un article que vers vos propres boutiques.");
+        }
     }
 
     // Validation de l'existence du fournisseur si il est modifié ou fourni

@@ -3,6 +3,7 @@
  * @description Contrôleur clients : CRUD, dettes, commissions, historique.
  */
 
+const mongoose = require('mongoose');
 const Client = require('../models/Client');
 const DebtMovement = require('../models/DebtMovement');
 const DebtPayment = require('../models/DebtPayment');

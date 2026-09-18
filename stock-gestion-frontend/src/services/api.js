@@ -15,6 +15,22 @@ if (!API_URL.startsWith('http://') && !API_URL.startsWith('https://')) {
     API_URL = `http://${API_URL}`;
   }
 }
+
+// --- ACCÈS RÉSEAU (IP) : Construit dynamiquement l'URL de l'API ---
+// Si l'application est ouverte via une adresse IP (ex: http://192.168.100.197:3000),
+// on remplace "localhost" par cette même IP pour que l'API soit joignable depuis
+// un autre appareil sur le réseau. Le backend écoute déjà sur toutes les interfaces (0.0.0.0).
+if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+  const hostname = window.location.hostname;
+  // Si on est sur une vraie IP (pas localhost/127.0.0.1), on pointe l'API vers cette IP
+  if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    if (API_URL.includes('localhost')) {
+      API_URL = API_URL.replace('localhost', hostname);
+    } else if (API_URL.includes('127.0.0.1')) {
+      API_URL = API_URL.replace('127.0.0.1', hostname);
+    }
+  }
+}
 /**
  * Configuration de l'instance Axios
  */

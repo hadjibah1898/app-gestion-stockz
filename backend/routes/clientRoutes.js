@@ -27,9 +27,9 @@ router.get('/debt-history', clientController.getDebtHistory);
 router.get('/crm/analytics', clientController.getCrmAnalytics);
 router.get('/crm/quartiers', clientController.getCrmQuartiers);
 router.get('/crm/settings', clientController.getCrmSettings);
-router.put('/crm/settings', clientController.updateCrmSettings);
+router.put('/crm/settings', authorize('Admin', 'AdminBar', 'SuperAdmin'), clientController.updateCrmSettings);
 router.get('/crm/segmentation-settings', clientController.getSegmentationSettings);
-router.put('/crm/segmentation-settings', clientController.updateSegmentationSettings);
+router.put('/crm/segmentation-settings', authorize('Admin', 'AdminBar', 'SuperAdmin'), clientController.updateSegmentationSettings);
 router.post('/:id/relance', validateObjectId('id'), clientController.relancerClient);
 
 // --- 2. Actions Spécifiques ---

@@ -105,6 +105,7 @@ const AdminHistoryTab = ({
                         <tr>
                             <th className="ps-4" style={{ width: '40px' }}><Form.Check type="checkbox" onChange={handleSelectAll} checked={historique?.length > 0 && selectedIds.length === historique.length} /></th>
                             <th>Date & Origine</th>
+                            <th>N° Facture</th>
                             <th>Articles Vendus</th>
                             <th className="text-end">Total Net</th>
                             <th>Règlement</th>
@@ -122,6 +123,16 @@ const AdminHistoryTab = ({
                                     <div className="fw-bold">{new Date(group.createdAt).toLocaleDateString()}</div>
                                     <Badge bg="info" className="fw-normal">{group.boutique?.nom || 'N/A'}</Badge>
                                     <div className="x-small text-muted mt-1">Par: {group.gerant?.nom || 'Admin'}</div>
+                                </td>
+                                <td>
+                                    {group.numeroFacture || group.items?.[0]?.numeroFacture ? (
+                                        <Badge bg="primary-subtle" text="primary" className="rounded-pill px-2 py-1 small fw-bold">
+                                            <iconify-icon icon="solar:document-text-bold" className="me-1" style={{ fontSize: '11px' }}></iconify-icon>
+                                            {group.numeroFacture || group.items?.[0]?.numeroFacture}
+                                        </Badge>
+                                    ) : (
+                                        <span className="text-muted x-small">—</span>
+                                    )}
                                 </td>
                                 <td>
                                     <ul className="list-unstyled mb-0 small">
@@ -160,7 +171,7 @@ const AdminHistoryTab = ({
                             ))
                         ) : (
                             <tr>
-                                <td colSpan="6" className="text-center py-5 text-muted">
+                                <td colSpan="7" className="text-center py-5 text-muted">
                                     <div className="d-flex flex-column align-items-center">
                                         <iconify-icon icon="solar:history-bold-duotone" style={{ fontSize: '64px', opacity: '0.3' }}></iconify-icon>
                                         <h5 className="mt-3 fw-bold">Aucun historique de vente</h5>

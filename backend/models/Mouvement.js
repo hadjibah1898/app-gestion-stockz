@@ -28,7 +28,28 @@ const mouvementSchema = new mongoose.Schema({
         required: true 
     },
     nomTransporteur: { type: String },
-    isCancelled: { type: Boolean, default: false }
+    isCancelled: { type: Boolean, default: false },
+    // Isolation multi-tenant : Admin propriétaire (déduit de la boutique si absent)
+    createur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        index: true
+    }
 }, { timestamps: true });
+
+// Injection automatique du createur (Admin) à partir de la boutique rattachée.
+// NB : hook asynchrone — ne PAS appeler next() (il est undefined pour un hook async).
+mouvementSchema.pre('save', async function () {
+    if (!this.createur) {
+        const Boutique = mongoose.model('Boutique');
+        const bId = this.boutiqueSource || this.boutiqueDestination;
+        if (bId) {
+            try {
+                const boutique = await Boutique.findById(bId).select('createur').lean();
+                if (boutique && boutique.createur) this.createur = boutique.createur;
+            } catch (e) { /* noop */ }
+        }
+    }
+});
 
 module.exports = mongoose.model('Mouvement', mouvementSchema);

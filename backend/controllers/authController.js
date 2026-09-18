@@ -259,12 +259,48 @@ exports.updateManager = async (req, res) => {
             return res.status(403).json({ message: "Accès refusé : Vous ne pouvez modifier que les gérants que vous avez créés." });
         }
 
+        // SÉCURITÉ GÉRANT : un Gérant ne peut modifier que les Caissiers/Serveurs de SA boutique
+        if (['Gérant', 'GérantBar'].includes(req.user?.role)) {
+            const gerantBoutiqueId = (req.user.boutique?._id || req.user.boutique || '').toString();
+            const targetBoutiqueId = (user.boutique?._id || user.boutique || '').toString();
+            const allowedRoles = req.user.role === 'GérantBar' ? ['ServeurBar'] : ['Serveur', 'Caissier'];
+            if (!allowedRoles.includes(user.role)) {
+                return res.status(403).json({ message: "Accès refusé : Vous ne pouvez modifier que vos caissiers/serveurs." });
+            }
+            if (!gerantBoutiqueId || !targetBoutiqueId || gerantBoutiqueId !== targetBoutiqueId) {
+                return res.status(403).json({ message: "Accès refusé : Ce caissier n'appartient pas à votre boutique." });
+            }
+            // Un Gérant ne peut ni changer le rôle ni déplacer le caissier vers une autre boutique
+            if (req.body.role && req.body.role !== user.role) {
+                return res.status(403).json({ message: "Accès refusé : Vous ne pouvez pas changer le rôle d'un caissier." });
+            }
+            if (req.body.boutique !== undefined) {
+                const newBoutiqueId = (req.body.boutique?._id || req.body.boutique || '').toString();
+                if (newBoutiqueId && newBoutiqueId !== targetBoutiqueId) {
+                    return res.status(403).json({ message: "Accès refusé : Vous ne pouvez pas déplacer un caissier vers une autre boutique." });
+                }
+                // On ignore toute tentative de changement de boutique (le caissier reste dans la boutique du gérant)
+                delete req.body.boutique;
+            }
+        }
+
         const beforeUpdate = user.toObject();
 
         if (req.body.boutique && req.body.boutique !== (user.boutique ? user.boutique.toString() : null)) {
             const boutiqueObj = await Boutique.findById(req.body.boutique);
-            if (boutiqueObj && boutiqueObj.type === 'Centrale') {
+            if (!boutiqueObj) {
+                return res.status(404).json({ message: "Boutique introuvable." });
+            }
+            if (boutiqueObj.type === 'Centrale') {
                 return res.status(400).json({ message: "Le Dépôt Principal ne peut pas être attribué à un gérant." });
+            }
+            // SÉCURITÉ MULTI-TENANT : Un Admin ne peut déplacer son personnel que vers SES propres boutiques
+            if (['Admin', 'AdminBar'].includes(req.user.role)) {
+                const ownerId = (boutiqueObj.createur || '').toString();
+                const adminId = (req.user._id || req.user.id || '').toString();
+                if (ownerId !== adminId) {
+                    return res.status(403).json({ message: "Accès refusé : vous ne pouvez déplacer du personnel que vers vos propres boutiques." });
+                }
             }
         }
 
@@ -572,6 +608,15 @@ exports.createManager = async (req, res) => {
             }
             if (boutiqueExists.type === 'Centrale') {
                 return res.status(400).json({ success: false, message: "Le Dépôt Principal ne peut pas être attribué à un gérant ou caissier." });
+            }
+
+            // SÉCURITÉ MULTI-TENANT : Un Admin ne peut rattacher son personnel qu'à SES propres boutiques
+            if (['Admin', 'AdminBar'].includes(req.user.role)) {
+                const ownerId = (boutiqueExists.createur || '').toString();
+                const adminId = (req.user._id || req.user.id || '').toString();
+                if (ownerId !== adminId) {
+                    return res.status(403).json({ success: false, message: "Accès refusé : vous ne pouvez rattacher du personnel qu'à vos propres boutiques." });
+                }
             }
         }
 

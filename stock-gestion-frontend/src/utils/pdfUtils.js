@@ -171,7 +171,90 @@ export const generateReceiptPDF = (ticketData) => {
 };
 
 export const generateMovementsSummary = (movements) => {
-    // Implémentation de la génération de PDF pour les mouvements
-    // (Non demandé dans cette requête, mais utile pour la cohérence)
-    console.log("Génération du résumé des mouvements", movements);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const title = 'Résumé des mouvements de stock';
+    const now = new Date();
+
+    if (!Array.isArray(movements) || movements.length === 0) {
+        doc.setFontSize(12);
+        doc.text(title, 14, 20);
+        doc.setFontSize(10);
+        doc.text('Aucun mouvement à exporter.', 14, 30);
+        doc.save(`mouvements_stock_${now.toISOString().split('T')[0]}.pdf`);
+        return;
+    }
+
+    const rows = movements.map((mvt) => {
+        const date = mvt.createdAt ? new Date(mvt.createdAt).toLocaleString('fr-FR') : '';
+        const type = mvt.type || '';
+        const origine = mvt.fournisseur?.nom || mvt.boutiqueSource?.nom || '';
+        const destination = mvt.boutiqueDestination?.nom || (mvt.type === 'Vente' ? 'Client' : '');
+        const articles = Array.isArray(mvt.articles)
+            ? mvt.articles.map(article => {
+                const name = article.nomArticle || article.article?.nom || article.nom || '';
+                const qty = article.quantite != null ? ` x${article.quantite}` : '';
+                const price = article.prixAchatUnitaire != null ? ` @${formatPrice(article.prixAchatUnitaire)}` : '';
+                return `${name}${qty}${price}`;
+            }).join('\n')
+            : '';
+        const operateur = mvt.operateur?.nom || mvt.operateur || 'Système';
+        const transporteur = mvt.nomTransporteur || '-';
+        const rawDetails = mvt.details || '';
+        const details = typeof rawDetails === 'string' ? rawDetails : JSON.stringify(rawDetails, null, 0);
+        const statut = mvt.isCancelled ? 'Annulé' : 'Validé';
+
+        return [date, type, origine, destination, articles, operateur, transporteur, details, statut];
+    });
+
+    doc.setFontSize(14);
+    doc.text(title, 14, 16);
+    doc.setFontSize(10);
+    doc.text(`Généré le ${now.toLocaleString('fr-FR')}`, 14, 22);
+
+    autoTable(doc, {
+        head: [[
+            'Date',
+            'Type',
+            'Origine',
+            'Destination',
+            'Articles',
+            'Opérateur',
+            'Transporteur',
+            'Détails',
+            'Statut'
+        ]],
+        body: rows,
+        startY: 26,
+        theme: 'striped',
+        tableWidth: 'auto',
+        styles: {
+            fontSize: 8,
+            cellPadding: 2,
+            overflow: 'linebreak',
+            cellWidth: 'wrap',
+            valign: 'top'
+        },
+        headStyles: {
+            fillColor: [40, 116, 166],
+            textColor: 255,
+            fontStyle: 'bold',
+            valign: 'middle'
+        },
+        columnStyles: {
+            0: { cellWidth: 20 },
+            1: { cellWidth: 22 },
+            2: { cellWidth: 25 },
+            3: { cellWidth: 25 },
+            4: { cellWidth: 60 },
+            5: { cellWidth: 22 },
+            6: { cellWidth: 22 },
+            7: { cellWidth: 85 },
+            8: { cellWidth: 18 }
+        },
+        margin: { left: 14, right: 14 },
+        pageBreak: 'auto',
+        bodyStyles: { minCellHeight: 10 }
+    });
+
+    doc.save(`mouvements_stock_${now.toISOString().split('T')[0]}.pdf`);
 };

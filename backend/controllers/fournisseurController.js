@@ -14,6 +14,16 @@ const mongoose = require('mongoose');
 // --- CRUD Fournisseur ---
 
 exports.createFournisseur = asyncHandler(async (req, res) => {
+    // Vérifier l'unicité par créateur avant création
+    const existing = await Fournisseur.findOne({ 
+        nom: req.body.nom?.trim(), 
+        createur: req.user.id 
+    });
+    if (existing) {
+        return res.status(400).json({ 
+            message: `Un fournisseur nommé "${req.body.nom}" existe déjà dans votre boutique.` 
+        });
+    }
     const fournisseur = await Fournisseur.create({
         ...req.body,
         createur: req.user.id
@@ -61,6 +71,21 @@ exports.updateFournisseur = asyncHandler(async (req, res) => {
     if (req.user.role === 'Admin' && fournisseurCheck.createur?.toString() !== req.user.id.toString()) {
         return res.status(403).json({ message: "Accès refusé : ce fournisseur ne vous appartient pas." });
     }
+
+    // Vérifier l'unicité par créateur si le nom change
+    if (req.body.nom && req.body.nom.trim() !== fournisseurCheck.nom) {
+        const existing = await Fournisseur.findOne({ 
+            nom: req.body.nom.trim(), 
+            createur: req.user.id,
+            _id: { $ne: req.params.id }
+        });
+        if (existing) {
+            return res.status(400).json({ 
+                message: `Un fournisseur nommé "${req.body.nom}" existe déjà dans votre boutique.` 
+            });
+        }
+    }
+
     const fournisseur = await Fournisseur.findByIdAndUpdate(req.params.id, req.body, { new: true });
     await auditHelper.logSuccess(req, req.user, 'UPDATE_SUPPLIER', 'Fournisseur', fournisseur._id, { before: fournisseurCheck, after: fournisseur });
     res.status(200).json({ success: true, data: fournisseur });

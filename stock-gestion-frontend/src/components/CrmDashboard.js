@@ -5,9 +5,11 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Alert, Badge, Spinner, Button, Modal, Form } from 'react-bootstrap';
+import { Alert, Badge, Spinner, Button, Modal, Form, Dropdown } from 'react-bootstrap';
 import Chart from 'react-apexcharts';
 import XLSX from 'xlsx-js-style';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { clientAPI } from '../services/api';
 import './CrmDashboard.css';
 
@@ -254,7 +256,7 @@ const saveSettings = async () => {
   }, [kpis, crmQuartiers, charts.topCats]);
 
   /* ---------- Export Excel filtré ---------- */
-  const handleExport = () => {
+  const handleExportExcel = () => {
     setExporting(true);
     try {
       const data = filteredData.map(c => ({
@@ -277,6 +279,94 @@ const saveSettings = async () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Analyse CRM');
       XLSX.writeFile(wb, `crm_analyse_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  /* ---------- Export PDF filtré ---------- */
+  const handleExportPDF = () => {
+    setExporting(true);
+    try {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const dateStr = new Date().toLocaleDateString('fr-FR');
+      
+      // En-tête
+      doc.setFontSize(18);
+      doc.setTextColor(99, 102, 241);
+      doc.text('Analyse CRM - eCash', 14, 15);
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Genere le ${dateStr} | ${filteredData.length} client(s)`, 14, 22);
+
+      // KPI en en-tête
+      doc.setFontSize(9);
+      doc.setTextColor(60, 60, 60);
+      const kpiText = `CA Total: ${fmtGNF(kpis.caTotal)} | Panier Moyen: ${fmtGNF(kpis.panierMoyen)} | Fideles: ${kpis.nbFideles} (${kpis.pctFideles}%) | A Risque/Perdus: ${kpis.aRisque} (${kpis.pctARisque}%)`;
+      doc.text(kpiText, 14, 28);
+
+      // Tableau principal
+      const tableData = filteredData.map(c => [
+        c.nom || '',
+        c.niveau || 'Bronze',
+        `${Math.round(c.depenseTotale || 0).toLocaleString('fr-FR')} GNF`,
+        String(c.nbAchats || 0),
+        `${Math.round(c.panierMoyen || 0).toLocaleString('fr-FR')} GNF`,
+        `${(c.frequenceMensuelle || 0).toFixed(1)}/mois`,
+        c.segmentation || 'Perdu',
+        c.dernierAchat ? new Date(c.dernierAchat).toLocaleDateString('fr-FR') : '—',
+        (c.topCategories || []).map(t => t.categorie).join(', ').substring(0, 40),
+      ]);
+
+      autoTable(doc, {
+        startY: 33,
+        head: [['Client', 'Niveau', 'Depense Totale', 'Nb Achats', 'Panier Moyen', 'Frequence', 'Segmentation', 'Dernier Achat', 'Top Categories']],
+        body: tableData,
+        styles: { fontSize: 7, cellPadding: 2 },
+        headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+          0: { cellWidth: 30 },
+          2: { halign: 'right' },
+          4: { halign: 'right' },
+        },
+        didDrawPage: (data) => {
+          // Pied de page
+          doc.setFontSize(7);
+          doc.setTextColor(150);
+          doc.text(
+            `eCash - Analyse CRM | Page ${doc.internal.getNumberOfPages()}`,
+            14,
+            doc.internal.pageSize.height - 5
+          );
+        },
+      });
+
+      // Page 2 : Résumé quartiers si disponible
+      if (crmQuartiers.length > 0) {
+        doc.addPage();
+        doc.setFontSize(14);
+        doc.setTextColor(99, 102, 241);
+        doc.text('Repartition par Quartier', 14, 15);
+
+        const quartierData = crmQuartiers.map(q => [
+          q.quartier || 'Non renseigne',
+          String(q.nbClients || 0),
+          `${Math.round(q.depenseTotale || 0).toLocaleString('fr-FR')} GNF`,
+          String(q.nbAchats || 0),
+        ]);
+
+        autoTable(doc, {
+          startY: 22,
+          head: [['Quartier', 'Nb Clients', 'Depense Totale', 'Nb Achats']],
+          body: quartierData,
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: [13, 110, 253], textColor: 255, fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+        });
+      }
+
+      doc.save(`crm_analyse_${new Date().toISOString().split('T')[0]}.pdf`);
     } finally {
       setExporting(false);
     }
@@ -513,11 +603,24 @@ const saveSettings = async () => {
         <Button variant="outline-secondary" onClick={openSegSettings} className="rounded-pill px-4" title="Configurer les critères de segmentation">
           <iconify-icon icon="solar:chart-2-bold" className="me-1 align-middle"></iconify-icon> Segmentation
         </Button>
-        <Button variant="outline-primary" onClick={handleExport} disabled={exporting || filteredData.length === 0} className="rounded-pill px-4">
-          {exporting ? <Spinner as="span" size="sm" animation="border" /> : (
-            <><iconify-icon icon="solar:file-spreadsheet-bold" className="me-1 align-middle"></iconify-icon> Exporter</>
-          )}
-        </Button>
+        <Dropdown>
+          <Dropdown.Toggle variant="outline-primary" disabled={exporting || filteredData.length === 0} className="rounded-pill px-4">
+            {exporting ? <Spinner as="span" size="sm" animation="border" className="me-1" /> : (
+              <><iconify-icon icon="solar:download-bold" className="me-1 align-middle"></iconify-icon></>
+            )}
+            Exporter
+          </Dropdown.Toggle>
+          <Dropdown.Menu>
+            <Dropdown.Item onClick={handleExportExcel}>
+              <iconify-icon icon="solar:file-spreadsheet-bold" className="me-2 align-middle" style={{ color: '#22c55e' }}></iconify-icon>
+              Exporter en Excel (.xlsx)
+            </Dropdown.Item>
+            <Dropdown.Item onClick={handleExportPDF}>
+              <iconify-icon icon="solar:file-pdf-bold" className="me-2 align-middle" style={{ color: '#ef4444' }}></iconify-icon>
+              Exporter en PDF (.pdf)
+            </Dropdown.Item>
+          </Dropdown.Menu>
+        </Dropdown>
       </div>
 
       {/* ---------- Tableau ---------- */}

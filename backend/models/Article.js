@@ -74,9 +74,28 @@ const articleSchema = new mongoose.Schema({
         type: Number,
         default: 10,
         min: 0
+    },
+    // Isolation multi-tenant : Admin propriétaire (déduit de la boutique si absent)
+    createur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        index: true
     }
 }, {
     timestamps: true
+});
+
+// Injection automatique du createur (Admin) à partir de la boutique rattachée.
+// NB : hook asynchrone — sous kareem/Mongoose v6+, le retour de la promesse
+// attend la fin du hook ; ne PAS appeler next() (il est undefined pour un hook async).
+articleSchema.pre('save', async function () {
+    if (!this.createur && this.boutique) {
+        try {
+            const Boutique = mongoose.model('Boutique');
+            const boutique = await Boutique.findById(this.boutique).select('createur').lean();
+            if (boutique && boutique.createur) this.createur = boutique.createur;
+        } catch (e) { /* on laisse createur vide, la validation d'appartenance reste active */ }
+    }
 });
 
 // Index unique composé : empêche le même nom dans la même boutique

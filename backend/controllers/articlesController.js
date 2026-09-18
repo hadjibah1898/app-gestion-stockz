@@ -8,6 +8,7 @@ const notificationService = require('../services/notificationService');
 const auditHelper = require('../utils/auditHelper');
 const asyncHandler = require('../middleware/asyncHandler');
 const Article = require('../models/Article');
+const tenantScope = require('../middleware/tenantScope');
 
 // Demande de remise par le gérant (stocke la demande et notifie les admins)
 exports.demanderRemise = asyncHandler(async (req, res) => {
@@ -33,6 +34,12 @@ exports.getAllArticles = asyncHandler(async (req, res) => {
 });
 
 exports.addArticle = asyncHandler(async (req, res) => {
+    // SÉCURITÉ MULTI-TENANT : Un Admin ne peut créer un article que dans ses propres boutiques
+    if (!req.body.boutique) {
+        return res.status(400).json({ success: false, message: "La boutique est requise pour créer un article." });
+    }
+    await tenantScope.assertBoutiqueBelongsToAdmin(req.user, req.body.boutique);
+
     const article = await Article.create({ ...req.body, createur: req.user.id });
     await auditHelper.logSuccess(req, req.user, 'CREATE_ARTICLE', 'Article', article._id);
     res.status(201).json({ success: true, data: article });

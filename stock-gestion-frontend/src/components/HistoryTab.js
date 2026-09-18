@@ -229,6 +229,10 @@ const HistoryTab = ({
                     valA = (a.client?.nom || '').toLowerCase();
                     valB = (b.client?.nom || '').toLowerCase();
                     break;
+                case 'numeroFacture':
+                    valA = (a.numeroFacture || a.items?.[0]?.numeroFacture || '').toLowerCase();
+                    valB = (b.numeroFacture || b.items?.[0]?.numeroFacture || '').toLowerCase();
+                    break;
                 default:
                     valA = new Date(a.createdAt).getTime();
                     valB = new Date(b.createdAt).getTime();
@@ -573,6 +577,9 @@ const HistoryTab = ({
                                     <th className="border-0" style={{ cursor: 'pointer' }} onClick={() => handleSort('client')}>
                                         Client {renderSortIcon('client')}
                                     </th>
+                                    <th className="border-0" style={{ cursor: 'pointer' }} onClick={() => handleSort('numeroFacture')}>
+                                        N° Facture {renderSortIcon('numeroFacture')}
+                                    </th>
                                     <th className="border-0">Articles</th>
                                     <th className="border-0 text-end" style={{ cursor: 'pointer' }} onClick={() => handleSort('totalGroupPrice')}>
                                         Montant {renderSortIcon('totalGroupPrice')}
@@ -608,6 +615,16 @@ const HistoryTab = ({
                                                 </td>
                                                 <td>
                                                     <span className="small">{group.client?.nom || 'Client de passage'}</span>
+                                                </td>
+                                                <td>
+                                                    {group.numeroFacture || group.items?.[0]?.numeroFacture ? (
+                                                        <Badge bg="primary-subtle" text="primary" className="rounded-pill px-2 py-1 small fw-bold">
+                                                            <iconify-icon icon="solar:document-text-bold" className="me-1" style={{ fontSize: '11px' }}></iconify-icon>
+                                                            {group.numeroFacture || group.items?.[0]?.numeroFacture}
+                                                        </Badge>
+                                                    ) : (
+                                                        <span className="text-muted x-small">—</span>
+                                                    )}
                                                 </td>
                                                 <td onClick={(e) => { e.stopPropagation(); toggleGroup(group.orderGroupId); }} style={{ minWidth: '180px' }}>
                                                     <div className="d-flex align-items-center small">
@@ -658,7 +675,7 @@ const HistoryTab = ({
                                     ))
                                 ) : (
                                     <tr>
-                                        <td colSpan="7" className="text-center py-5 text-muted">
+                                        <td colSpan="8" className="text-center py-5 text-muted">
                                             <div className="d-flex flex-column align-items-center">
                                                 <iconify-icon icon="solar:history-bold-duotone" style={{ fontSize: '64px', opacity: '0.3' }}></iconify-icon>
                                                 <h5 className="mt-3 fw-bold">Aucun historique de vente</h5>
@@ -713,22 +730,31 @@ const HistoryTab = ({
                             {/* En-tête info */}
                             <div className="bg-light rounded-3 p-3 mb-3">
                                 <Row className="g-2">
-                                    <Col md={4}>
+                                    <Col md={3}>
                                         <div className="x-small text-muted text-uppercase fw-bold">Date & Heure</div>
                                         <div className="fw-bold small">
                                             {new Date(selectedGroup.createdAt).toLocaleDateString('fr-FR')} - {new Date(selectedGroup.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                                         </div>
                                     </Col>
-                                    {userRole !== 'Gérant' && (
                                     <Col md={3}>
+                                        <div className="x-small text-muted text-uppercase fw-bold">N° Facture</div>
+                                        <div className="fw-bold small">
+                                            <Badge bg="primary-subtle" text="primary" className="rounded-pill px-2 py-1">
+                                                <iconify-icon icon="solar:document-text-bold" className="me-1" style={{ fontSize: '11px' }}></iconify-icon>
+                                                {selectedGroup.numeroFacture || selectedGroup.items?.[0]?.numeroFacture || 'N/A'}
+                                            </Badge>
+                                        </div>
+                                    </Col>
+                                    <Col md={2}>
+                                        <div className="x-small text-muted text-uppercase fw-bold">Client</div>
+                                        <div className="fw-bold small">{selectedGroup.client?.nom || 'Client de passage'}</div>
+                                    </Col>
+                                    {userRole !== 'Gérant' && (
+                                    <Col md={2}>
                                         <div className="x-small text-muted text-uppercase fw-bold">Table</div>
                                         <div className="fw-bold small">{selectedGroup.numeroTable ? `Table ${selectedGroup.numeroTable}` : 'À emporter'}</div>
                                     </Col>
                                     )}
-                                    <Col md={3}>
-                                        <div className="x-small text-muted text-uppercase fw-bold">Client</div>
-                                        <div className="fw-bold small">{selectedGroup.client?.nom || 'Client de passage'}</div>
-                                    </Col>
                                     <Col md={2}>
                                         <div className="x-small text-muted text-uppercase fw-bold">Statut</div>
                                         <Badge bg={selectedGroup.isCancelled ? 'danger' : (STATUS_COLORS[selectedGroup.statut] || 'secondary')}>
@@ -770,18 +796,22 @@ const HistoryTab = ({
                             {/* Infos supplémentaires */}
                             <div className="bg-light rounded-3 p-3">
                                 <Row className="g-2">
-                                    <Col md={4}>
+                                    <Col md={3}>
                                         <div className="x-small text-muted text-uppercase fw-bold">Mode de paiement</div>
                                         <div className="fw-bold small">{selectedGroup.items?.[0]?.modePaiement || 'N/A'}</div>
                                     </Col>
+                                    <Col md={3}>
+                                        <div className="x-small text-muted text-uppercase fw-bold">Réf. Transaction</div>
+                                        <div className="fw-bold small">{selectedGroup.transactionRef || selectedGroup.items?.[0]?.transactionRef || '—'}</div>
+                                    </Col>
                                     {userRole !== 'Gérant' && (
-                                    <Col md={4}>
+                                    <Col md={3}>
                                         <div className="x-small text-muted text-uppercase fw-bold">Serveur/Gérant</div>
                                         <div className="fw-bold small">{selectedGroup.gerant?.nom || 'N/A'}</div>
                                     </Col>
                                     )}
                                     {userRole !== 'Gérant' && (
-                                    <Col md={4}>
+                                    <Col md={3}>
                                         <div className="x-small text-muted text-uppercase fw-bold">Pourboire</div>
                                         <div className="fw-bold small">{formatCurrency(selectedGroup.totalGroupPourboire || 0)}</div>
                                     </Col>

@@ -28,4 +28,4 @@ Rendre les seuils de niveau (Argent/Or/Platine) ET les critères de segmentation
 ## Vérification
 - [x] Syntaxe backend (`node -c`)
 - [x] Lint frontend (`eslint CrmDashboard.js` — EXIT_CODE=0)
-- [ ] Compilation frontend (`react-scripts build`)
+- [x] Compilation frontend (`react-scripts build` — build OK, uniquement des warnings)

@@ -17,7 +17,7 @@ const ouvertureCaisseSchema = new mongoose.Schema({
         default: 0,
     },
     dateOuverture: {
-        type: Date,
+        type: Date, 
         default: Date.now,
     },
     dateFermeture: {

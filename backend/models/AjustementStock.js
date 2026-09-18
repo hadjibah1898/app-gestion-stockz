@@ -19,7 +19,25 @@ const ajustementStockSchema = new mongoose.Schema({
     },
     adminValidateur: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     dateValidation: { type: Date },
-    commentaireAdmin: { type: String }
+    commentaireAdmin: { type: String },
+    // Isolation multi-tenant : Admin propriétaire (déduit de la boutique si absent)
+    createur: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        index: true
+    }
 }, { timestamps: true });
+
+// Injection automatique du createur (Admin) à partir de la boutique rattachée.
+// NB : hook asynchrone — ne PAS appeler next() (il est undefined pour un hook async).
+ajustementStockSchema.pre('save', async function () {
+    if (!this.createur && this.boutique) {
+        try {
+            const Boutique = mongoose.model('Boutique');
+            const boutique = await Boutique.findById(this.boutique).select('createur').lean();
+            if (boutique && boutique.createur) this.createur = boutique.createur;
+        } catch (e) { /* noop */ }
+    }
+});
 
 module.exports = mongoose.model('AjustementStock', ajustementStockSchema);

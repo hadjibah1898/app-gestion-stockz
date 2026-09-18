@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button, Form, Alert, Spinner, Badge, Card, Tab, Tabs, Modal } from 'react-bootstrap';
+import { Button, Form, Alert, Spinner, Badge, Card, Tab, Tabs, Modal, Collapse } from 'react-bootstrap';
 import TableComponent from './common/Table';
 import { clientAPI } from '../services/api';
 import XLSX from 'xlsx-js-style';
@@ -22,6 +22,18 @@ const ClientsView = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // --- Filtres avancés ---
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterType, setFilterType] = useState('Tous');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterMinAchats, setFilterMinAchats] = useState('');
+  const [filterMaxAchats, setFilterMaxAchats] = useState('');
+  const [filterMinDette, setFilterMinDette] = useState('');
+  const [filterMaxDette, setFilterMaxDette] = useState('');
+  const [filterSortBy, setFilterSortBy] = useState('nom');
+  const [filterSortOrder, setFilterSortOrder] = useState('asc');
   
   const [debtHistory, setDebtHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -170,11 +182,90 @@ const ClientsView = () => {
     XLSX.writeFile(workbook, `export_clients_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // --- Filtrage et Tri ---
-  const filteredClients = clients.filter(c => 
-    c.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (c.telephone && c.telephone.includes(searchTerm))
-  );
+  // --- Filtrage avancé ---
+  const filteredClients = useMemo(() => {
+    let result = clients.filter(c => 
+      c.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (c.telephone && c.telephone.includes(searchTerm)) ||
+      (c.email && c.email.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+
+    // Filtre par type
+    if (filterType !== 'Tous') {
+      result = result.filter(c => c.type === filterType);
+    }
+
+    // Filtre par date de création
+    if (filterDateFrom) {
+      const from = new Date(filterDateFrom);
+      result = result.filter(c => c.createdAt && new Date(c.createdAt) >= from);
+    }
+    if (filterDateTo) {
+      const to = new Date(filterDateTo);
+      to.setHours(23, 59, 59, 999);
+      result = result.filter(c => c.createdAt && new Date(c.createdAt) <= to);
+    }
+
+    // Filtre par montant total achats
+    if (filterMinAchats !== '') {
+      result = result.filter(c => (c.totalAchats || 0) >= Number(filterMinAchats));
+    }
+    if (filterMaxAchats !== '') {
+      result = result.filter(c => (c.totalAchats || 0) <= Number(filterMaxAchats));
+    }
+
+    // Filtre par dette
+    if (filterMinDette !== '') {
+      result = result.filter(c => (c.dette || 0) >= Number(filterMinDette));
+    }
+    if (filterMaxDette !== '') {
+      result = result.filter(c => (c.dette || 0) <= Number(filterMaxDette));
+    }
+
+    // Tri
+    const sortFn = (a, b) => {
+      let valA, valB;
+      switch (filterSortBy) {
+        case 'nom': valA = (a.nom || '').toLowerCase(); valB = (b.nom || '').toLowerCase(); break;
+        case 'totalAchats': valA = a.totalAchats || 0; valB = b.totalAchats || 0; break;
+        case 'dette': valA = a.dette || 0; valB = b.dette || 0; break;
+        case 'createdAt': valA = new Date(a.createdAt || 0); valB = new Date(b.createdAt || 0); break;
+        default: valA = (a.nom || '').toLowerCase(); valB = (b.nom || '').toLowerCase();
+      }
+      if (valA < valB) return filterSortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return filterSortOrder === 'asc' ? 1 : -1;
+      return 0;
+    };
+    result.sort(sortFn);
+
+    return result;
+  }, [clients, searchTerm, filterType, filterDateFrom, filterDateTo, filterMinAchats, filterMaxAchats, filterMinDette, filterMaxDette, filterSortBy, filterSortOrder]);
+
+  // Nombre de filtres actifs
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filterType !== 'Tous') count++;
+    if (filterDateFrom) count++;
+    if (filterDateTo) count++;
+    if (filterMinAchats !== '') count++;
+    if (filterMaxAchats !== '') count++;
+    if (filterMinDette !== '') count++;
+    if (filterMaxDette !== '') count++;
+    return count;
+  }, [filterType, filterDateFrom, filterDateTo, filterMinAchats, filterMaxAchats, filterMinDette, filterMaxDette]);
+
+  const resetFilters = () => {
+    setFilterType('Tous');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+    setFilterMinAchats('');
+    setFilterMaxAchats('');
+    setFilterMinDette('');
+    setFilterMaxDette('');
+    setFilterSortBy('nom');
+    setFilterSortOrder('asc');
+    setSearchTerm('');
+  };
 
   // Meilleurs clients (Triés par Total Achats décroissant)
   const bestClients = [...filteredClients].sort((a, b) => (b.totalAchats || 0) - (a.totalAchats || 0));
@@ -318,15 +409,128 @@ const ClientsView = () => {
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
       {error && <Alert variant="danger" onClose={() => setError('')} dismissible>{error}</Alert>}
 
-      <div className="mb-4">
-        <Form.Control
-          type="text"
-          placeholder="Rechercher par nom ou téléphone..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{ maxWidth: '300px' }}
-          className="shadow-sm"
-        />
+      {/* --- Barre de recherche + Filtres --- */}
+      <div className="mb-3">
+        <div className="d-flex flex-wrap gap-2 align-items-center">
+          <Form.Control
+            type="text"
+            placeholder="Rechercher par nom, téléphone ou email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ maxWidth: '320px' }}
+            className="shadow-sm"
+          />
+          <Button
+            variant={showFilters ? 'primary' : 'outline-secondary'}
+            onClick={() => setShowFilters(!showFilters)}
+            className="rounded-pill px-3 shadow-sm"
+          >
+            <iconify-icon icon="solar:filter-bold" className="me-1 align-middle"></iconify-icon>
+            Filtres
+            {activeFilterCount > 0 && (
+              <Badge bg="danger" pill className="ms-1" style={{ fontSize: '0.65rem' }}>{activeFilterCount}</Badge>
+            )}
+          </Button>
+          {activeFilterCount > 0 && (
+            <Button variant="outline-danger" size="sm" onClick={resetFilters} className="rounded-pill px-3">
+              <iconify-icon icon="solar:close-circle-bold" className="me-1 align-middle"></iconify-icon>
+              Réinitialiser
+            </Button>
+          )}
+          <span className="text-muted" style={{ fontSize: '0.82rem' }}>
+            {filteredClients.length} client(s) trouvé(s)
+          </span>
+        </div>
+
+        {/* --- Panneau de filtres dépliable --- */}
+        <Collapse in={showFilters}>
+          <div className="mt-3 p-3 bg-light rounded-3 shadow-sm border">
+            <div className="row g-3">
+              {/* Type */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:user-bold" className="me-1"></iconify-icon>Type
+                </label>
+                <Form.Select size="sm" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                  <option value="Tous">Tous les types</option>
+                  <option value="Client">Client</option>
+                  <option value="Ouvrier">Ouvrier</option>
+                </Form.Select>
+              </div>
+
+              {/* Date création - De */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:calendar-bold" className="me-1"></iconify-icon>Date création (de)
+                </label>
+                <Form.Control type="date" size="sm" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} />
+              </div>
+
+              {/* Date création - À */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:calendar-bold" className="me-1"></iconify-icon>Date création (à)
+                </label>
+                <Form.Control type="date" size="sm" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} />
+              </div>
+
+              {/* Total Achats Min */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:wallet-bold" className="me-1"></iconify-icon>Achats min (GNF)
+                </label>
+                <Form.Control type="number" size="sm" min="0" placeholder="0" value={filterMinAchats} onChange={(e) => setFilterMinAchats(e.target.value)} />
+              </div>
+
+              {/* Total Achats Max */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:wallet-bold" className="me-1"></iconify-icon>Achats max (GNF)
+                </label>
+                <Form.Control type="number" size="sm" min="0" placeholder="∞" value={filterMaxAchats} onChange={(e) => setFilterMaxAchats(e.target.value)} />
+              </div>
+
+              {/* Dette Min */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:danger-circle-bold" className="me-1"></iconify-icon>Dette min (GNF)
+                </label>
+                <Form.Control type="number" size="sm" min="0" placeholder="0" value={filterMinDette} onChange={(e) => setFilterMinDette(e.target.value)} />
+              </div>
+
+              {/* Dette Max */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:danger-circle-bold" className="me-1"></iconify-icon>Dette max (GNF)
+                </label>
+                <Form.Control type="number" size="sm" min="0" placeholder="∞" value={filterMaxDette} onChange={(e) => setFilterMaxDette(e.target.value)} />
+              </div>
+
+              {/* Tri */}
+              <div className="col-md-3 col-sm-6">
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem' }}>
+                  <iconify-icon icon="solar:sort-bold" className="me-1"></iconify-icon>Trier par
+                </label>
+                <div className="d-flex gap-1">
+                  <Form.Select size="sm" value={filterSortBy} onChange={(e) => setFilterSortBy(e.target.value)} className="flex-grow-1">
+                    <option value="nom">Nom</option>
+                    <option value="totalAchats">Total Achats</option>
+                    <option value="dette">Dette</option>
+                    <option value="createdAt">Date Création</option>
+                  </Form.Select>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    onClick={() => setFilterSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                    title={filterSortOrder === 'asc' ? 'Croissant' : 'Décroissant'}
+                  >
+                    <iconify-icon icon={filterSortOrder === 'asc' ? 'solar:arrow-up-bold' : 'solar:arrow-down-bold'}></iconify-icon>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Collapse>
       </div>
 
       <Card className="border-0 shadow-sm rounded-4 overflow-hidden">

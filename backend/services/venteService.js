@@ -153,6 +153,13 @@ exports.traiterPanier = async (items, user, boutiqueId, hasRemise = false, clien
             const article = await Article.findById(cleanArticleId).lean();
             if (!article) throw new Error(`L'article ${item.article?.nom || 'ID: ' + cleanArticleId} est introuvable.`);
 
+            // SÉCURITÉ MULTI-TENANT : l'article doit appartenir à la boutique de la vente
+            const articleBoutiqueId = (article.boutique && article.boutique.toString ? article.boutique.toString() : String(article.boutique));
+            const venteBoutiqueId = String(boutiqueId);
+            if (articleBoutiqueId !== venteBoutiqueId) {
+                throw new Error(`Accès refusé : l'article \"${article.nom}\" ne fait pas partie de cette boutique.`);
+            }
+
             // Calcul du décrément de stock fractionnaire
             const stockDecrement = (venteUnitType === 'dose' && article.isDoseEnabled)
                 ? (quantite / (article.dosesPerBottle || 10))
@@ -724,7 +731,8 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
             boutique: { $first: '$boutique' },
             createdAt: { $first: '$createdAt' },
             modePaiement: { $first: '$modePaiement' }, // Assuming modePaiement is consistent within a group
-            transactionRef: { $first: '$transactionRef' } // Assuming transactionRef is consistent within a group
+            transactionRef: { $first: '$transactionRef' }, // Assuming transactionRef is consistent within a group
+            numeroFacture: { $first: '$numeroFacture' }
         }
     });
 
@@ -838,6 +846,7 @@ exports.listerVentes = async (filter = {}, user = null, req = null) => {
         return {
             orderGroupId: group.orderGroupId || group._id,
             numeroTable: group.numeroTable,
+            numeroFacture: group.numeroFacture,
             createdAt: group.createdAt,
             items: mappedItems,
             // Récupérer le gérant et le client du premier item pour les infos de l'en-tête du groupe
